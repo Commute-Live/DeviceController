@@ -6,7 +6,9 @@
 #include <Adafruit_Protomatter.h>
 #include <Adafruit_GFX.h>
 
+#include "Transit.h"
 #include "wifi_manager.h"
+
 // LED MATRIX PINS (MatrixPortal S3)
 uint8_t rgbPins[]  = {42, 41, 40, 38, 39, 37}; // R1,G1,B1,R2,G2,B2
 uint8_t addrPins[] = {45, 36, 48, 35, 21};     // A,B,C,D,E
@@ -15,13 +17,13 @@ uint8_t clockPin = 2;
 uint8_t latchPin = 47;
 uint8_t oePin    = 14;
 
-// MATRIX OBJECT (CORRECT SIGNATURE)
+// MATRIX OBJECT
 Adafruit_Protomatter matrix(
   64,
   4,
-  6,           
+  1,
   rgbPins,     
-  5,           
+  4,           
   addrPins,    
   clockPin,
   latchPin,
@@ -32,6 +34,8 @@ Adafruit_Protomatter matrix(
 AsyncWebServer server(80);
 unsigned long nextCatFactMs = 0;
 const unsigned long CAT_FACT_INTERVAL_MS = 60000;
+bool logoDrawn = false;
+bool connectDrawn = false;
 
 void drawText(const String& text) {
   matrix.fillScreen(0);
@@ -64,6 +68,7 @@ void setup() {
 
   wifiManagerInit(server);
   drawText("CONNECT WIFI ENTER 192.168.4.1");
+  connectDrawn = true;
 
   // Main web page to select and connect to wifi
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -238,6 +243,22 @@ void loop() {
   wifiManagerLoop();
 
   unsigned long now = millis();
+  if (wifiManagerIsConnected() && !logoDrawn) {
+    draw_transit_logo(12, matrix.height() / 2, 'E', "purple", 10, 60, true);
+    draw_transit_logo(36, matrix.height() / 2, '7', "blue", 10, 60, false);
+    Serial.printf("drew logo\n");
+    delay(2000);
+    logoDrawn = true;
+    connectDrawn = false;
+  }
+  if (!wifiManagerIsConnected()) {
+    logoDrawn = false;
+    if (!connectDrawn) {
+      drawText("CONNECT WIFI ENTER 192.168.4.1");
+      connectDrawn = true;
+    }
+  }
+
   if (wifiManagerIsConnected() && (long)(now - nextCatFactMs) >= 0) {
     nextCatFactMs = now + CAT_FACT_INTERVAL_MS;
 
@@ -257,7 +278,7 @@ void loop() {
           int end = body.indexOf("\"", start);
           if (end > start) {
             String fact = body.substring(start, end);
-            drawText(fact);
+            Serial.printf("Cat fact: %s\n", fact.c_str());
           }
         }
       } else {
