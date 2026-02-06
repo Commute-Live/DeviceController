@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Wi-Fi Setup</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <main class="card">
+    <header class="header">
+      <div class="badge">Device Setup</div>
+      <h1>Connect to Wi-Fi</h1>
+      <p>Select a network and enter credentials. Campus Wi‑Fi with username is supported.</p>
+    </header>
+
+    <section class="status" id="status">
+      <div class="dot" id="statusDot"></div>
+      <div class="statusText" id="statusText">Checking status…</div>
+    </section>
+
+    <section class="controls">
+      <div class="row">
+        <button id="scanBtn" class="btn">Scan Networks</button>
+        <span id="scanMeta" class="meta"></span>
+      </div>
+
+      <label class="field">
+        <span>Wi‑Fi Network</span>
+        <select id="ssidSelect"></select>
+      </label>
+
+      <label class="field">
+        <span>Password</span>
+        <input id="pass" type="password" placeholder="Leave blank if open" />
+      </label>
+
+      <label class="field">
+        <span>Username (optional)</span>
+        <input id="user" type="text" placeholder="For campus Wi‑Fi" />
+      </label>
+
+      <div class="row">
+        <button id="connectBtn" class="btn primary">Connect</button>
+        <span id="connectMeta" class="meta"></span>
+      </div>
+
+      <div id="errorBox" class="error" hidden></div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
