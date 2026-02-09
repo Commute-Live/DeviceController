@@ -11,7 +11,7 @@
 #include "wifi_manager.h"
 
 // LED MATRIX PINS (MatrixPortal S3)
-uint8_t rgbPins[]  = {42, 41, 40, 38, 39, 37}; // R1,G1,B1,R2,G2,B2
+uint8_t rgbPins[]  = {42, 40, 41, 38, 37, 39}; // R1,B1,G1,R2,B2,G2
 uint8_t addrPins[] = {45, 36, 48, 35, 21};     // A,B,C,D,E
 
 uint8_t clockPin = 2;
@@ -281,8 +281,7 @@ void loop() {
 
   unsigned long now = millis();
   if (wifiManagerIsConnected() && !logoDrawn) {
-    draw_transit_logo(12, matrix.height() / 2, 'E', "purple", 10, 60, true);
-    draw_transit_logo(36, matrix.height() / 2, '7', "blue", 10, 60, false);
+    draw_transit_logo_preset(LARGE_MTA_E);
     Serial.printf("drew logo\n");
     delay(2000);
     logoDrawn = true;
