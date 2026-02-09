@@ -193,6 +193,22 @@ void setup() {
 </body>
 </html>
 )HTML");
+
+  // /heartbeat endpoint returns device status
+  server.on("/heartbeat", HTTP_GET, [](AsyncWebServerRequest *request) {
+    String deviceId = String((uint32_t)ESP.getEfuseMac(), HEX); // Unique ID from MAC
+    String firmware = String("v1.0.0"); // Set your firmware version here
+    int numStations = WiFi.softAPgetStationNum();
+    bool connected = numStations > 0;
+    String json = "{";
+    json += "\"connected\":" + String(connected ? "true" : "false") + ",";
+    json += "\"device_id\":\"" + deviceId + "\",";
+    json += "\"firmware\":\"" + firmware + "\"";
+    json += "}";
+    request->send(200, "application/json", json);
+  });
+  server.begin();
+
   });
 
   // Page thats loaded once youre connected to wifi
