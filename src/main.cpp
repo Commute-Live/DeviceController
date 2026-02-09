@@ -5,12 +5,13 @@
 #include <WiFiClientSecure.h>
 #include <Adafruit_Protomatter.h>
 #include <Adafruit_GFX.h>
+#include <time.h>
 
 #include "Transit.h"
 #include "wifi_manager.h"
 
 // LED MATRIX PINS (MatrixPortal S3)
-uint8_t rgbPins[]  = {42, 41, 40, 38, 39, 37}; // R1,G1,B1,R2,G2,B2
+uint8_t rgbPins[]  = {42, 40, 41, 38, 37, 39}; // R1,B1,G1,R2,B2,G2
 uint8_t addrPins[] = {45, 36, 48, 35, 21};     // A,B,C,D,E
 
 uint8_t clockPin = 2;
@@ -36,6 +37,30 @@ unsigned long nextCatFactMs = 0;
 const unsigned long CAT_FACT_INTERVAL_MS = 60000;
 bool logoDrawn = false;
 bool connectDrawn = false;
+
+#ifndef FIRMWARE_VERSION
+#define FIRMWARE_VERSION "dev"
+#endif
+
+static String deviceIdHex() {
+  uint64_t chipId = ESP.getEfuseMac();
+  char buf[17];
+  snprintf(buf, sizeof(buf), "%04X%08X",
+           (uint16_t)(chipId >> 32), (uint32_t)chipId);
+  return String(buf);
+}
+
+static String currentTimeIsoUtc() {
+  time_t now = time(nullptr);
+  if (now <= 0) {
+    return String("");
+  }
+  struct tm timeinfo;
+  gmtime_r(&now, &timeinfo);
+  char buf[32];
+  strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
+  return String(buf);
+}
 
 void drawText(const String& text) {
   matrix.fillScreen(0);
@@ -69,6 +94,7 @@ void setup() {
   wifiManagerInit(server);
   drawText("CONNECT WIFI ENTER 192.168.4.1");
   connectDrawn = true;
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov", "time.google.com");
 
   // Main web page to select and connect to wifi
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -195,6 +221,17 @@ void setup() {
 )HTML");
   });
 
+  server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
+    bool connected = wifiManagerIsConnected();
+    String json = "{";
+    json += "\"deviceId\":\"" + deviceIdHex() + "\",";
+    json += "\"firmware\":\"" + String(FIRMWARE_VERSION) + "\",";
+    json += "\"time\":\"" + currentTimeIsoUtc() + "\",";
+    json += "\"wifiConnected\":" + String(connected ? "true" : "false");
+    json += "}";
+    request->send(200, "application/json", json);
+  });
+
   // Page thats loaded once youre connected to wifi
   server.on("/hello", HTTP_GET, [](AsyncWebServerRequest *request) {
     if (!wifiManagerIsConnected()) {
@@ -244,8 +281,7 @@ void loop() {
 
   unsigned long now = millis();
   if (wifiManagerIsConnected() && !logoDrawn) {
-    draw_transit_logo(12, matrix.height() / 2, 'E', "purple", 10, 60, true);
-    draw_transit_logo(36, matrix.height() / 2, '7', "blue", 10, 60, false);
+    draw_transit_logo_preset(LARGE_MTA_E);
     Serial.printf("drew logo\n");
     delay(2000);
     logoDrawn = true;

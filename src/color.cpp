@@ -4,6 +4,7 @@ static uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
   return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
 }
 
+// WIP need to verify these colors or provide custom colors
 uint16_t color_from_name(const String &name, int brightness) {
   String n = name;
   n.toLowerCase();
@@ -27,7 +28,7 @@ uint16_t color_from_name(const String &name, int brightness) {
   if (n == "orange")  return rgb565(brightness, (brightness * 165) >> 8, 0);
   
   // Purple: ~50% Red, 0% Green, ~50% Blue
-  if (n == "purple")  return rgb565((brightness * 128) >> 8, 0, (brightness * 128) >> 8);
+  if (n == "purple")  return rgb565(brightness, 10, brightness);
   
   // Violet: ~93% Red, ~50% Green, 100% Blue
   if (n == "violet")  return rgb565((brightness * 238) >> 8, (brightness * 130) >> 8, brightness);
