@@ -4,6 +4,7 @@
 */
 
 #include "WiFi.h"
+#include "Transit.h"
 #include "string.h"
 #include <Arduino.h>
 #include <WebServer.h>
@@ -11,14 +12,44 @@
 #include <esp_wpa2.h>
 #include <PubSubClient.h>
 #include <Preferences.h>   // ADDED
+#include <Adafruit_Protomatter.h>
+
+constexpr uint16_t PANEL_WIDTH = 64;
+constexpr uint8_t PANEL_CHAIN_LENGTH = 2;  // number of chained 64x32 panels
+constexpr uint16_t MATRIX_WIDTH = PANEL_WIDTH * PANEL_CHAIN_LENGTH;
+
+// LED MATRIX PINS (MatrixPortal S3)
+uint8_t rgbPins[]  = {42, 40, 41, 38, 37, 39}; // R1,B1,G1,R2,B2,G2
+uint8_t addrPins[] = {45, 36, 48, 35, 21};     // A,B,C,D,E
+
+uint8_t clockPin = 2;
+uint8_t latchPin = 47;
+uint8_t oePin    = 14;
+
+// MATRIX OBJECT
+Adafruit_Protomatter matrix(
+  MATRIX_WIDTH,           // Total width (64px panel * 2 panels)
+  6,                      // Bit depth; 6 is library default for ESP32
+  PANEL_CHAIN_LENGTH,     // Number of daisy-chained panels
+  rgbPins,
+  sizeof(addrPins),       // Number of address pins (5 for 64-row panels)
+  addrPins,
+  clockPin,
+  latchPin,
+  oePin,
+  true                    // Double-buffer for smoother updates
+);
 
 WebServer server(80);
 
 const char* ESP_ssid = "nikul-ESP32-AP";
 const char* ESP_password = "12345678";
 
-const char* MQTT_HOST = "192.168.1.170";
+const char* MQTT_HOST = "198.211.104.174";
 const int MQTT_PORT = 1883;
+
+const char* MQTT_USER = "commutex";
+const char* MQTT_PASS = "lebron";
 
 // initialize the MQTT client with the WiFi client
 WiFiClient wifiClient;
@@ -59,14 +90,11 @@ void save_wifi_credentials(String ssid, String password, String user = "") {
     prefs.begin("wifi", false);
 
     prefs.putString("ssid", ssid);
-    prefs.putString("password", password);
+    prefs.putString("pass", password);
     prefs.putString("user", user);
-
     prefs.end();
-
     Serial.println("[ESP] WiFi credentials saved");
 }
-
 
 // NEW — load WiFi credentials
 bool load_wifi_credentials(String &ssid, String &password, String &user) {
@@ -74,7 +102,7 @@ bool load_wifi_credentials(String &ssid, String &password, String &user) {
     prefs.begin("wifi", true);
 
     ssid = prefs.getString("ssid", "");
-    password = prefs.getString("password", "");
+    password = prefs.getString("pass", "");
     user = prefs.getString("user", "");
 
     prefs.end();
@@ -87,7 +115,6 @@ bool load_wifi_credentials(String &ssid, String &password, String &user) {
 
     return false;
 }
-
 
 // checks if the given username and password are correct
 boolean connect_to_wifi(const char* ssid, const char* password, const char* username = "") {
@@ -128,7 +155,6 @@ boolean connect_to_wifi(const char* ssid, const char* password, const char* user
     return false;
 }
 
-
 // function to convert device ID to string
 String get_device_id() {
 
@@ -156,7 +182,6 @@ void get_device_info() {
     Serial.println("[ESP] Sent deviceId to phone");
 }
 
-
 // Perform fresh scan
 static int fresh_scan_networks() {
 
@@ -178,7 +203,6 @@ static int fresh_scan_networks() {
 
   return n;
 }
-
 
 // provisioning endpoint
 void phone_to_ESP_connection() {
@@ -264,7 +288,6 @@ void phone_to_ESP_connection() {
   }
 }
 
-
 // MQTT connect
 bool connect_ESP_to_mqtt() {
 
@@ -272,7 +295,7 @@ bool connect_ESP_to_mqtt() {
 
     Serial.println("[MQTT] Connecting...");
 
-    if (mqtt.connect(deviceId.c_str())) {
+    if (mqtt.connect(deviceId.c_str(), MQTT_USER, MQTT_PASS)) {
 
         Serial.println("[MQTT] Connected");
 
@@ -299,7 +322,7 @@ void mqtt_publish_online() {
     String topic =
     "devices/" + deviceId + "/status";
 
-    mqtt.publish(topic.c_str(), "online");
+    mqtt.publish(topic.c_str(), "online", true);
 
     Serial.println("[MQTT] Published online");
 }
@@ -383,6 +406,11 @@ void loop() {
 
     Serial.println("[ESP] A device is connected to ESP WiFi!");}
 
+  // Reconnect to MQTT if Wi-Fi is up but MQTT dropped.
+  if (WiFi.status() == WL_CONNECTED && !mqtt.connected()) {
+      connect_ESP_to_mqtt();
+  }
+
   if (mqtt.connected()) {
 
       mqtt.loop();
@@ -392,5 +420,6 @@ void loop() {
 
   Serial.print("[ESP] looping.... deviceId=");
   Serial.println(deviceId);
+
   delay(50);
 }
