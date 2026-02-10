@@ -5,7 +5,7 @@
 #include <esp_wpa2.h>
 #include <Preferences.h>
 
-static const char *AP_SSID = "CommuteLive-Setup-shimu";
+static const char *AP_SSID = "CommuteLive-Setup-nikul";
 static const char *AP_PASS = "12345678";
 
 static String lastError = "";
