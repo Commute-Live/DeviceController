@@ -1,342 +1,396 @@
+/*
+  Example from WiFi > WiFiScan
+  Complete details at https://RandomNerdTutorials.com/esp32-useful-wi-fi-functions-arduino/
+*/
+
+#include "WiFi.h"
+#include "string.h"
 #include <Arduino.h>
-#include <AsyncTCP.h>
-#include <ESPAsyncWebServer.h>
-#include <HTTPClient.h>
-#include <WiFiClientSecure.h>
-#include <Adafruit_Protomatter.h>
-#include <Adafruit_GFX.h>
-#include <time.h>
+#include <WebServer.h>
+#include <esp_wifi.h>
+#include <esp_wpa2.h>
+#include <PubSubClient.h>
+#include <Preferences.h>   // ADDED
 
-#include "Transit.h"
-#include "wifi_manager.h"
+WebServer server(80);
 
-// LED MATRIX PINS (MatrixPortal S3)
-uint8_t rgbPins[]  = {42, 40, 41, 38, 37, 39}; // R1,B1,G1,R2,B2,G2
-uint8_t addrPins[] = {45, 36, 48, 35, 21};     // A,B,C,D,E
+const char* ESP_ssid = "nikul-ESP32-AP";
+const char* ESP_password = "12345678";
 
-uint8_t clockPin = 2;
-uint8_t latchPin = 47;
-uint8_t oePin    = 14;
+const char* MQTT_HOST = "192.168.1.170";
+const int MQTT_PORT = 1883;
 
-// MATRIX OBJECT
-Adafruit_Protomatter matrix(
-  64,
-  4,
-  1,
-  rgbPins,     
-  4,           
-  addrPins,    
-  clockPin,
-  latchPin,
-  oePin,
-  true         
-);
+// initialize the MQTT client with the WiFi client
+WiFiClient wifiClient;
+PubSubClient mqtt(wifiClient);
 
-AsyncWebServer server(80);
-unsigned long nextCatFactMs = 0;
-const unsigned long CAT_FACT_INTERVAL_MS = 60000;
-bool logoDrawn = false;
-bool connectDrawn = false;
+// Preferences storage
+Preferences prefs;
 
-#ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "dev"
-#endif
+// Global variable to store the device ID
+String deviceId;
 
-static String deviceIdHex() {
-  uint64_t chipId = ESP.getEfuseMac();
-  char buf[17];
-  snprintf(buf, sizeof(buf), "%04X%08X",
-           (uint16_t)(chipId >> 32), (uint32_t)chipId);
-  return String(buf);
-}
+// Forward declarations
+bool connect_ESP_to_mqtt();
+void mqtt_publish_online();
 
-static String currentTimeIsoUtc() {
-  time_t now = time(nullptr);
-  if (now <= 0) {
-    return String("");
+// starts the ESP32 in Access Point mode with the specified SSID and password
+boolean start_ESP_wifi() {
+
+  Serial.println("[ESP] Starting ESP32 WIFI");
+
+  WiFi.mode(WIFI_AP_STA);
+
+  bool success = WiFi.softAP(ESP_ssid, ESP_password);
+
+  if (success) {
+      Serial.println("[ESP] ESP WiFi started!");
+  } else {
+      Serial.println("[ESP] Failed to connect to ESP WiFi");
   }
-  struct tm timeinfo;
-  gmtime_r(&now, &timeinfo);
-  char buf[32];
-  strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
-  return String(buf);
+
+  return success;
 }
 
-void drawText(const String& text) {
-  matrix.fillScreen(0);
-  matrix.setTextSize(1);
-  matrix.setTextWrap(false);                 
-  matrix.setCursor(0, 8);                 
-  matrix.setTextColor(matrix.color565(120,120,120));
-  matrix.print(text.substring(0, 10));    
-  matrix.show();
+
+// NEW — save WiFi credentials
+void save_wifi_credentials(String ssid, String password, String user = "") {
+
+    prefs.begin("wifi", false);
+
+    prefs.putString("ssid", ssid);
+    prefs.putString("password", password);
+    prefs.putString("user", user);
+
+    prefs.end();
+
+    Serial.println("[ESP] WiFi credentials saved");
+}
+
+
+// NEW — load WiFi credentials
+bool load_wifi_credentials(String &ssid, String &password, String &user) {
+
+    prefs.begin("wifi", true);
+
+    ssid = prefs.getString("ssid", "");
+    password = prefs.getString("password", "");
+    user = prefs.getString("user", "");
+
+    prefs.end();
+
+    if (ssid.length() > 0) {
+
+        Serial.println("[ESP] Found saved WiFi credentials");
+        return true;
+    }
+
+    return false;
+}
+
+
+// checks if the given username and password are correct
+boolean connect_to_wifi(const char* ssid, const char* password, const char* username = "") {
+
+    WiFi.mode(WIFI_AP_STA);
+    WiFi.disconnect(true, true);
+    delay(100);
+
+    if (username && strlen(username) > 0) {
+        Serial.println("[ESP] Using WPA2-Enterprise");
+        esp_wifi_sta_wpa2_ent_disable();
+        esp_wifi_sta_wpa2_ent_set_identity((uint8_t *)username, strlen(username));
+        esp_wifi_sta_wpa2_ent_set_username((uint8_t *)username, strlen(username));
+        if (password && strlen(password) > 0) {
+          esp_wifi_sta_wpa2_ent_set_password((uint8_t *)password, strlen(password));
+        }
+        esp_wifi_sta_wpa2_ent_enable();
+        WiFi.begin(ssid);
+    } else {
+        esp_wifi_sta_wpa2_ent_disable();
+        WiFi.begin(ssid, password);
+    }
+
+    int timeout = 15;
+
+    while (WiFi.status() != WL_CONNECTED && timeout--) {
+        Serial.print("trying...");
+        delay(500);
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+        return true;
+    }
+
+    WiFi.disconnect(true, true);
+    delay(200);
+
+    return false;
+}
+
+
+// function to convert device ID to string
+String get_device_id() {
+
+    uint64_t chipid = ESP.getEfuseMac();
+
+    char id[32];
+
+    sprintf(id, "esp32-%04X%08X",
+        (uint16_t)(chipid >> 32),
+        (uint32_t)chipid);
+
+    return String(id);
+}
+
+
+// API function that returns device info
+void get_device_info() {
+
+    String response = "{";
+    response += "\"deviceId\":\"" + deviceId + "\"";
+    response += "}";
+
+    server.send(200, "application/json", response);
+
+    Serial.println("[ESP] Sent deviceId to phone");
+}
+
+
+// Perform fresh scan
+static int fresh_scan_networks() {
+
+  WiFi.setAutoReconnect(false);
+
+  WiFi.disconnect(true, true);
+
+  delay(200);
+
+  WiFi.mode(WIFI_AP_STA);
+
+  WiFi.scanDelete();
+
+  delay(50);
+
+  int n = WiFi.scanNetworks(false, true);
+
+  WiFi.setAutoReconnect(true);
+
+  return n;
+}
+
+
+// provisioning endpoint
+void phone_to_ESP_connection() {
+
+  if (!server.hasArg("ssid") || !server.hasArg("password")) {
+
+      server.send(400, "application/json",
+      "{\"error\":\"Missing ssid or password\"}");
+
+      return;
+  }
+
+  String HOME_ssid = server.arg("ssid");
+  String HOME_password = server.arg("password");
+  String HOME_user = server.hasArg("user") ? server.arg("user") : "";
+
+  WiFi.mode(WIFI_AP_STA);
+
+  int n = fresh_scan_networks();
+
+  if (n == 0) {
+
+      Serial.println("no networks found");
+
+      server.send(400, "application/json",
+      "{\"error\":\"No Eligible WiFi networks found\"}");
+
+  } else {
+
+      Serial.print(n);
+      Serial.println(" networks found");
+
+      for (int i = 0; i < n; ++i) {
+
+        if (strcmp(WiFi.SSID(i).c_str(), HOME_ssid.c_str()) == 0) {
+
+          Serial.println("[ESP] Found target WiFi network!");
+
+          if (connect_to_wifi(
+              HOME_ssid.c_str(),
+              HOME_password.c_str(),
+              HOME_user.c_str())) {
+
+            Serial.println("[ESP] Successfully connected to WiFi!");
+
+            // NEW — SAVE CREDENTIALS
+            save_wifi_credentials(HOME_ssid, HOME_password, HOME_user);
+
+            // connect to MQTT broker
+            if (connect_ESP_to_mqtt()) {
+
+                mqtt_publish_online();
+
+            } else {
+
+                Serial.println("[MQTT] Failed to connect");
+
+                server.send(400,
+                "application/json",
+                "{\"error\":\"MQTT failed\"}");
+            }
+
+            return;
+
+          } else {
+
+            Serial.println("[ESP] Failed to connect to WiFi.");
+
+            server.send(400,
+            "application/json",
+            "{\"error\":\"WiFi credentials wrong\"}");
+          }
+
+          break;
+        }
+
+        delay(10);
+      }
+
+      server.send(400,
+      "application/json",
+      "{\"error\":\"Target WiFi network not found\"}");
+  }
+}
+
+
+// MQTT connect
+bool connect_ESP_to_mqtt() {
+
+    mqtt.setServer(MQTT_HOST, MQTT_PORT);
+
+    Serial.println("[MQTT] Connecting...");
+
+    if (mqtt.connect(deviceId.c_str())) {
+
+        Serial.println("[MQTT] Connected");
+
+        String topic =
+        "devices/" + deviceId + "/commands";
+
+        mqtt.subscribe(topic.c_str());
+
+        Serial.println("[MQTT] Subscribed to commands");
+
+        return true;
+    }
+
+    Serial.print("[MQTT] Failed rc=");
+    Serial.println(mqtt.state());
+
+    return false;
+}
+
+
+// MQTT publish online
+void mqtt_publish_online() {
+
+    String topic =
+    "devices/" + deviceId + "/status";
+
+    mqtt.publish(topic.c_str(), "online");
+
+    Serial.println("[MQTT] Published online");
 }
 
 
 void setup() {
+
   Serial.begin(115200);
-  unsigned long serialStart = millis();
-  while (!Serial && millis() - serialStart < 2000) {
-    delay(10);
-  }
-  Serial.setDebugOutput(true);
-  delay(200);
-  Serial.println("COMMUTE_LIVE: Boot");
 
-  // Start LED matrix
-  if (matrix.begin() != PROTOMATTER_OK) {
-    while (1);
-  }
+  deviceId = get_device_id();
 
-  matrix.setTextWrap(true);
-  matrix.setTextSize(1);
+  Serial.print("[ESP] Device ID: ");
+  Serial.println(deviceId);
 
-  wifiManagerInit(server);
-  drawText("CONNECT WIFI ENTER 192.168.4.1");
-  connectDrawn = true;
-  configTime(0, 0, "pool.ntp.org", "time.nist.gov", "time.google.com");
+  WiFi.mode(WIFI_AP_STA);
 
-  // Main web page to select and connect to wifi
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(200, "text/html", R"HTML(
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Wi-Fi Setup</title>
-  <style>
-    body{margin:0;font-family:Georgia,serif;background:#f4f1ed;min-height:100vh;display:grid;place-items:center;color:#2b2b2b}
-    .card{width:min(680px,92vw);background:#fff7ee;border:1px solid #e2d7cc;border-radius:18px;padding:24px;box-shadow:0 10px 30px rgba(0,0,0,.08)}
-    .badge{display:inline-block;background:#efe1d3;color:#6b4b2a;padding:4px 10px;border-radius:999px;font-size:12px;letter-spacing:.6px;text-transform:uppercase}
-    .status{display:flex;align-items:center;gap:10px;padding:10px 12px;background:#fff;border:1px dashed #e2d7cc;border-radius:10px;margin:10px 0 18px}
-    .dot{width:10px;height:10px;border-radius:50%;background:#c5c5c5}
-    .controls{display:grid;gap:12px}
-    select,input{height:42px;border-radius:10px;border:1px solid #e2d7cc;padding:0 12px;font-size:15px;background:#fff}
-    .row{display:flex;align-items:center;gap:12px}
-    .btn{border:1px solid #e2d7cc;background:#f7efe7;color:#2b2b2b;padding:10px 14px;border-radius:10px;cursor:pointer}
-    .btn.primary{background:#4c7c59;color:#fff;border-color:#4c7c59}
-    .meta{color:#6a6a6a;font-size:13px}
-    .error{border:1px solid #e7b3ae;background:#fdebea;color:#b43c2f;padding:10px 12px;border-radius:10px}
-    @media (max-width:520px){.row{flex-direction:column;align-items:stretch}}
-  </style>
-</head>
-<body>
-  <main class="card">
-    <header>
-      <div class="badge">Device Setup</div>
-      <h1>Connect to Wi‑Fi</h1>
-      <p>Select a network and enter credentials. Campus Wi‑Fi with username is supported.</p>
-    </header>
-    <section class="status">
-      <div class="dot" id="statusDot"></div>
-      <div id="statusText">Checking status…</div>
-    </section>
-    <section class="controls">
-      <div class="row">
-        <button id="scanBtn" class="btn">Scan Networks</button>
-        <span id="scanMeta" class="meta"></span>
-      </div>
-      <label>Wi‑Fi Network<br><select id="ssidSelect"></select></label>
-      <label>Network Type<br>
-        <select id="netType">
-          <option value="home">Home / Personal</option>
-          <option value="enterprise">Enterprise (Username)</option>
-        </select>
-      </label>
-      <label>Password<br><input id="pass" type="password" placeholder="Leave blank if open"></label>
-      <label id="userRow" style="display:none">Username<br><input id="user" type="text" placeholder="For campus Wi‑Fi"></label>
-      <div class="row">
-        <button id="connectBtn" class="btn primary">Connect</button>
-        <span id="connectMeta" class="meta"></span>
-      </div>
-      <div id="errorBox" class="error" style="display:none"></div>
-    </section>
-  </main>
-  <script>
-    const statusDot=document.getElementById("statusDot");
-    const statusText=document.getElementById("statusText");
-    const ssidSelect=document.getElementById("ssidSelect");
-    const scanBtn=document.getElementById("scanBtn");
-    const scanMeta=document.getElementById("scanMeta");
-    const connectBtn=document.getElementById("connectBtn");
-    const connectMeta=document.getElementById("connectMeta");
-    const errorBox=document.getElementById("errorBox");
-    const netType=document.getElementById("netType");
-    const userRow=document.getElementById("userRow");
-    let scanAttempts=0;
-    function updateNetType(){const isEnt=netType.value==="enterprise";userRow.style.display=isEnt?"block":"none";}
-    function setStatus(connected,connecting,text){statusDot.style.background=connected?"#4c7c59":connecting?"#d9984a":"#c5c5c5";statusText.textContent=text;}
-    function showError(msg){if(!msg){errorBox.style.display="none";errorBox.textContent="";return;}errorBox.style.display="block";errorBox.textContent=msg;}
-    async function refreshStatus(){const res=await fetch("/api/status");const data=await res.json();
-      if(data.connected){window.location.href="/hello";return;}
-      if(data.connecting){setStatus(false,true,"Connecting…");}else{setStatus(false,false,"Not connected");}
-      showError(data.error||"");
-    }
-    async function scan(){scanMeta.textContent="Scanning…";scanAttempts=0;await doScan();}
-    async function doScan(){
-      const res=await fetch("/api/scan");
-      if(!res.ok){showError("Scan failed");scanMeta.textContent="";return;}
-      const data=await res.json();
-      const list=data.results||[];
-      if(data.count&&list.length===0){console.warn("Scan count",data.count,"but list empty");}
-      if(data.scanning&&list.length===0){
-        scanAttempts++;
-        scanMeta.textContent="Scanning…";
-        if(scanAttempts<=10){setTimeout(doScan,800);return;}
+  WiFi.disconnect();
+
+  delay(100);
+
+
+  // NEW — TRY AUTO CONNECT FIRST
+  String savedSSID;
+  String savedPassword;
+  String savedUser;
+
+  if (load_wifi_credentials(savedSSID, savedPassword, savedUser)) {
+
+      Serial.println("[ESP] Connecting to saved WiFi");
+
+      if (connect_to_wifi(
+          savedSSID.c_str(),
+          savedPassword.c_str(),
+          savedUser.c_str())) {
+
+          Serial.println("[ESP] Connected using saved credentials");
+
+          if (connect_ESP_to_mqtt()) {
+
+              mqtt_publish_online();
+          }
+
+      } else {
+
+          Serial.println("[ESP] Saved WiFi failed, starting AP");
+
+          start_ESP_wifi();
       }
-      ssidSelect.innerHTML="";
-      list.sort((a,b)=>b.rssi-a.rssi);
-      if(list.length===0){
-        const opt=document.createElement("option");opt.value="";opt.textContent="No networks found";
-        ssidSelect.appendChild(opt);scanMeta.textContent="";return;
-      }
-      scanAttempts=0;
-      list.forEach(net=>{const opt=document.createElement("option");opt.value=net.ssid;opt.textContent=net.ssid;ssidSelect.appendChild(opt);});
-      scanMeta.textContent=`${list.length} networks`;
-    }
-    async function connect(){
-      showError("");
-      connectMeta.textContent="Sending…";
-      const ssid=ssidSelect.value;
-      const body=new URLSearchParams();
-      body.set("ssid",ssid);
-      body.set("pass",document.getElementById("pass").value);
-      if(netType.value==="enterprise"){body.set("user",document.getElementById("user").value);}else{body.set("user","");}
-      const res=await fetch("/api/connect",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body});
-      const data=await res.json();
-      if(!data.ok){showError(data.error||"Failed to start connection");connectMeta.textContent="";return;}
-      connectMeta.textContent=ssid;
-    }
-    netType.addEventListener("change",updateNetType);
-    updateNetType();
-    scanBtn.addEventListener("click",scan);
-    connectBtn.addEventListener("click",connect);
-    scan();
-    setInterval(refreshStatus,1500);
-    refreshStatus();
-  </script>
-</body>
-</html>
-)HTML");
 
-  // /heartbeat endpoint returns device status
-  server.on("/heartbeat", HTTP_GET, [](AsyncWebServerRequest *request) {
-    String deviceId = String((uint32_t)ESP.getEfuseMac(), HEX); // Unique ID from MAC
-    String firmware = String("v1.0.0"); // Set your firmware version here
-    int numStations = WiFi.softAPgetStationNum();
-    bool connected = numStations > 0;
-    String json = "{";
-    json += "\"connected\":" + String(connected ? "true" : "false") + ",";
-    json += "\"device_id\":\"" + deviceId + "\",";
-    json += "\"firmware\":\"" + firmware + "\"";
-    json += "}";
-    request->send(200, "application/json", json);
-  });
-  server.begin();
+  } else {
 
-  });
+      start_ESP_wifi();
+  }
 
-  server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
-    bool connected = wifiManagerIsConnected();
-    String json = "{";
-    json += "\"deviceId\":\"" + deviceIdHex() + "\",";
-    json += "\"firmware\":\"" + String(FIRMWARE_VERSION) + "\",";
-    json += "\"time\":\"" + currentTimeIsoUtc() + "\",";
-    json += "\"wifiConnected\":" + String(connected ? "true" : "false");
-    json += "}";
-    request->send(200, "application/json", json);
-  });
+  server.on("/connect",
+  HTTP_POST,
+  phone_to_ESP_connection);
 
-  // Page thats loaded once youre connected to wifi
-  server.on("/hello", HTTP_GET, [](AsyncWebServerRequest *request) {
-    if (!wifiManagerIsConnected()) {
-      request->redirect("/");
-      return;
-    }
-    request->send(200, "text/html", R"HTML(
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Hello</title>
-  <style>
-    body{margin:0;font-family:Georgia,serif;background:#f4f1ed;min-height:100vh;display:grid;place-items:center;color:#2b2b2b}
-    .card{width:min(680px,92vw);background:#fff7ee;border:1px solid #e2d7cc;border-radius:18px;padding:24px;box-shadow:0 10px 30px rgba(0,0,0,.08)}
-    .badge{display:inline-block;background:#efe1d3;color:#6b4b2a;padding:4px 10px;border-radius:999px;font-size:12px;letter-spacing:.6px;text-transform:uppercase}
-    .btn{border:1px solid #e2d7cc;background:#f7efe7;color:#2b2b2b;padding:10px 14px;border-radius:10px;cursor:pointer}
-  </style>
-</head>
-<body>
-  <main class="card">
-    <header>
-      <div class="badge">Connected</div>
-      <h1>Hello world</h1>
-      <p>Your device is connected to Wi‑Fi.</p>
-      <button class="btn" id="disconnectBtn">Disconnect</button>
-    </header>
-  </main>
-  <script>
-    document.getElementById("disconnectBtn").addEventListener("click", async () => {
-      await fetch("/api/disconnect", { method: "POST" });
-      window.location.href = "/";
-    });
-  </script>
-</body>
-</html>
-)HTML");
+  server.on("/device-info",
+  HTTP_GET,
+  get_device_info);
+
+  server.on("/heartbeat",
+  HTTP_GET,
+  []() {
+    server.send(200, "application/json", "{\"ok\":true}");
   });
 
   server.begin();
+
+  Serial.println("[ESP] Setup done");
 }
 
-// temp function to use wifi and get cat facts for now.
+
 void loop() {
-  wifiManagerLoop();
 
-  unsigned long now = millis();
-  if (wifiManagerIsConnected() && !logoDrawn) {
-    draw_transit_logo_preset(LARGE_MTA_E);
-    Serial.printf("drew logo\n");
-    delay(2000);
-    logoDrawn = true;
-    connectDrawn = false;
-  }
-  if (!wifiManagerIsConnected()) {
-    logoDrawn = false;
-    if (!connectDrawn) {
-      drawText("CONNECT WIFI ENTER 192.168.4.1");
-      connectDrawn = true;
-    }
+  bool isSomeoneConnected =
+  WiFi.softAPgetStationNum() > 0;
+
+  if (isSomeoneConnected) {
+
+    Serial.println("[ESP] A device is connected to ESP WiFi!");}
+
+  if (mqtt.connected()) {
+
+      mqtt.loop();
   }
 
-  if (wifiManagerIsConnected() && (long)(now - nextCatFactMs) >= 0) {
-    nextCatFactMs = now + CAT_FACT_INTERVAL_MS;
+  server.handleClient();
 
-    WiFiClientSecure client;
-    client.setInsecure();
-    client.setTimeout(15000);
-    HTTPClient http;
-    http.setTimeout(15000);
-
-    if (http.begin(client, "https://catfact.ninja/fact")) {
-      int code = http.GET();
-      if (code == HTTP_CODE_OK) {
-        String body = http.getString();
-        int key = body.indexOf("\"fact\":\"");
-        if (key >= 0) {
-          int start = key + 8;
-          int end = body.indexOf("\"", start);
-          if (end > start) {
-            String fact = body.substring(start, end);
-            Serial.printf("Cat fact: %s\n", fact.c_str());
-          }
-        }
-      } else {
-        Serial.printf("Cat fact HTTP error: %d\n", code);
-      }
-      http.end();
-    }
-  }
+  Serial.print("[ESP] looping.... deviceId=");
+  Serial.println(deviceId);
+  delay(50);
 }
