@@ -29,7 +29,7 @@ uint8_t oePin    = 14;
 // MATRIX OBJECT
 Adafruit_Protomatter matrix(
   MATRIX_WIDTH,           // Total width (64px panel * 2 panels)
-  6,                      // Bit depth; 6 is library default for ESP32
+  4,                      // Bit depth; 6 is library default for ESP32
   PANEL_CHAIN_LENGTH,     // Number of daisy-chained panels
   rgbPins,
   sizeof(addrPins),       // Number of address pins (5 for 64-row panels)
@@ -60,10 +60,15 @@ Preferences prefs;
 
 // Global variable to store the device ID
 String deviceId;
+char currentRoute = 'E';
+char lastRenderedRoute = '\0';
 
 // Forward declarations
 bool connect_ESP_to_mqtt();
 void mqtt_publish_online();
+void mqtt_callback(char *topic, byte *payload, unsigned int length);
+char parse_route_command(const String &message);
+void render_route_logo(char route);
 
 // starts the ESP32 in Access Point mode with the specified SSID and password
 boolean start_ESP_wifi() {
@@ -292,6 +297,7 @@ void phone_to_ESP_connection() {
 bool connect_ESP_to_mqtt() {
 
     mqtt.setServer(MQTT_HOST, MQTT_PORT);
+    mqtt.setCallback(mqtt_callback);
 
     Serial.println("[MQTT] Connecting...");
 
@@ -300,7 +306,7 @@ bool connect_ESP_to_mqtt() {
         Serial.println("[MQTT] Connected");
 
         String topic =
-        "devices/" + deviceId + "/commands";
+        "/device/" + deviceId + "/commands";
 
         mqtt.subscribe(topic.c_str());
 
@@ -327,10 +333,71 @@ void mqtt_publish_online() {
     Serial.println("[MQTT] Published online");
 }
 
+char parse_route_command(const String &message) {
+    if (message == "7" || message.indexOf("\"route\":\"7\"") >= 0 || message.indexOf("\"route\": \"7\"") >= 0) {
+        return '7';
+    }
+    if (message == "E" || message == "e" || message.indexOf("\"route\":\"E\"") >= 0 || message.indexOf("\"route\":\"e\"") >= 0 ||
+        message.indexOf("\"route\": \"E\"") >= 0 || message.indexOf("\"route\": \"e\"") >= 0) {
+        return 'E';
+    }
+    if (message == "G" || message == "g" || message.indexOf("\"route\":\"G\"") >= 0 || message.indexOf("\"route\":\"g\"") >= 0 ||
+        message.indexOf("\"route\": \"G\"") >= 0 || message.indexOf("\"route\": \"g\"") >= 0) {
+        return 'G';
+    }
+    return '\0';
+}
+
+void render_route_logo(char route) {
+    if (route >= 'a' && route <= 'z') {
+        route = route - ('a' - 'A');
+    }
+    if (route == '7') {
+        draw_transit_logo_preset(LARGE_MTA_7);
+        return;
+    }
+    if (route == 'E') {
+        draw_transit_logo_preset(LARGE_MTA_E);
+        return;
+    }
+    if (route == 'G') {
+        draw_transit_logo_preset(LARGE_MTA_G);
+        return;
+    }
+    // Keep display deterministic for unknown values.
+    draw_transit_logo_preset(LARGE_MTA_E);
+}
+
+void mqtt_callback(char *topic, byte *payload, unsigned int length) {
+    String message;
+    message.reserve(length + 1);
+    for (unsigned int i = 0; i < length; i++) {
+        message += (char)payload[i];
+    }
+
+    Serial.printf("[MQTT] Message on %s: %s\n", topic, message.c_str());
+
+    char route = parse_route_command(message);
+    if (route == '\0') {
+        Serial.println("[MQTT] Ignored command: missing/invalid route");
+        return;
+    }
+
+    currentRoute = route;
+    render_route_logo(route);
+    Serial.printf("[MQTT] Rendered route logo: %c\n", route);
+}
+
 
 void setup() {
 
   Serial.begin(115200);
+
+  if (matrix.begin() != PROTOMATTER_OK) {
+    while (1);
+  }
+  matrix.setTextWrap(true);
+  matrix.setTextSize(1);
 
   deviceId = get_device_id();
 
@@ -402,6 +469,11 @@ void loop() {
   bool isSomeoneConnected =
   WiFi.softAPgetStationNum() > 0;
 
+  if (lastRenderedRoute != currentRoute) {
+      render_route_logo(currentRoute);
+      lastRenderedRoute = currentRoute;
+  }
+
   if (isSomeoneConnected) {
 
     Serial.println("[ESP] A device is connected to ESP WiFi!");}
@@ -412,14 +484,11 @@ void loop() {
   }
 
   if (mqtt.connected()) {
-
+      Serial.println("[MQTT] connected");
       mqtt.loop();
   }
 
   server.handleClient();
-
-  Serial.print("[ESP] looping.... deviceId=");
-  Serial.println(deviceId);
 
   delay(50);
 }

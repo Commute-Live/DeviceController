@@ -101,6 +101,32 @@ const TransitLogoPreset LARGE_MTA_E = {
     40,
 };
 
+const TransitLogoPreset LARGE_MTA_7 = {
+    15,
+    -1,
+    '7',
+    "purple",
+    14,
+    20,
+    3,
+    true,
+    "white",
+    40,
+};
+
+const TransitLogoPreset LARGE_MTA_G = {
+    15,
+    -1,
+    'G',
+    "green",
+    14,
+    20,
+    3,
+    true,
+    "white",
+    40,
+};
+
 const TransitLogoPreset SMALL_MTA_E = {
     12,
     -1,
