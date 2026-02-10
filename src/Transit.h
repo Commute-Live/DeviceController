@@ -30,6 +30,8 @@ void draw_transit_logo(int center_x,
 void draw_transit_logo_preset(const TransitLogoPreset &preset);
 
 extern const TransitLogoPreset LARGE_MTA_E;
-extern const TransitLogoPreset MTA_E_ACCURATE;
-extern const TransitLogoPreset MTA_7_ACCURATE;
-extern const TransitLogoPreset MTA_G_ACCURATE;
+extern const TransitLogoPreset LARGE_MTA_7;
+extern const TransitLogoPreset LARGE_MTA_G;
+extern const TransitLogoPreset SMALL_MTA_E;
+extern const TransitLogoPreset SMALL_MTA_7;
+extern const TransitLogoPreset SMALL_MTA_G;
