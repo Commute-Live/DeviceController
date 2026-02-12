@@ -62,9 +62,10 @@ Preferences prefs;
 String deviceId;
 String currentRouteId = transit::nyc_subway::default_line().id;
 String lastRenderedRouteId = "";
-String currentInfoLine1 = "N1 --";
-String currentInfoLine2 = "N2 --";
-String currentInfoLine3 = "N3 --";
+String currentRow1RouteId = transit::nyc_subway::default_line().id;
+String currentRow2RouteId = "";
+String currentRow1Eta = "--";
+String currentRow2Eta = "--";
 bool timeSynced = false;
 unsigned long lastTimeSyncAttemptMs = 0;
 
@@ -560,9 +561,9 @@ static String format_arrivals_compact(const String &json, const String &fallback
 
 static bool parse_lines_payload(const String &message,
                                 String &primaryLine,
-                                String &stopLabel,
-                                String &row1,
-                                String &row2) {
+                                String &row1Eta,
+                                String &row2Line,
+                                String &row2Eta) {
     int linesKeyPos = message.indexOf("\"lines\"");
     if (linesKeyPos < 0) return false;
 
@@ -572,8 +573,6 @@ static bool parse_lines_payload(const String &message,
     if (arrayClose < 0) return false;
 
     String fallbackFetchedAt = extract_json_string_field(message, "fetchedAt");
-    String fallbackStop = extract_json_string_field(message, "stop");
-    String fallbackStopId = extract_json_string_field(message, "stopId");
     String linesJson = message.substring(arrayOpen + 1, arrayClose);
 
     int cursor = 0;
@@ -590,53 +589,52 @@ static bool parse_lines_payload(const String &message,
         String line = extract_json_string_field(item, "line");
         if (line.length() == 0) continue;
 
-        String stop = extract_json_string_field(item, "stop");
-        String stopId = extract_json_string_field(item, "stopId");
-        if (stopLabel.length() == 0) {
-            if (stop.length() > 0) stopLabel = stop;
-            else if (stopId.length() > 0) stopLabel = stopId;
-        }
-
-        String row = line + " " + format_arrivals_compact(item, fallbackFetchedAt);
+        String etaText = format_arrivals_compact(item, fallbackFetchedAt);
         if (rowCount == 0) {
             primaryLine = line;
-            row1 = row;
+            row1Eta = etaText;
         } else if (rowCount == 1) {
-            row2 = row;
+            row2Line = line;
+            row2Eta = etaText;
         }
         rowCount++;
-    }
-
-    if (stopLabel.length() == 0) {
-        if (fallbackStop.length() > 0) stopLabel = fallbackStop;
-        else if (fallbackStopId.length() > 0) stopLabel = fallbackStopId;
-        else stopLabel = "STOP --";
     }
 
     return rowCount > 0;
 }
 
-void render_route_logo(const String &route_id) {
-    const transit::LineDefinition *line = transit::nyc_subway::find_line(route_id);
+static void draw_row_with_logo(const String &routeId, const String &etaText, int centerY) {
+    const transit::LineDefinition *line = transit::nyc_subway::find_line(routeId);
     if (!line) {
         line = &transit::nyc_subway::default_line();
     }
-    draw_transit_logo_large(line->symbol, line->color_hex);
+
+    draw_transit_logo(
+        8,
+        centerY,
+        line->symbol,
+        line->color_hex,
+        6,
+        20,
+        1,
+        false,
+        "white",
+        40);
 
     matrix->setTextWrap(false);
     matrix->setTextColor(color_from_name("white", 40));
     matrix->setTextSize(1);
+    matrix->setCursor(16, centerY - 3);
+    matrix->print(etaText.length() ? etaText : "--");
+}
 
-    const int info_x = 34;
-    matrix->setCursor(info_x, 2);
-    matrix->print(currentInfoLine1);
-    matrix->setCursor(info_x, 12);
-    matrix->print(currentInfoLine2);
-    matrix->setCursor(info_x, 22);
-    matrix->print(currentInfoLine3);
-
-    // Keep a guaranteed 1-pixel left gutter at x=0.
-    matrix->drawFastVLine(0, 0, matrix->height(), 0);
+void render_route_logo(const String &route_id) {
+    (void)route_id;
+    matrix->fillScreen(0);
+    draw_row_with_logo(currentRow1RouteId, currentRow1Eta, 8);
+    if (currentRow2RouteId.length() > 0) {
+        draw_row_with_logo(currentRow2RouteId, currentRow2Eta, 24);
+    }
 }
 
 void mqtt_callback(char *topic, byte *payload, unsigned int length) {
@@ -653,23 +651,17 @@ void mqtt_callback(char *topic, byte *payload, unsigned int length) {
     String stopId = extract_json_string_field(message, "stopId");
     String direction = extract_json_string_field(message, "direction");
     String multiPrimaryLine;
-    String multiStopLabel;
-    String multiRow1;
-    String multiRow2;
-    bool hasMultiLines = parse_lines_payload(message, multiPrimaryLine, multiStopLabel, multiRow1, multiRow2);
+    String multiRow1Eta;
+    String multiRow2Line;
+    String multiRow2Eta;
+    bool hasMultiLines = parse_lines_payload(message, multiPrimaryLine, multiRow1Eta, multiRow2Line, multiRow2Eta);
 
     if (hasMultiLines) {
-        currentInfoLine1 = multiStopLabel;
-        currentInfoLine2 = multiRow1;
-        currentInfoLine3 = multiRow2;
+        currentRow1RouteId = multiPrimaryLine.length() ? multiPrimaryLine : transit::nyc_subway::default_line().id;
+        currentRow1Eta = multiRow1Eta.length() ? multiRow1Eta : "--";
+        currentRow2RouteId = multiRow2Line;
+        currentRow2Eta = multiRow2Eta.length() ? multiRow2Eta : "--";
     } else {
-        if (stop.length() > 0) {
-            currentInfoLine1 = stop;
-        } else if (stopId.length() > 0) {
-            currentInfoLine1 = stopId;
-        } else {
-            currentInfoLine1 = "STOP --";
-        }
         String etaLine1, etaLine2, etaLine3;
         build_eta_lines(message, etaLine1, etaLine2, etaLine3);
 
@@ -690,8 +682,15 @@ void mqtt_callback(char *topic, byte *payload, unsigned int length) {
         if (e3 != "--") arrivalsCompact += (arrivalsCompact.length() ? " " : "") + e3;
         if (!arrivalsCompact.length()) arrivalsCompact = "--";
 
-        currentInfoLine2 = arrivalsCompact;
-        currentInfoLine3 = "";
+        String fallbackLine = lineRaw.length() ? lineRaw : "";
+        if (fallbackLine.length() == 0) {
+            const transit::LineDefinition *parsed = parse_route_command(message);
+            if (parsed) fallbackLine = parsed->id;
+        }
+        currentRow1RouteId = fallbackLine.length() ? fallbackLine : transit::nyc_subway::default_line().id;
+        currentRow1Eta = arrivalsCompact;
+        currentRow2RouteId = "";
+        currentRow2Eta = "--";
     }
     if (lineRaw.length() > 0 || provider.length() > 0 || stop.length() > 0 || stopId.length() > 0 || direction.length() > 0) {
         Serial.printf("[MQTT] Refresh payload provider=%s line=%s stop=%s stopId=%s direction=%s\n",
@@ -703,8 +702,8 @@ void mqtt_callback(char *topic, byte *payload, unsigned int length) {
     }
 
     const transit::LineDefinition *line = nullptr;
-    if (hasMultiLines && multiPrimaryLine.length() > 0) {
-        line = transit::nyc_subway::find_line(multiPrimaryLine);
+    if (hasMultiLines && currentRow1RouteId.length() > 0) {
+        line = transit::nyc_subway::find_line(currentRow1RouteId);
     }
     if (!line) {
         line = parse_route_command(message);
