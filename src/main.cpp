@@ -65,6 +65,8 @@ String lastRenderedRouteId = "";
 String currentInfoLine1 = "N1 --";
 String currentInfoLine2 = "N2 --";
 String currentInfoLine3 = "N3 --";
+bool timeSynced = false;
+unsigned long lastTimeSyncAttemptMs = 0;
 
 // Forward declarations
 bool connect_ESP_to_mqtt();
@@ -72,6 +74,28 @@ void mqtt_publish_online();
 void mqtt_callback(char *topic, byte *payload, unsigned int length);
 const transit::LineDefinition *parse_route_command(const String &message);
 void render_route_logo(const String &route_id);
+
+static bool sync_time_utc(uint32_t timeoutMs = 10000) {
+    setenv("TZ", "UTC0", 1);
+    tzset();
+    configTime(0, 0, "pool.ntp.org", "time.nist.gov", "time.google.com");
+
+    time_t now = 0;
+    unsigned long start = millis();
+    while (now < 1700000000 && (millis() - start) < timeoutMs) {
+        delay(200);
+        time(&now);
+    }
+
+    if (now >= 1700000000) {
+        timeSynced = true;
+        Serial.printf("[TIME] Synced UTC epoch=%ld\n", (long)now);
+        return true;
+    }
+
+    Serial.println("[TIME] NTP sync timeout");
+    return false;
+}
 
 // starts the ESP32 in Access Point mode with the specified SSID and password
 boolean start_ESP_wifi() {
@@ -254,7 +278,8 @@ void phone_to_ESP_connection() {
               HOME_password.c_str(),
               HOME_user.c_str())) {
 
-            Serial.println("[ESP] Successfully connected to WiFi!");
+          Serial.println("[ESP] Successfully connected to WiFi!");
+            sync_time_utc();
 
             // NEW — SAVE CREDENTIALS
             save_wifi_credentials(HOME_ssid, HOME_password, HOME_user);
@@ -518,7 +543,27 @@ void mqtt_callback(char *topic, byte *payload, unsigned int length) {
     } else {
         currentInfoLine1 = "STOP --";
     }
-    currentInfoLine2 = "";
+    String etaLine1, etaLine2, etaLine3;
+    build_eta_lines(message, etaLine1, etaLine2, etaLine3);
+
+    auto etaValue = [](const String &l) -> String {
+        int spacePos = l.indexOf(' ');
+        if (spacePos >= 0 && spacePos + 1 < (int)l.length()) {
+            return l.substring(spacePos + 1);
+        }
+        return l;
+    };
+
+    String e1 = etaValue(etaLine1);
+    String e2 = etaValue(etaLine2);
+    String e3 = etaValue(etaLine3);
+    String arrivalsCompact = "";
+    if (e1 != "--") arrivalsCompact += e1;
+    if (e2 != "--") arrivalsCompact += (arrivalsCompact.length() ? " " : "") + e2;
+    if (e3 != "--") arrivalsCompact += (arrivalsCompact.length() ? " " : "") + e3;
+    if (!arrivalsCompact.length()) arrivalsCompact = "--";
+
+    currentInfoLine2 = arrivalsCompact;
     currentInfoLine3 = "";
     if (lineRaw.length() > 0 || provider.length() > 0 || stop.length() > 0 || stopId.length() > 0 || direction.length() > 0) {
         Serial.printf("[MQTT] Refresh payload provider=%s line=%s stop=%s stopId=%s direction=%s\n",
@@ -607,6 +652,7 @@ void setup() {
           savedUser.c_str())) {
 
           Serial.println("[ESP] Connected using saved credentials");
+          sync_time_utc();
 
           if (connect_ESP_to_mqtt()) {
 
@@ -662,6 +708,14 @@ void loop() {
   // Reconnect to MQTT if Wi-Fi is up but MQTT dropped.
   if (WiFi.status() == WL_CONNECTED && !mqtt.connected()) {
       connect_ESP_to_mqtt();
+  }
+
+  if (WiFi.status() == WL_CONNECTED && !timeSynced) {
+      unsigned long nowMs = millis();
+      if (nowMs - lastTimeSyncAttemptMs >= 30000) {
+          lastTimeSyncAttemptMs = nowMs;
+          sync_time_utc(3000);
+      }
   }
 
   if (mqtt.connected()) {
