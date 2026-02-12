@@ -14,6 +14,7 @@
 #include <PubSubClient.h>
 #include <Preferences.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
+#include <ctype.h>
 #include "color.h"
 
 constexpr uint16_t PANEL_WIDTH = 64;
@@ -304,12 +305,9 @@ bool connect_ESP_to_mqtt() {
 
         Serial.println("[MQTT] Connected");
 
-        String topic =
-        "/device/" + deviceId + "/commands";
-
-        mqtt.subscribe(topic.c_str());
-
-        Serial.println("[MQTT] Subscribed to commands");
+        String deviceTopic = "/device/" + deviceId + "/commands";
+        mqtt.subscribe(deviceTopic.c_str());
+        Serial.printf("[MQTT] Subscribed to: %s\n", deviceTopic.c_str());
 
         return true;
     }
@@ -333,7 +331,66 @@ void mqtt_publish_online() {
 }
 
 const transit::LineDefinition *parse_route_command(const String &message) {
-    return transit::nyc_subway::parse_line_from_message(message);
+    String trimmed = message;
+    trimmed.trim();
+    if (trimmed.length() >= 2 &&
+        ((trimmed[0] == '"' && trimmed[trimmed.length() - 1] == '"') ||
+         (trimmed[0] == '\'' && trimmed[trimmed.length() - 1] == '\''))) {
+        trimmed = trimmed.substring(1, trimmed.length() - 1);
+    }
+
+    if (const transit::LineDefinition *line = transit::nyc_subway::find_line(trimmed)) {
+        return line;
+    }
+
+    if (const transit::LineDefinition *line = transit::nyc_subway::parse_line_from_message(message)) {
+        return line;
+    }
+
+    // Handle double-encoded JSON payloads like:
+    // "{\"provider\":\"mta\",\"line\":\"E\",...}"
+    String unescaped = message;
+    unescaped.replace("\\\"", "\"");
+    unescaped.replace("\\\\", "\\");
+    if (unescaped != message) {
+        if (const transit::LineDefinition *line = transit::nyc_subway::parse_line_from_message(unescaped)) {
+            return line;
+        }
+    }
+
+    return nullptr;
+}
+
+static String extract_json_string_field(const String &json, const char *field) {
+    String key = "\"";
+    key += field;
+    key += "\"";
+
+    int keyPos = json.indexOf(key);
+    if (keyPos < 0) return "";
+
+    int colonPos = json.indexOf(':', keyPos + key.length());
+    if (colonPos < 0) return "";
+
+    int i = colonPos + 1;
+    while (i < (int)json.length() && (json[i] == ' ' || json[i] == '\t')) i++;
+    if (i >= (int)json.length()) return "";
+
+    if (json[i] == '"') {
+        int end = json.indexOf('"', i + 1);
+        if (end < 0) return "";
+        return json.substring(i + 1, end);
+    }
+
+    int end = i;
+    while (end < (int)json.length()) {
+        char c = json[end];
+        if (!(isalnum((unsigned char)c) || c == '_' || c == '-')) break;
+        end++;
+    }
+
+    if (end <= i) return "";
+    return json.substring(i, end);
 }
 
 void render_route_logo(const String &route_id) {
@@ -369,6 +426,17 @@ void mqtt_callback(char *topic, byte *payload, unsigned int length) {
     }
 
     Serial.printf("[MQTT] Message on %s: %s\n", topic, message.c_str());
+    String provider = extract_json_string_field(message, "provider");
+    String lineRaw = extract_json_string_field(message, "line");
+    String stop = extract_json_string_field(message, "stop");
+    String direction = extract_json_string_field(message, "direction");
+    if (lineRaw.length() > 0 || provider.length() > 0 || stop.length() > 0 || direction.length() > 0) {
+        Serial.printf("[MQTT] Refresh payload provider=%s line=%s stop=%s direction=%s\n",
+                      provider.length() ? provider.c_str() : "-",
+                      lineRaw.length() ? lineRaw.c_str() : "-",
+                      stop.length() ? stop.c_str() : "-",
+                      direction.length() ? direction.c_str() : "-");
+    }
 
     const transit::LineDefinition *line = parse_route_command(message);
     if (!line) {
@@ -504,7 +572,7 @@ void loop() {
   }
 
   if (mqtt.connected()) {
-      Serial.println("[MQTT] connected");
+      Serial.printf("[MQTT] connected deviceId=%s\n", deviceId.c_str());
       mqtt.loop();
   }
 
