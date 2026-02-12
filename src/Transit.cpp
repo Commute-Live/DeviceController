@@ -61,7 +61,7 @@ void draw_transit_logo(int center_x,
   int16_t ty = cy - (y1 + (int16_t)h / 2);
 
   // The "1" glyph appears optically left/top-heavy at this size.
-  if (letter == '1') {
+  if (letter == '1' || letter == '2') {
     tx += 1;
     ty += 1;
   }
