@@ -1,9 +1,9 @@
 #include "Transit.h"
-#include <Adafruit_Protomatter.h>
+#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include "color.h"
 
 // Matrix instance lives in main.cpp; we render into it here.
-extern Adafruit_Protomatter matrix;
+extern MatrixPanel_I2S_DMA *matrix;
 
 /*
 GUIDE LINES FOR THIS FUNCTION:
@@ -34,27 +34,27 @@ void draw_transit_logo(int center_x,
   uint16_t letterColor = color_from_name(text_color, tb);
 
   if (clear) {
-    matrix.fillScreen(0);
+    matrix->fillScreen(0);
   }
-  matrix.setRotation(0);
+  matrix->setRotation(0);
 
   int16_t cx = center_x;
   int16_t cy = center_y;
 
   // Keep the full circle within bounds.
-  cx = constrain(cx, r, matrix.width() - r);
-  cy = constrain(cy, r, matrix.height() - r);
+  cx = constrain(cx, r, matrix->width() - r);
+  cy = constrain(cy, r, matrix->height() - r);
 
-  matrix.fillCircle(cx, cy, r, circleColor);
+  matrix->fillCircle(cx, cy, r, circleColor);
 
-  matrix.setTextWrap(false);
-  matrix.setTextColor(letterColor);
-  matrix.setTextSize(text_size);
+  matrix->setTextWrap(false);
+  matrix->setTextColor(letterColor);
+  matrix->setTextSize(text_size);
 
   char s[2] = {letter, '\0'};
   int16_t x1, y1;
   uint16_t w, h;
-  matrix.getTextBounds(s, 0, 0, &x1, &y1, &w, &h);
+  matrix->getTextBounds(s, 0, 0, &x1, &y1, &w, &h);
 
   // Center glyph bbox on circle center.
   int16_t tx = cx - (int16_t)w / 2 - x1;
@@ -65,15 +65,14 @@ void draw_transit_logo(int center_x,
   tx += 1;
   ty += 1;
 
-  matrix.setCursor(tx, ty);
-  matrix.print(s);
-  matrix.show();
+  matrix->setCursor(tx, ty);
+  matrix->print(s);
 }
 
 void draw_transit_logo_preset(const TransitLogoPreset &preset) {
   int center_y = preset.center_y;
   if (center_y < 0) {
-    center_y = matrix.height() / 2;
+    center_y = matrix->height() / 2;
   }
 
   draw_transit_logo(preset.center_x,
@@ -88,80 +87,16 @@ void draw_transit_logo_preset(const TransitLogoPreset &preset) {
                     preset.text_brightness);
 }
 
-const TransitLogoPreset LARGE_MTA_E = {
-    15,
-    -1,
-    'E',
-    "blue",
-    14,
-    20,
-    3,
-    true,
-    "white",
-    40,
-};
-
-const TransitLogoPreset LARGE_MTA_7 = {
-    15,
-    -1,
-    '7',
-    "purple",
-    14,
-    20,
-    3,
-    true,
-    "white",
-    40,
-};
-
-const TransitLogoPreset LARGE_MTA_G = {
-    15,
-    -1,
-    'G',
-    "green",
-    14,
-    20,
-    3,
-    true,
-    "white",
-    40,
-};
-
-const TransitLogoPreset SMALL_MTA_E = {
-    12,
-    -1,
-    'E',
-    "blue",
-    10,
-    20,
-    1,
-    true,
-    "white",
-    40,
-};
-
-const TransitLogoPreset SMALL_MTA_7 = {
-    36,
-    -1,
-    '7',
-    "purple",
-    10,
-    20,
-    1,
-    false,
-    "white",
-    40,
-};
-
-const TransitLogoPreset SMALL_MTA_G = {
-    48,
-    -1,
-    'G',
-    "green",
-    12,
-    20,
-    1,
-    false,
-    "white",
-    40,
-};
+void draw_transit_logo_large(char letter, const String &color) {
+  draw_transit_logo(
+      16,
+      matrix->height() / 2,
+      letter,
+      color,
+      14,
+      20,
+      3,
+      true,
+      "white",
+      40);
+}

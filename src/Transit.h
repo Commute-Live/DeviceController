@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 
 struct TransitLogoPreset {
   int center_x;
@@ -28,10 +29,7 @@ void draw_transit_logo(int center_x,
 
 
 void draw_transit_logo_preset(const TransitLogoPreset &preset);
+void draw_transit_logo_large(char letter, const String &color);
 
-extern const TransitLogoPreset LARGE_MTA_E;
-extern const TransitLogoPreset LARGE_MTA_7;
-extern const TransitLogoPreset LARGE_MTA_G;
-extern const TransitLogoPreset SMALL_MTA_E;
-extern const TransitLogoPreset SMALL_MTA_7;
-extern const TransitLogoPreset SMALL_MTA_G;
+// Matrix instance is defined in main.cpp (ESP32-HUB75-MatrixPanel-I2S-DMA)
+extern MatrixPanel_I2S_DMA *matrix;

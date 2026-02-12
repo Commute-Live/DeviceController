@@ -5,40 +5,39 @@
 
 #include "WiFi.h"
 #include "Transit.h"
+#include "transit/nyc_subway_catalog.h"
 #include "string.h"
 #include <Arduino.h>
 #include <WebServer.h>
 #include <esp_wifi.h>
 #include <esp_wpa2.h>
 #include <PubSubClient.h>
-#include <Preferences.h>   // ADDED
-#include <Adafruit_Protomatter.h>
+#include <Preferences.h>
+#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
+#include "color.h"
 
 constexpr uint16_t PANEL_WIDTH = 64;
 constexpr uint8_t PANEL_CHAIN_LENGTH = 2;  // number of chained 64x32 panels
-constexpr uint16_t MATRIX_WIDTH = PANEL_WIDTH * PANEL_CHAIN_LENGTH;
+constexpr uint16_t PANEL_CHAIN_WIDTH = PANEL_WIDTH * PANEL_CHAIN_LENGTH;  // avoid clash with library macro
 
 // LED MATRIX PINS (MatrixPortal S3)
-uint8_t rgbPins[]  = {42, 40, 41, 38, 37, 39}; // R1,B1,G1,R2,B2,G2
-uint8_t addrPins[] = {45, 36, 48, 35, 21};     // A,B,C,D,E
-
-uint8_t clockPin = 2;
-uint8_t latchPin = 47;
-uint8_t oePin    = 14;
+#define R1_PIN 42
+#define G1_PIN 40
+#define B1_PIN 41
+#define R2_PIN 38
+#define G2_PIN 37
+#define B2_PIN 39
+#define A_PIN  45
+#define B_PIN  36
+#define C_PIN  48
+#define D_PIN  35
+#define E_PIN  21
+#define LAT_PIN 47
+#define OE_PIN  14
+#define CLK_PIN 2
 
 // MATRIX OBJECT
-Adafruit_Protomatter matrix(
-  MATRIX_WIDTH,           // Total width (64px panel * 2 panels)
-  4,                      // Bit depth; 6 is library default for ESP32
-  PANEL_CHAIN_LENGTH,     // Number of daisy-chained panels
-  rgbPins,
-  sizeof(addrPins),       // Number of address pins (5 for 64-row panels)
-  addrPins,
-  clockPin,
-  latchPin,
-  oePin,
-  true                    // Double-buffer for smoother updates
-);
+MatrixPanel_I2S_DMA *matrix = nullptr;
 
 WebServer server(80);
 
@@ -60,15 +59,15 @@ Preferences prefs;
 
 // Global variable to store the device ID
 String deviceId;
-char currentRoute = 'E';
-char lastRenderedRoute = '\0';
+String currentRouteId = transit::nyc_subway::default_line().id;
+String lastRenderedRouteId = "";
 
 // Forward declarations
 bool connect_ESP_to_mqtt();
 void mqtt_publish_online();
 void mqtt_callback(char *topic, byte *payload, unsigned int length);
-char parse_route_command(const String &message);
-void render_route_logo(char route);
+const transit::LineDefinition *parse_route_command(const String &message);
+void render_route_logo(const String &route_id);
 
 // starts the ESP32 in Access Point mode with the specified SSID and password
 boolean start_ESP_wifi() {
@@ -333,39 +332,33 @@ void mqtt_publish_online() {
     Serial.println("[MQTT] Published online");
 }
 
-char parse_route_command(const String &message) {
-    if (message == "7" || message.indexOf("\"route\":\"7\"") >= 0 || message.indexOf("\"route\": \"7\"") >= 0) {
-        return '7';
-    }
-    if (message == "E" || message == "e" || message.indexOf("\"route\":\"E\"") >= 0 || message.indexOf("\"route\":\"e\"") >= 0 ||
-        message.indexOf("\"route\": \"E\"") >= 0 || message.indexOf("\"route\": \"e\"") >= 0) {
-        return 'E';
-    }
-    if (message == "G" || message == "g" || message.indexOf("\"route\":\"G\"") >= 0 || message.indexOf("\"route\":\"g\"") >= 0 ||
-        message.indexOf("\"route\": \"G\"") >= 0 || message.indexOf("\"route\": \"g\"") >= 0) {
-        return 'G';
-    }
-    return '\0';
+const transit::LineDefinition *parse_route_command(const String &message) {
+    return transit::nyc_subway::parse_line_from_message(message);
 }
 
-void render_route_logo(char route) {
-    if (route >= 'a' && route <= 'z') {
-        route = route - ('a' - 'A');
+void render_route_logo(const String &route_id) {
+    const transit::LineDefinition *line = transit::nyc_subway::find_line(route_id);
+    if (!line) {
+        line = &transit::nyc_subway::default_line();
     }
-    if (route == '7') {
-        draw_transit_logo_preset(LARGE_MTA_7);
-        return;
-    }
-    if (route == 'E') {
-        draw_transit_logo_preset(LARGE_MTA_E);
-        return;
-    }
-    if (route == 'G') {
-        draw_transit_logo_preset(LARGE_MTA_G);
-        return;
-    }
-    // Keep display deterministic for unknown values.
-    draw_transit_logo_preset(LARGE_MTA_E);
+    draw_transit_logo_large(line->symbol, line->color_hex);
+
+    matrix->setTextWrap(false);
+    matrix->setTextColor(color_from_name("white", 40));
+    matrix->setTextSize(1);
+
+    const int info_x = 34;
+    const int hex_y = 8;
+    const int name_y = 20;
+
+    matrix->setCursor(info_x, hex_y);
+    matrix->print(line->color_hex);
+
+    matrix->setCursor(info_x, name_y);
+    matrix->print(line->color_name);
+
+    // Keep a guaranteed 1-pixel left gutter at x=0.
+    matrix->drawFastVLine(0, 0, matrix->height(), 0);
 }
 
 void mqtt_callback(char *topic, byte *payload, unsigned int length) {
@@ -377,15 +370,15 @@ void mqtt_callback(char *topic, byte *payload, unsigned int length) {
 
     Serial.printf("[MQTT] Message on %s: %s\n", topic, message.c_str());
 
-    char route = parse_route_command(message);
-    if (route == '\0') {
+    const transit::LineDefinition *line = parse_route_command(message);
+    if (!line) {
         Serial.println("[MQTT] Ignored command: missing/invalid route");
         return;
     }
 
-    currentRoute = route;
-    render_route_logo(route);
-    Serial.printf("[MQTT] Rendered route logo: %c\n", route);
+    currentRouteId = line->id;
+    render_route_logo(currentRouteId);
+    Serial.printf("[MQTT] Rendered route logo: %s (%c)\n", line->id, line->symbol);
 }
 
 
@@ -393,11 +386,38 @@ void setup() {
 
   Serial.begin(115200);
 
-  if (matrix.begin() != PROTOMATTER_OK) {
-    while (1);
+  // Configure matrix pins
+  HUB75_I2S_CFG::i2s_pins _pins={
+    R1_PIN, G1_PIN, B1_PIN, 
+    R2_PIN, G2_PIN, B2_PIN, 
+    A_PIN, B_PIN, C_PIN, D_PIN, E_PIN, 
+    LAT_PIN, OE_PIN, CLK_PIN
+  };
+
+  // Configure matrix
+  HUB75_I2S_CFG mxconfig(
+    64,                    // Panel width
+    32,                    // Panel height
+    PANEL_CHAIN_LENGTH,    // Chain length
+    _pins                  // Pin mapping
+  );
+
+  // Create and initialize matrix
+  matrix = new MatrixPanel_I2S_DMA(mxconfig);
+  
+  if(!matrix->begin()) {
+    Serial.println("Matrix initialization failed!");
+    while(1);
   }
-  matrix.setTextWrap(true);
-  matrix.setTextSize(1);
+  
+  matrix->setBrightness8(255);  // brighten panels (0-255)
+  matrix->clearScreen();
+  matrix->setTextWrap(true);
+  matrix->setTextSize(1);
+
+  // Draw initial logo immediately
+  render_route_logo(currentRouteId);
+  lastRenderedRouteId = currentRouteId;
 
   deviceId = get_device_id();
 
@@ -469,9 +489,9 @@ void loop() {
   bool isSomeoneConnected =
   WiFi.softAPgetStationNum() > 0;
 
-  if (lastRenderedRoute != currentRoute) {
-      render_route_logo(currentRoute);
-      lastRenderedRoute = currentRoute;
+  if (lastRenderedRouteId != currentRouteId) {
+      render_route_logo(currentRouteId);
+      lastRenderedRouteId = currentRouteId;
   }
 
   if (isSomeoneConnected) {
