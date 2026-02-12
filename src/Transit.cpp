@@ -69,24 +69,6 @@ void draw_transit_logo(int center_x,
   matrix->print(s);
 }
 
-void draw_transit_logo_preset(const TransitLogoPreset &preset) {
-  int center_y = preset.center_y;
-  if (center_y < 0) {
-    center_y = matrix->height() / 2;
-  }
-
-  draw_transit_logo(preset.center_x,
-                    center_y,
-                    preset.letter,
-                    preset.color,
-                    preset.radius,
-                    preset.brightness,
-                    preset.text_size,
-                    preset.clear,
-                    preset.text_color,
-                    preset.text_brightness);
-}
-
 void draw_transit_logo_large(char letter, const String &color) {
   draw_transit_logo(
       16,

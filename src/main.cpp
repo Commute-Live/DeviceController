@@ -15,11 +15,11 @@
 #include <Preferences.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <ctype.h>
+#include <time.h>
 #include "color.h"
 
 constexpr uint16_t PANEL_WIDTH = 64;
 constexpr uint8_t PANEL_CHAIN_LENGTH = 2;  // number of chained 64x32 panels
-constexpr uint16_t PANEL_CHAIN_WIDTH = PANEL_WIDTH * PANEL_CHAIN_LENGTH;  // avoid clash with library macro
 
 // LED MATRIX PINS (MatrixPortal S3)
 #define R1_PIN 42
@@ -62,6 +62,9 @@ Preferences prefs;
 String deviceId;
 String currentRouteId = transit::nyc_subway::default_line().id;
 String lastRenderedRouteId = "";
+String currentInfoLine1 = "N1 --";
+String currentInfoLine2 = "N2 --";
+String currentInfoLine3 = "N3 --";
 
 // Forward declarations
 bool connect_ESP_to_mqtt();
@@ -393,6 +396,85 @@ static String extract_json_string_field(const String &json, const char *field) {
     return json.substring(i, end);
 }
 
+static bool parse_iso8601(const String &iso, time_t &out) {
+    int y, mo, d, h, mi, s;
+    if (sscanf(iso.c_str(), "%d-%d-%dT%d:%d:%d", &y, &mo, &d, &h, &mi, &s) != 6) {
+        return false;
+    }
+    struct tm tmv = {};
+    tmv.tm_year = y - 1900;
+    tmv.tm_mon = mo - 1;
+    tmv.tm_mday = d;
+    tmv.tm_hour = h;
+    tmv.tm_min = mi;
+    tmv.tm_sec = s;
+    tmv.tm_isdst = -1;
+    out = mktime(&tmv);
+    return out != (time_t)-1;
+}
+
+static int extract_next_arrival_list(const String &json, String outArrivals[], int maxCount) {
+    int arrPos = json.indexOf("\"nextArrivals\"");
+    if (arrPos < 0 || maxCount <= 0) return 0;
+
+    int count = 0;
+    int pos = arrPos;
+    while (count < maxCount) {
+        int keyPos = json.indexOf("\"arrivalTime\":\"", pos);
+        if (keyPos < 0) break;
+        int valueStart = keyPos + strlen("\"arrivalTime\":\"");
+        int valueEnd = json.indexOf('"', valueStart);
+        if (valueEnd < 0) break;
+        outArrivals[count++] = json.substring(valueStart, valueEnd);
+        pos = valueEnd + 1;
+    }
+    return count;
+}
+
+static String eta_label_for_arrival(const String &arrivalIso, time_t fetchedTs) {
+    time_t arrivalTs;
+    if (parse_iso8601(arrivalIso, arrivalTs)) {
+        long diffSec = (long)difftime(arrivalTs, fetchedTs);
+        if (diffSec < 0) diffSec = 0;
+        long mins = (diffSec + 59) / 60;
+        if (mins == 0) return "NOW";
+        return String(mins) + "m";
+    }
+    if (arrivalIso.length() >= 16) {
+        return arrivalIso.substring(11, 16);
+    }
+    return "--";
+}
+
+static void build_eta_lines(const String &message, String &line1, String &line2, String &line3) {
+    line1 = "N1 --";
+    line2 = "N2 --";
+    line3 = "N3 --";
+
+    String fetchedAt = extract_json_string_field(message, "fetchedAt");
+    time_t fetchedTs = 0;
+    bool hasFetchedTs = fetchedAt.length() > 0 && parse_iso8601(fetchedAt, fetchedTs);
+
+    String arrivals[3];
+    int n = extract_next_arrival_list(message, arrivals, 3);
+    if (n <= 0) return;
+
+    String labels[3];
+    for (int i = 0; i < n; i++) {
+        if (hasFetchedTs) {
+            labels[i] = eta_label_for_arrival(arrivals[i], fetchedTs);
+        } else if (arrivals[i].length() >= 16) {
+            labels[i] = arrivals[i].substring(11, 16);
+        } else {
+            labels[i] = "--";
+        }
+    }
+
+    if (n >= 1) line1 = "N1 " + labels[0];
+    if (n >= 2) line2 = "N2 " + labels[1];
+    if (n >= 3) line3 = "N3 " + labels[2];
+}
+
 void render_route_logo(const String &route_id) {
     const transit::LineDefinition *line = transit::nyc_subway::find_line(route_id);
     if (!line) {
@@ -405,14 +487,12 @@ void render_route_logo(const String &route_id) {
     matrix->setTextSize(1);
 
     const int info_x = 34;
-    const int hex_y = 8;
-    const int name_y = 20;
-
-    matrix->setCursor(info_x, hex_y);
-    matrix->print(line->color_hex);
-
-    matrix->setCursor(info_x, name_y);
-    matrix->print(line->color_name);
+    matrix->setCursor(info_x, 2);
+    matrix->print(currentInfoLine1);
+    matrix->setCursor(info_x, 12);
+    matrix->print(currentInfoLine2);
+    matrix->setCursor(info_x, 22);
+    matrix->print(currentInfoLine3);
 
     // Keep a guaranteed 1-pixel left gutter at x=0.
     matrix->drawFastVLine(0, 0, matrix->height(), 0);
@@ -429,12 +509,23 @@ void mqtt_callback(char *topic, byte *payload, unsigned int length) {
     String provider = extract_json_string_field(message, "provider");
     String lineRaw = extract_json_string_field(message, "line");
     String stop = extract_json_string_field(message, "stop");
+    String stopId = extract_json_string_field(message, "stopId");
     String direction = extract_json_string_field(message, "direction");
-    if (lineRaw.length() > 0 || provider.length() > 0 || stop.length() > 0 || direction.length() > 0) {
-        Serial.printf("[MQTT] Refresh payload provider=%s line=%s stop=%s direction=%s\n",
+    if (stop.length() > 0) {
+        currentInfoLine1 = stop;
+    } else if (stopId.length() > 0) {
+        currentInfoLine1 = stopId;
+    } else {
+        currentInfoLine1 = "STOP --";
+    }
+    currentInfoLine2 = "";
+    currentInfoLine3 = "";
+    if (lineRaw.length() > 0 || provider.length() > 0 || stop.length() > 0 || stopId.length() > 0 || direction.length() > 0) {
+        Serial.printf("[MQTT] Refresh payload provider=%s line=%s stop=%s stopId=%s direction=%s\n",
                       provider.length() ? provider.c_str() : "-",
                       lineRaw.length() ? lineRaw.c_str() : "-",
                       stop.length() ? stop.c_str() : "-",
+                      stopId.length() ? stopId.c_str() : "-",
                       direction.length() ? direction.c_str() : "-");
     }
 
@@ -453,6 +544,8 @@ void mqtt_callback(char *topic, byte *payload, unsigned int length) {
 void setup() {
 
   Serial.begin(115200);
+  mqtt.setBufferSize(4096);
+  mqtt.setKeepAlive(30);
 
   // Configure matrix pins
   HUB75_I2S_CFG::i2s_pins _pins={
@@ -572,7 +665,6 @@ void loop() {
   }
 
   if (mqtt.connected()) {
-      Serial.printf("[MQTT] connected deviceId=%s\n", deviceId.c_str());
       mqtt.loop();
   }
 

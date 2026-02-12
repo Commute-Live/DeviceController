@@ -3,19 +3,6 @@
 #include <Arduino.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 
-struct TransitLogoPreset {
-  int center_x;
-  int center_y;
-  char letter;
-  const char *color;
-  int radius;
-  int brightness;
-  int text_size;
-  bool clear;
-  const char *text_color;
-  int text_brightness;
-};
-
 void draw_transit_logo(int center_x,
                        int center_y,
                        char letter,
@@ -26,9 +13,6 @@ void draw_transit_logo(int center_x,
                        bool clear,
                        const String &text_color = "white",
                        int text_brightness = -1);
-
-
-void draw_transit_logo_preset(const TransitLogoPreset &preset);
 void draw_transit_logo_large(char letter, const String &color);
 
 // Matrix instance is defined in main.cpp (ESP32-HUB75-MatrixPanel-I2S-DMA)
