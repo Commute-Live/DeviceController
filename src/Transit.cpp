@@ -60,11 +60,9 @@ void draw_transit_logo(int center_x,
   int16_t tx = cx - (x1 + (int16_t)w / 2);
   int16_t ty = cy - (y1 + (int16_t)h / 2);
 
-  // The "1" glyph appears optically left/top-heavy at this size.
-  if (letter == '1' || letter == '2') {
-    tx += 1;
-    ty += 1;
-  }
+  // Apply a small visual nudge for this font size on HUB75.
+  tx += 1;
+  ty += 1;
 
   matrix->setCursor(tx, ty);
   matrix->print(s);
