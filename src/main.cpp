@@ -500,6 +500,122 @@ static void build_eta_lines(const String &message, String &line1, String &line2,
     if (n >= 3) line3 = "N3 " + labels[2];
 }
 
+static int find_matching_bracket(const String &s, int openPos, char openCh, char closeCh) {
+    if (openPos < 0 || openPos >= (int)s.length() || s[openPos] != openCh) return -1;
+    int depth = 0;
+    bool inQuotes = false;
+    bool escapeNext = false;
+    for (int i = openPos; i < (int)s.length(); i++) {
+        char c = s[i];
+        if (escapeNext) {
+            escapeNext = false;
+            continue;
+        }
+        if (c == '\\') {
+            escapeNext = true;
+            continue;
+        }
+        if (c == '"') {
+            inQuotes = !inQuotes;
+            continue;
+        }
+        if (inQuotes) continue;
+        if (c == openCh) depth++;
+        else if (c == closeCh) {
+            depth--;
+            if (depth == 0) return i;
+        }
+    }
+    return -1;
+}
+
+static String format_arrivals_compact(const String &json, const String &fallbackFetchedAt) {
+    String fetchedAt = extract_json_string_field(json, "fetchedAt");
+    if (fetchedAt.length() == 0) fetchedAt = fallbackFetchedAt;
+
+    time_t fetchedTs = 0;
+    bool hasFetchedTs = fetchedAt.length() > 0 && parse_iso8601(fetchedAt, fetchedTs);
+
+    String arrivals[3];
+    int n = extract_next_arrival_list(json, arrivals, 3);
+    if (n <= 0) return "--";
+
+    String compact = "";
+    for (int i = 0; i < n; i++) {
+        String label = "--";
+        if (hasFetchedTs) {
+            label = eta_label_for_arrival(arrivals[i], fetchedTs);
+        } else if (arrivals[i].length() >= 16) {
+            label = arrivals[i].substring(11, 16);
+        }
+
+        if (label != "--") {
+            compact += (compact.length() ? " " : "");
+            compact += label;
+        }
+    }
+
+    return compact.length() ? compact : "--";
+}
+
+static bool parse_lines_payload(const String &message,
+                                String &primaryLine,
+                                String &stopLabel,
+                                String &row1,
+                                String &row2) {
+    int linesKeyPos = message.indexOf("\"lines\"");
+    if (linesKeyPos < 0) return false;
+
+    int arrayOpen = message.indexOf('[', linesKeyPos);
+    if (arrayOpen < 0) return false;
+    int arrayClose = find_matching_bracket(message, arrayOpen, '[', ']');
+    if (arrayClose < 0) return false;
+
+    String fallbackFetchedAt = extract_json_string_field(message, "fetchedAt");
+    String fallbackStop = extract_json_string_field(message, "stop");
+    String fallbackStopId = extract_json_string_field(message, "stopId");
+    String linesJson = message.substring(arrayOpen + 1, arrayClose);
+
+    int cursor = 0;
+    int rowCount = 0;
+    while (rowCount < 2) {
+        int objStart = linesJson.indexOf('{', cursor);
+        if (objStart < 0) break;
+        int objEnd = find_matching_bracket(linesJson, objStart, '{', '}');
+        if (objEnd < 0) break;
+
+        String item = linesJson.substring(objStart, objEnd + 1);
+        cursor = objEnd + 1;
+
+        String line = extract_json_string_field(item, "line");
+        if (line.length() == 0) continue;
+
+        String stop = extract_json_string_field(item, "stop");
+        String stopId = extract_json_string_field(item, "stopId");
+        if (stopLabel.length() == 0) {
+            if (stop.length() > 0) stopLabel = stop;
+            else if (stopId.length() > 0) stopLabel = stopId;
+        }
+
+        String row = line + " " + format_arrivals_compact(item, fallbackFetchedAt);
+        if (rowCount == 0) {
+            primaryLine = line;
+            row1 = row;
+        } else if (rowCount == 1) {
+            row2 = row;
+        }
+        rowCount++;
+    }
+
+    if (stopLabel.length() == 0) {
+        if (fallbackStop.length() > 0) stopLabel = fallbackStop;
+        else if (fallbackStopId.length() > 0) stopLabel = fallbackStopId;
+        else stopLabel = "STOP --";
+    }
+
+    return rowCount > 0;
+}
+
 void render_route_logo(const String &route_id) {
     const transit::LineDefinition *line = transit::nyc_subway::find_line(route_id);
     if (!line) {
@@ -536,35 +652,47 @@ void mqtt_callback(char *topic, byte *payload, unsigned int length) {
     String stop = extract_json_string_field(message, "stop");
     String stopId = extract_json_string_field(message, "stopId");
     String direction = extract_json_string_field(message, "direction");
-    if (stop.length() > 0) {
-        currentInfoLine1 = stop;
-    } else if (stopId.length() > 0) {
-        currentInfoLine1 = stopId;
+    String multiPrimaryLine;
+    String multiStopLabel;
+    String multiRow1;
+    String multiRow2;
+    bool hasMultiLines = parse_lines_payload(message, multiPrimaryLine, multiStopLabel, multiRow1, multiRow2);
+
+    if (hasMultiLines) {
+        currentInfoLine1 = multiStopLabel;
+        currentInfoLine2 = multiRow1;
+        currentInfoLine3 = multiRow2;
     } else {
-        currentInfoLine1 = "STOP --";
-    }
-    String etaLine1, etaLine2, etaLine3;
-    build_eta_lines(message, etaLine1, etaLine2, etaLine3);
-
-    auto etaValue = [](const String &l) -> String {
-        int spacePos = l.indexOf(' ');
-        if (spacePos >= 0 && spacePos + 1 < (int)l.length()) {
-            return l.substring(spacePos + 1);
+        if (stop.length() > 0) {
+            currentInfoLine1 = stop;
+        } else if (stopId.length() > 0) {
+            currentInfoLine1 = stopId;
+        } else {
+            currentInfoLine1 = "STOP --";
         }
-        return l;
-    };
+        String etaLine1, etaLine2, etaLine3;
+        build_eta_lines(message, etaLine1, etaLine2, etaLine3);
 
-    String e1 = etaValue(etaLine1);
-    String e2 = etaValue(etaLine2);
-    String e3 = etaValue(etaLine3);
-    String arrivalsCompact = "";
-    if (e1 != "--") arrivalsCompact += e1;
-    if (e2 != "--") arrivalsCompact += (arrivalsCompact.length() ? " " : "") + e2;
-    if (e3 != "--") arrivalsCompact += (arrivalsCompact.length() ? " " : "") + e3;
-    if (!arrivalsCompact.length()) arrivalsCompact = "--";
+        auto etaValue = [](const String &l) -> String {
+            int spacePos = l.indexOf(' ');
+            if (spacePos >= 0 && spacePos + 1 < (int)l.length()) {
+                return l.substring(spacePos + 1);
+            }
+            return l;
+        };
 
-    currentInfoLine2 = arrivalsCompact;
-    currentInfoLine3 = "";
+        String e1 = etaValue(etaLine1);
+        String e2 = etaValue(etaLine2);
+        String e3 = etaValue(etaLine3);
+        String arrivalsCompact = "";
+        if (e1 != "--") arrivalsCompact += e1;
+        if (e2 != "--") arrivalsCompact += (arrivalsCompact.length() ? " " : "") + e2;
+        if (e3 != "--") arrivalsCompact += (arrivalsCompact.length() ? " " : "") + e3;
+        if (!arrivalsCompact.length()) arrivalsCompact = "--";
+
+        currentInfoLine2 = arrivalsCompact;
+        currentInfoLine3 = "";
+    }
     if (lineRaw.length() > 0 || provider.length() > 0 || stop.length() > 0 || stopId.length() > 0 || direction.length() > 0) {
         Serial.printf("[MQTT] Refresh payload provider=%s line=%s stop=%s stopId=%s direction=%s\n",
                       provider.length() ? provider.c_str() : "-",
@@ -574,7 +702,13 @@ void mqtt_callback(char *topic, byte *payload, unsigned int length) {
                       direction.length() ? direction.c_str() : "-");
     }
 
-    const transit::LineDefinition *line = parse_route_command(message);
+    const transit::LineDefinition *line = nullptr;
+    if (hasMultiLines && multiPrimaryLine.length() > 0) {
+        line = transit::nyc_subway::find_line(multiPrimaryLine);
+    }
+    if (!line) {
+        line = parse_route_command(message);
+    }
     if (!line) {
         Serial.println("[MQTT] Ignored command: missing/invalid route");
         return;
