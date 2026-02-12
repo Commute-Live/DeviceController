@@ -56,14 +56,9 @@ void draw_transit_logo(int center_x,
   uint16_t w, h;
   matrix->getTextBounds(s, 0, 0, &x1, &y1, &w, &h);
 
-  // Center glyph bbox on circle center.
-  int16_t tx = cx - (int16_t)w / 2 - x1;
-  int16_t ty = cy - (int16_t)h / 2 - y1;
-
-  if ((w & 1) == 0) tx += 1;
-  if ((h & 1) == 0) ty += 1;
-  tx += 1;
-  ty += 1;
+  // Center glyph bbox on the circle center.
+  int16_t tx = cx - (x1 + (int16_t)w / 2);
+  int16_t ty = cy - (y1 + (int16_t)h / 2);
 
   matrix->setCursor(tx, ty);
   matrix->print(s);
