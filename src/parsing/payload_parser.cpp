@@ -76,8 +76,7 @@ static String eta_label_for_arrival(const String &arrivalIso, time_t fetchedTs) 
     long diffSec = (long)difftime(arrivalTs, fetchedTs);
     if (diffSec < 0) diffSec = 0;
     long mins = (diffSec + 59) / 60;
-    if (mins == 0) return "NOW";
-    return String(mins) + "m";
+    return String(mins) + "min";
   }
   if (arrivalIso.length() >= 16) {
     return arrivalIso.substring(11, 16);

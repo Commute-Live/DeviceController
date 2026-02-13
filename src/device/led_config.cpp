@@ -54,7 +54,7 @@ LedConfig defaults() {
       64,    // panelWidth
       32,    // panelHeight
       2,     // chainLength
-      120,   // brightness
+      255,   // brightness
       false  // serpentine
   };
 }

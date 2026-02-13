@@ -82,19 +82,27 @@ unsigned long rebootAtMs = 0;
 bool setupModeActive = false;
 bool hasTransitData = false;
 String lastStatusSignature = "";
+unsigned long lastLabelScrollMs = 0;
+int rowLabelScrollOffset[2] = {0, 0};
+String rowLabelLastText[2] = {"", ""};
+int rowLabelPauseTicks[2] = {0, 0};
+bool advanceLabelScroll = false;
 
 constexpr uint32_t WIFI_RETRY_BASE_MS = 1000;
 constexpr uint32_t WIFI_RETRY_MAX_MS = 60000;
 constexpr uint32_t MQTT_RETRY_BASE_MS = 1000;
 constexpr uint32_t MQTT_RETRY_MAX_MS = 60000;
 constexpr uint32_t RETRY_JITTER_MS = 750;
+constexpr uint32_t LABEL_SCROLL_INTERVAL_MS = 400;
+constexpr int LABEL_PAUSE_START_TICKS = 5;
+constexpr int LABEL_PAUSE_END_TICKS = 7;
 
 // Forward declarations
 bool connect_ESP_to_mqtt();
 void mqtt_publish_online();
 void mqtt_callback(char *topic, byte *payload, unsigned int length);
 const transit::LineDefinition *parse_route_command(const String &message);
-void render_route_logo(const String &route_id);
+void render_route_logo(const String &route_id, bool fullRedraw = true);
 void render_brand_status(const String &status, const String &detail = "");
 void get_device_config();
 void set_device_config();
@@ -313,53 +321,136 @@ const transit::LineDefinition *parse_route_command(const String &message) {
     return nullptr;
 }
 
-static void draw_row_with_logo(const String &routeId, const String &labelText, const String &etaText, int centerY) {
+static String build_scrolled_label(const String &label, int rowIndex, int maxChars) {
+    String text = label;
+    text.trim();
+    if (maxChars <= 0) return "";
+    if (text.length() <= 0) return "";
+
+    if (rowIndex < 0 || rowIndex > 1) {
+        rowIndex = 0;
+    }
+
+    if (text != rowLabelLastText[rowIndex]) {
+        rowLabelLastText[rowIndex] = text;
+        rowLabelScrollOffset[rowIndex] = 0;
+        rowLabelPauseTicks[rowIndex] = LABEL_PAUSE_START_TICKS;
+    }
+
+    if ((int)text.length() <= maxChars) {
+        rowLabelPauseTicks[rowIndex] = 0;
+        String padded = text;
+        while ((int)padded.length() < maxChars) {
+            padded += ' ';
+        }
+        return padded;
+    }
+
+    int offset = rowLabelScrollOffset[rowIndex];
+    int maxOffset = (int)text.length() - maxChars;
+    if (maxOffset < 0) maxOffset = 0;
+    if (offset < 0 || offset > maxOffset) {
+        offset = 0;
+        rowLabelScrollOffset[rowIndex] = 0;
+    }
+
+    if (advanceLabelScroll) {
+        if (rowLabelPauseTicks[rowIndex] > 0) {
+            rowLabelPauseTicks[rowIndex]--;
+        } else if (offset < maxOffset) {
+            offset++;
+            rowLabelScrollOffset[rowIndex] = offset;
+            if (offset >= maxOffset) {
+                rowLabelPauseTicks[rowIndex] = LABEL_PAUSE_END_TICKS;
+            }
+        } else {
+            rowLabelScrollOffset[rowIndex] = 0;
+            rowLabelPauseTicks[rowIndex] = LABEL_PAUSE_START_TICKS;
+            offset = 0;
+        }
+    }
+
+    String window = "";
+    for (int i = 0; i < maxChars; i++) {
+        int idx = offset + i;
+        if (idx >= 0 && idx < (int)text.length()) {
+            window += text[idx];
+        } else {
+            window += ' ';
+        }
+    }
+    return window;
+}
+
+static void draw_row_with_logo(const String &routeId,
+                               const String &labelText,
+                               const String &etaText,
+                               int centerY,
+                               int rowIndex,
+                               bool redrawFixed) {
     const transit::LineDefinition *line = transit::registry::find_line(routeId);
     if (!line) {
         line = &transit::registry::default_line();
     }
 
-    draw_transit_logo(
-        8,
-        centerY,
-        line->symbol,
-        line->color_hex,
-        6,
-        20,
-        1,
-        false,
-        "white",
-        40);
+    const int logoRadius = 6;
+    const int logoCenterX = logoRadius + 1; // fixed left margin = 1
 
+    const String eta = etaText.length() ? etaText : "--";
+
+    int16_t etaX1, etaY1;
+    uint16_t etaW, etaH;
     matrix->setTextWrap(false);
-    matrix->setTextColor(transit::providers::nyc::subway::color_from_name("white", 40));
     matrix->setTextSize(1);
-    matrix->setCursor(16, centerY - 3);
-    String eta = etaText.length() ? etaText : "--";
+    matrix->getTextBounds(eta.c_str(), 0, 0, &etaX1, &etaY1, &etaW, &etaH);
+
+    const int etaX = matrix->width() - static_cast<int>(etaW) - 1; // fixed right margin = 1
+    const int labelStartX = (logoCenterX + logoRadius + 1) + 1;   // 1px after logo
+    const int labelEndX = etaX - 1;
+    const int labelPx = labelEndX - labelStartX + 1;
+    const int labelChars = labelPx > 0 ? labelPx / 6 : 0;
+
+    if (redrawFixed) {
+        draw_transit_logo(
+            logoCenterX,
+            centerY,
+            line->symbol,
+            line->color_hex,
+            logoRadius,
+            20,
+            1,
+            false,
+            "white",
+            40);
+
+        matrix->setTextColor(transit::providers::nyc::subway::color_from_name("white", 40));
+        matrix->setCursor(etaX, centerY - 3);
+        matrix->print(eta);
+    }
+
     String label = labelText;
     label.trim();
     if (label.length() == 0) label = line->id;
+    label = build_scrolled_label(label, rowIndex, labelChars);
 
-    const int maxChars = 17;
-    const int reserve = eta.length() + 1;  // trailing space + eta
-    int labelChars = maxChars - reserve;
-    if (labelChars < 3) labelChars = 3;
-    if ((int)label.length() > labelChars) {
-        label = label.substring(0, labelChars - 1) + ".";
-    }
-
-    String rowText = label + " " + eta;
-    matrix->print(rowText);
+    // Draw text with explicit background to reduce flicker from clear-and-redraw.
+    matrix->setTextColor(transit::providers::nyc::subway::color_from_name("white", 40), 0);
+    matrix->setCursor(labelStartX, centerY - 3);
+    matrix->print(label);
 }
 
-void render_route_logo(const String &route_id) {
+void render_route_logo(const String &route_id, bool fullRedraw) {
     (void)route_id;
-    matrix->fillScreen(0);
+    if (fullRedraw) {
+        matrix->fillScreen(0);
+    }
     const int firstRowY = matrix->height() / 4;
     const int secondRowY = (matrix->height() * 3) / 4;
-    draw_row_with_logo(currentRow1RouteId, currentRow1Label, currentRow1Eta, firstRowY);
+    draw_row_with_logo(currentRow1RouteId, currentRow1Label, currentRow1Eta, firstRowY, 0, fullRedraw);
     if (currentRow2RouteId.length() > 0) {
-        draw_row_with_logo(currentRow2RouteId, currentRow2Label, currentRow2Eta, secondRowY);
+        draw_row_with_logo(currentRow2RouteId, currentRow2Label, currentRow2Eta, secondRowY, 1, fullRedraw);
+    } else if (fullRedraw) {
+        matrix->fillRect(0, secondRowY - 8, matrix->width(), 16, 0);
     }
 }
 
@@ -590,6 +681,11 @@ void setup() {
 void loop() {
 
   unsigned long nowMs = millis();
+  bool labelScrollTick = false;
+  if (nowMs - lastLabelScrollMs >= LABEL_SCROLL_INTERVAL_MS) {
+      lastLabelScrollMs = nowMs;
+      labelScrollTick = true;
+  }
   bool isSomeoneConnected =
   WiFi.softAPgetStationNum() > 0;
 
@@ -653,12 +749,18 @@ void loop() {
   }
 
   if (hasTransitData && WiFi.status() == WL_CONNECTED && mqtt.connected()) {
+      advanceLabelScroll = labelScrollTick;
       if (lastRenderedRouteId != currentRouteId) {
-          render_route_logo(currentRouteId);
+          render_route_logo(currentRouteId, true);
+          lastRenderedRouteId = currentRouteId;
+      } else if (labelScrollTick) {
+          render_route_logo(currentRouteId, false);
           lastRenderedRouteId = currentRouteId;
       }
+      advanceLabelScroll = false;
       lastStatusSignature = "";
   } else {
+      advanceLabelScroll = false;
       String status = "BOOTING";
       String detail = "";
       if (setupModeActive && WiFi.status() != WL_CONNECTED) {
