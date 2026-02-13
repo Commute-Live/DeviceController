@@ -174,8 +174,10 @@ static String format_arrivals_compact(const String &json, const String &fallback
 
 bool parse_lines_payload(const String &message,
                          String &primaryLine,
+                         String &row1Label,
                          String &row1Eta,
                          String &row2Line,
+                         String &row2Label,
                          String &row2Eta) {
   int linesKeyPos = message.indexOf("\"lines\"");
   if (linesKeyPos < 0) return false;
@@ -201,13 +203,19 @@ bool parse_lines_payload(const String &message,
 
     String line = extract_json_string_field(item, "line");
     if (line.length() == 0) continue;
+    String directionLabel = extract_json_string_field(item, "directionLabel");
+    if (directionLabel.length() == 0) {
+      directionLabel = extract_json_string_field(item, "stop");
+    }
 
     String etaText = format_arrivals_compact(item, fallbackFetchedAt);
     if (rowCount == 0) {
       primaryLine = line;
+      row1Label = directionLabel;
       row1Eta = etaText;
     } else if (rowCount == 1) {
       row2Line = line;
+      row2Label = directionLabel;
       row2Eta = etaText;
     }
     rowCount++;

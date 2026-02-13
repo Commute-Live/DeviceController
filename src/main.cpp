@@ -64,6 +64,8 @@ String currentRouteId = transit::registry::default_line().id;
 String lastRenderedRouteId = "";
 String currentRow1RouteId = transit::registry::default_line().id;
 String currentRow2RouteId = "";
+String currentRow1Label = "";
+String currentRow2Label = "";
 String currentRow1Eta = "--";
 String currentRow2Eta = "--";
 bool timeSynced = false;
@@ -311,7 +313,7 @@ const transit::LineDefinition *parse_route_command(const String &message) {
     return nullptr;
 }
 
-static void draw_row_with_logo(const String &routeId, const String &etaText, int centerY) {
+static void draw_row_with_logo(const String &routeId, const String &labelText, const String &etaText, int centerY) {
     const transit::LineDefinition *line = transit::registry::find_line(routeId);
     if (!line) {
         line = &transit::registry::default_line();
@@ -333,7 +335,21 @@ static void draw_row_with_logo(const String &routeId, const String &etaText, int
     matrix->setTextColor(transit::providers::nyc::subway::color_from_name("white", 40));
     matrix->setTextSize(1);
     matrix->setCursor(16, centerY - 3);
-    matrix->print(etaText.length() ? etaText : "--");
+    String eta = etaText.length() ? etaText : "--";
+    String label = labelText;
+    label.trim();
+    if (label.length() == 0) label = line->id;
+
+    const int maxChars = 17;
+    const int reserve = eta.length() + 1;  // trailing space + eta
+    int labelChars = maxChars - reserve;
+    if (labelChars < 3) labelChars = 3;
+    if ((int)label.length() > labelChars) {
+        label = label.substring(0, labelChars - 1) + ".";
+    }
+
+    String rowText = label + " " + eta;
+    matrix->print(rowText);
 }
 
 void render_route_logo(const String &route_id) {
@@ -341,9 +357,9 @@ void render_route_logo(const String &route_id) {
     matrix->fillScreen(0);
     const int firstRowY = matrix->height() / 4;
     const int secondRowY = (matrix->height() * 3) / 4;
-    draw_row_with_logo(currentRow1RouteId, currentRow1Eta, firstRowY);
+    draw_row_with_logo(currentRow1RouteId, currentRow1Label, currentRow1Eta, firstRowY);
     if (currentRow2RouteId.length() > 0) {
-        draw_row_with_logo(currentRow2RouteId, currentRow2Eta, secondRowY);
+        draw_row_with_logo(currentRow2RouteId, currentRow2Label, currentRow2Eta, secondRowY);
     }
 }
 
@@ -360,16 +376,23 @@ void mqtt_callback(char *topic, byte *payload, unsigned int length) {
     String stop = extract_json_string_field(message, "stop");
     String stopId = extract_json_string_field(message, "stopId");
     String direction = extract_json_string_field(message, "direction");
+    String directionLabel = extract_json_string_field(message, "directionLabel");
+    String stopLabel = extract_json_string_field(message, "stop");
     String multiPrimaryLine;
+    String multiRow1Label;
     String multiRow1Eta;
     String multiRow2Line;
+    String multiRow2Label;
     String multiRow2Eta;
-    bool hasMultiLines = parse_lines_payload(message, multiPrimaryLine, multiRow1Eta, multiRow2Line, multiRow2Eta);
+    bool hasMultiLines = parse_lines_payload(
+        message, multiPrimaryLine, multiRow1Label, multiRow1Eta, multiRow2Line, multiRow2Label, multiRow2Eta);
 
     if (hasMultiLines) {
         currentRow1RouteId = multiPrimaryLine.length() ? multiPrimaryLine : transit::registry::default_line().id;
+        currentRow1Label = multiRow1Label.length() ? multiRow1Label : currentRow1RouteId;
         currentRow1Eta = multiRow1Eta.length() ? multiRow1Eta : "--";
         currentRow2RouteId = multiRow2Line;
+        currentRow2Label = multiRow2Label.length() ? multiRow2Label : currentRow2RouteId;
         currentRow2Eta = multiRow2Eta.length() ? multiRow2Eta : "--";
     } else {
         String etaLine1, etaLine2, etaLine3;
@@ -398,8 +421,20 @@ void mqtt_callback(char *topic, byte *payload, unsigned int length) {
             if (parsed) fallbackLine = parsed->id;
         }
         currentRow1RouteId = fallbackLine.length() ? fallbackLine : transit::registry::default_line().id;
+        if (directionLabel.length() > 0) {
+            currentRow1Label = directionLabel;
+        } else if (stopLabel.length() > 0) {
+            currentRow1Label = stopLabel;
+        } else if (direction == "N") {
+            currentRow1Label = "Uptown";
+        } else if (direction == "S") {
+            currentRow1Label = "Downtown";
+        } else {
+            currentRow1Label = currentRow1RouteId;
+        }
         currentRow1Eta = arrivalsCompact;
         currentRow2RouteId = "";
+        currentRow2Label = "";
         currentRow2Eta = "--";
     }
     if (lineRaw.length() > 0 || provider.length() > 0 || stop.length() > 0 || stopId.length() > 0 || direction.length() > 0) {

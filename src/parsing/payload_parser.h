@@ -8,6 +8,8 @@ void build_eta_lines(const String &message, String &line1, String &line2, String
 
 bool parse_lines_payload(const String &message,
                          String &primaryLine,
+                         String &row1Label,
                          String &row1Eta,
                          String &row2Line,
+                         String &row2Label,
                          String &row2Eta);
