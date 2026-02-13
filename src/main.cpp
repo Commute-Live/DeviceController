@@ -68,6 +68,20 @@ String currentRow1Eta = "--";
 String currentRow2Eta = "--";
 bool timeSynced = false;
 unsigned long lastTimeSyncAttemptMs = 0;
+String savedWifiSsid;
+String savedWifiPassword;
+String savedWifiUser;
+bool hasSavedWifiCredentials = false;
+unsigned long nextWifiRetryAtMs = 0;
+unsigned long nextMqttRetryAtMs = 0;
+uint8_t wifiRetryAttempt = 0;
+uint8_t mqttRetryAttempt = 0;
+
+constexpr uint32_t WIFI_RETRY_BASE_MS = 1000;
+constexpr uint32_t WIFI_RETRY_MAX_MS = 60000;
+constexpr uint32_t MQTT_RETRY_BASE_MS = 1000;
+constexpr uint32_t MQTT_RETRY_MAX_MS = 60000;
+constexpr uint32_t RETRY_JITTER_MS = 750;
 
 // Forward declarations
 bool connect_ESP_to_mqtt();
@@ -75,6 +89,40 @@ void mqtt_publish_online();
 void mqtt_callback(char *topic, byte *payload, unsigned int length);
 const transit::LineDefinition *parse_route_command(const String &message);
 void render_route_logo(const String &route_id);
+
+static bool due_now(unsigned long nowMs, unsigned long dueMs) {
+    return static_cast<long>(nowMs - dueMs) >= 0;
+}
+
+static uint32_t compute_backoff_with_jitter(uint8_t attempt, uint32_t baseMs, uint32_t maxMs) {
+    uint32_t waitMs = baseMs;
+    uint8_t cappedAttempt = attempt > 8 ? 8 : attempt;
+    for (uint8_t i = 0; i < cappedAttempt; i++) {
+        if (waitMs >= (maxMs / 2)) {
+            waitMs = maxMs;
+            break;
+        }
+        waitMs *= 2;
+    }
+    if (waitMs > maxMs) waitMs = maxMs;
+    uint32_t jitterMs = random(RETRY_JITTER_MS + 1);
+    if (waitMs > maxMs - jitterMs) return maxMs;
+    return waitMs + jitterMs;
+}
+
+static void schedule_next_wifi_retry(unsigned long nowMs) {
+    uint32_t waitMs = compute_backoff_with_jitter(wifiRetryAttempt, WIFI_RETRY_BASE_MS, WIFI_RETRY_MAX_MS);
+    wifiRetryAttempt++;
+    nextWifiRetryAtMs = nowMs + waitMs;
+    Serial.printf("[WIFI] Retry scheduled in %lu ms (attempt %u)\n", (unsigned long)waitMs, wifiRetryAttempt);
+}
+
+static void schedule_next_mqtt_retry(unsigned long nowMs) {
+    uint32_t waitMs = compute_backoff_with_jitter(mqttRetryAttempt, MQTT_RETRY_BASE_MS, MQTT_RETRY_MAX_MS);
+    mqttRetryAttempt++;
+    nextMqttRetryAtMs = nowMs + waitMs;
+    Serial.printf("[MQTT] Retry scheduled in %lu ms (attempt %u)\n", (unsigned long)waitMs, mqttRetryAttempt);
+}
 
 static bool sync_time_utc(uint32_t timeoutMs = 10000) {
     setenv("TZ", "UTC0", 1);
@@ -280,6 +328,12 @@ void phone_to_ESP_connection() {
               HOME_user.c_str())) {
 
           Serial.println("[ESP] Successfully connected to WiFi!");
+            hasSavedWifiCredentials = true;
+            savedWifiSsid = HOME_ssid;
+            savedWifiPassword = HOME_password;
+            savedWifiUser = HOME_user;
+            wifiRetryAttempt = 0;
+            nextWifiRetryAtMs = millis();
             sync_time_utc();
 
             // NEW — SAVE CREDENTIALS
@@ -287,12 +341,14 @@ void phone_to_ESP_connection() {
 
             // connect to MQTT broker
             if (connect_ESP_to_mqtt()) {
-
+                mqttRetryAttempt = 0;
+                nextMqttRetryAtMs = millis();
                 mqtt_publish_online();
 
             } else {
 
                 Serial.println("[MQTT] Failed to connect");
+                schedule_next_mqtt_retry(millis());
 
                 server.send(400,
                 "application/json",
@@ -722,6 +778,7 @@ void mqtt_callback(char *topic, byte *payload, unsigned int length) {
 void setup() {
 
   Serial.begin(115200);
+  randomSeed(esp_random());
   mqtt.setBufferSize(4096);
   mqtt.setKeepAlive(30);
 
@@ -771,36 +828,39 @@ void setup() {
 
 
   // NEW — TRY AUTO CONNECT FIRST
-  String savedSSID;
-  String savedPassword;
-  String savedUser;
-
-  if (load_wifi_credentials(savedSSID, savedPassword, savedUser)) {
+  if (load_wifi_credentials(savedWifiSsid, savedWifiPassword, savedWifiUser)) {
+      hasSavedWifiCredentials = true;
 
       Serial.println("[ESP] Connecting to saved WiFi");
 
       if (connect_to_wifi(
-          savedSSID.c_str(),
-          savedPassword.c_str(),
-          savedUser.c_str())) {
+          savedWifiSsid.c_str(),
+          savedWifiPassword.c_str(),
+          savedWifiUser.c_str())) {
 
           Serial.println("[ESP] Connected using saved credentials");
+          wifiRetryAttempt = 0;
+          nextWifiRetryAtMs = millis();
           sync_time_utc();
 
           if (connect_ESP_to_mqtt()) {
-
+              mqttRetryAttempt = 0;
+              nextMqttRetryAtMs = millis();
               mqtt_publish_online();
+          } else {
+              schedule_next_mqtt_retry(millis());
           }
 
       } else {
 
           Serial.println("[ESP] Saved WiFi failed, starting AP");
+          schedule_next_wifi_retry(millis());
 
           start_ESP_wifi();
       }
 
   } else {
-
+      hasSavedWifiCredentials = false;
       start_ESP_wifi();
   }
 
@@ -826,6 +886,7 @@ void setup() {
 
 void loop() {
 
+  unsigned long nowMs = millis();
   bool isSomeoneConnected =
   WiFi.softAPgetStationNum() > 0;
 
@@ -838,13 +899,43 @@ void loop() {
 
     Serial.println("[ESP] A device is connected to ESP WiFi!");}
 
-  // Reconnect to MQTT if Wi-Fi is up but MQTT dropped.
+  // Retry Wi-Fi with exponential backoff + jitter.
+  if (WiFi.status() != WL_CONNECTED && hasSavedWifiCredentials) {
+      if (due_now(nowMs, nextWifiRetryAtMs)) {
+          Serial.println("[WIFI] Attempting reconnect");
+          if (connect_to_wifi(savedWifiSsid.c_str(), savedWifiPassword.c_str(), savedWifiUser.c_str())) {
+              Serial.println("[WIFI] Reconnected");
+              wifiRetryAttempt = 0;
+              nextWifiRetryAtMs = nowMs;
+              timeSynced = false;
+              lastTimeSyncAttemptMs = 0;
+              mqttRetryAttempt = 0;
+              nextMqttRetryAtMs = nowMs;
+          } else {
+              schedule_next_wifi_retry(nowMs);
+          }
+      }
+  } else if (WiFi.status() == WL_CONNECTED) {
+      wifiRetryAttempt = 0;
+  }
+
+  // Retry MQTT with exponential backoff + jitter.
   if (WiFi.status() == WL_CONNECTED && !mqtt.connected()) {
-      connect_ESP_to_mqtt();
+      if (due_now(nowMs, nextMqttRetryAtMs)) {
+          Serial.println("[MQTT] Attempting reconnect");
+          if (connect_ESP_to_mqtt()) {
+              mqttRetryAttempt = 0;
+              nextMqttRetryAtMs = nowMs;
+              mqtt_publish_online();
+          } else {
+              schedule_next_mqtt_retry(nowMs);
+          }
+      }
+  } else if (mqtt.connected()) {
+      mqttRetryAttempt = 0;
   }
 
   if (WiFi.status() == WL_CONNECTED && !timeSynced) {
-      unsigned long nowMs = millis();
       if (nowMs - lastTimeSyncAttemptMs >= 30000) {
           lastTimeSyncAttemptMs = nowMs;
           sync_time_utc(3000);
