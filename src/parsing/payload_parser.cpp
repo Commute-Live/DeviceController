@@ -154,7 +154,7 @@ static String format_arrivals_compact(const String &json, const String &fallback
   int n = extract_next_arrival_list(json, arrivals, 3);
   if (n <= 0) return "--";
 
-  String compact = "";
+  // Device display uses only the next upcoming ETA (one train min).
   for (int i = 0; i < n; i++) {
     String label = "--";
     if (hasFetchedTs) {
@@ -162,14 +162,10 @@ static String format_arrivals_compact(const String &json, const String &fallback
     } else if (arrivals[i].length() >= 16) {
       label = arrivals[i].substring(11, 16);
     }
-
-    if (label != "--") {
-      compact += (compact.length() ? " " : "");
-      compact += label;
-    }
+    if (label != "--") return label;
   }
 
-  return compact.length() ? compact : "--";
+  return "--";
 }
 
 bool parse_lines_payload(const String &message,

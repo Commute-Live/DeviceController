@@ -409,11 +409,10 @@ void mqtt_callback(char *topic, byte *payload, unsigned int length) {
         String e1 = etaValue(etaLine1);
         String e2 = etaValue(etaLine2);
         String e3 = etaValue(etaLine3);
-        String arrivalsCompact = "";
-        if (e1 != "--") arrivalsCompact += e1;
-        if (e2 != "--") arrivalsCompact += (arrivalsCompact.length() ? " " : "") + e2;
-        if (e3 != "--") arrivalsCompact += (arrivalsCompact.length() ? " " : "") + e3;
-        if (!arrivalsCompact.length()) arrivalsCompact = "--";
+        String arrivalsCompact = "--";
+        if (e1 != "--") arrivalsCompact = e1;
+        else if (e2 != "--") arrivalsCompact = e2;
+        else if (e3 != "--") arrivalsCompact = e3;
 
         String fallbackLine = lineRaw.length() ? lineRaw : "";
         if (fallbackLine.length() == 0) {
