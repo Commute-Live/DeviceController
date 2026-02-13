@@ -1,8 +1,10 @@
-#include "transit/nyc_subway_catalog.h"
+#include "catalog.h"
 #include <ctype.h>
 
 namespace transit {
-namespace nyc_subway {
+namespace providers {
+namespace nyc {
+namespace subway {
 
 static const LineDefinition kLines[] = {
     {"1", '1', "red", "#D82233"},
@@ -119,5 +121,7 @@ size_t line_count() {
   return sizeof(kLines) / sizeof(kLines[0]);
 }
 
-}  // namespace nyc_subway
+}  // namespace subway
+}  // namespace nyc
+}  // namespace providers
 }  // namespace transit

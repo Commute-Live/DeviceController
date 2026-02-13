@@ -1,6 +1,6 @@
 #include "Transit.h"
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
-#include "color.h"
+#include "transit/providers/nyc/subway/colors.h"
 
 // Matrix instance lives in main.cpp; we render into it here.
 extern MatrixPanel_I2S_DMA *matrix;
@@ -29,9 +29,9 @@ void draw_transit_logo(int center_x,
   // Clamp radius so the badge is always visible.
   int r = max(2, radius);
 
-  uint16_t circleColor = color_from_name(color, brightness);
+  uint16_t circleColor = transit::providers::nyc::subway::color_from_name(color, brightness);
   int tb = (text_brightness < 0) ? brightness : text_brightness;
-  uint16_t letterColor = color_from_name(text_color, tb);
+  uint16_t letterColor = transit::providers::nyc::subway::color_from_name(text_color, tb);
 
   if (clear) {
     matrix->fillScreen(0);
