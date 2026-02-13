@@ -76,6 +76,7 @@ static String eta_label_for_arrival(const String &arrivalIso, time_t fetchedTs) 
     long diffSec = (long)difftime(arrivalTs, fetchedTs);
     if (diffSec < 0) diffSec = 0;
     long mins = (diffSec + 59) / 60;
+    if (mins == 0) return "NOW";
     return String(mins) + "min";
   }
   if (arrivalIso.length() >= 16) {
@@ -169,9 +170,11 @@ static String format_arrivals_compact(const String &json, const String &fallback
 
 bool parse_lines_payload(const String &message,
                          String &primaryLine,
+                         String &row1Provider,
                          String &row1Label,
                          String &row1Eta,
                          String &row2Line,
+                         String &row2Provider,
                          String &row2Label,
                          String &row2Eta) {
   int linesKeyPos = message.indexOf("\"lines\"");
@@ -198,6 +201,7 @@ bool parse_lines_payload(const String &message,
 
     String line = extract_json_string_field(item, "line");
     if (line.length() == 0) continue;
+    String provider = extract_json_string_field(item, "provider");
     String directionLabel = extract_json_string_field(item, "directionLabel");
     if (directionLabel.length() == 0) {
       directionLabel = extract_json_string_field(item, "stop");
@@ -206,10 +210,12 @@ bool parse_lines_payload(const String &message,
     String etaText = format_arrivals_compact(item, fallbackFetchedAt);
     if (rowCount == 0) {
       primaryLine = line;
+      row1Provider = provider;
       row1Label = directionLabel;
       row1Eta = etaText;
     } else if (rowCount == 1) {
       row2Line = line;
+      row2Provider = provider;
       row2Label = directionLabel;
       row2Eta = etaText;
     }

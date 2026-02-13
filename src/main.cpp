@@ -6,6 +6,7 @@
 #include "WiFi.h"
 #include "display/Transit.h"
 #include "parsing/payload_parser.h"
+#include "parsing/provider_parser_router.h"
 #include "network/retry_backoff.h"
 #include "network/wifi_manager.h"
 #include "device/led_config.h"
@@ -62,6 +63,8 @@ PubSubClient mqtt(wifiClient);
 String deviceId;
 String currentRouteId = transit::registry::default_line().id;
 String lastRenderedRouteId = "";
+String currentRow1Provider = "mta";
+String currentRow2Provider = "";
 String currentRow1RouteId = transit::registry::default_line().id;
 String currentRow2RouteId = "";
 String currentRow1Label = "";
@@ -383,18 +386,17 @@ static String build_scrolled_label(const String &label, int rowIndex, int maxCha
 }
 
 static void draw_row_with_logo(const String &routeId,
+                               const String &providerId,
                                const String &labelText,
                                const String &etaText,
                                int centerY,
                                int rowIndex,
                                bool redrawFixed) {
     const transit::LineDefinition *line = transit::registry::find_line(routeId);
-    if (!line) {
-        line = &transit::registry::default_line();
-    }
 
     const int logoRadius = 6;
-    const int logoCenterX = logoRadius + 1; // fixed left margin = 1
+    const int logoCenterX = logoRadius + 2; // keep col[0] empty for logo rows too
+    const bool isBus = providerId == "mta-bus";
 
     const String eta = etaText.length() ? etaText : "--";
 
@@ -404,33 +406,75 @@ static void draw_row_with_logo(const String &routeId,
     matrix->setTextSize(1);
     matrix->getTextBounds(eta.c_str(), 0, 0, &etaX1, &etaY1, &etaW, &etaH);
 
+    constexpr int LEFT_MARGIN_PX = 2; // match requested left margin for bus text
     const int etaX = matrix->width() - static_cast<int>(etaW) - 1; // fixed right margin = 1
-    const int labelStartX = (logoCenterX + logoRadius + 1) + 1;   // 1px after logo
+    const int baseTextStartX = isBus ? LEFT_MARGIN_PX : (logoCenterX + logoRadius + 2);
+    const int labelStartX = baseTextStartX;
+
     const int labelEndX = etaX - 1;
     const int labelPx = labelEndX - labelStartX + 1;
     const int labelChars = labelPx > 0 ? labelPx / 6 : 0;
 
     if (redrawFixed) {
-        draw_transit_logo(
-            logoCenterX,
-            centerY,
-            line->symbol,
-            line->color_hex,
-            logoRadius,
-            20,
-            1,
-            false,
-            "white",
-            40);
+        if (!isBus) {
+            if (line) {
+                draw_transit_logo(
+                    logoCenterX,
+                    centerY,
+                    line->symbol,
+                    line->color_hex,
+                    logoRadius,
+                    20,
+                    1,
+                    false,
+                    "white",
+                    40);
+            } else {
+                char fallbackSymbol = 'B';
+                if (routeId.length() > 0) {
+                    fallbackSymbol = routeId[0];
+                    if (fallbackSymbol >= 'a' && fallbackSymbol <= 'z') {
+                        fallbackSymbol = fallbackSymbol - 'a' + 'A';
+                    }
+                } else if (providerId == "mta") {
+                    fallbackSymbol = 'M';
+                }
+                draw_transit_logo(
+                    logoCenterX,
+                    centerY,
+                    fallbackSymbol,
+                    "#7C858C",
+                    logoRadius,
+                    20,
+                    1,
+                    false,
+                    "white",
+                    40);
+            }
+        }
 
         matrix->setTextColor(transit::providers::nyc::subway::color_from_name("white", 40));
         matrix->setCursor(etaX, centerY - 3);
         matrix->print(eta);
     }
 
+    if (isBus) {
+        // Ensure left-most column remains blank for bus text rows.
+        matrix->drawFastVLine(0, centerY - 8, 16, 0);
+    }
+
     String label = labelText;
     label.trim();
-    if (label.length() == 0) label = line->id;
+    if (isBus && routeId.length() > 0) {
+        String route = routeId;
+        route.trim();
+        route.toUpperCase();
+        if (label.length() > 0) label = route + " " + label;
+        else label = route;
+    }
+    if (label.length() == 0) {
+        label = routeId.length() > 0 ? routeId : (line ? String(line->id) : String("--"));
+    }
     label = build_scrolled_label(label, rowIndex, labelChars);
 
     // Draw text with explicit background to reduce flicker from clear-and-redraw.
@@ -446,9 +490,9 @@ void render_route_logo(const String &route_id, bool fullRedraw) {
     }
     const int firstRowY = matrix->height() / 4;
     const int secondRowY = (matrix->height() * 3) / 4;
-    draw_row_with_logo(currentRow1RouteId, currentRow1Label, currentRow1Eta, firstRowY, 0, fullRedraw);
+    draw_row_with_logo(currentRow1RouteId, currentRow1Provider, currentRow1Label, currentRow1Eta, firstRowY, 0, fullRedraw);
     if (currentRow2RouteId.length() > 0) {
-        draw_row_with_logo(currentRow2RouteId, currentRow2Label, currentRow2Eta, secondRowY, 1, fullRedraw);
+        draw_row_with_logo(currentRow2RouteId, currentRow2Provider, currentRow2Label, currentRow2Eta, secondRowY, 1, fullRedraw);
     } else if (fullRedraw) {
         matrix->fillRect(0, secondRowY - 8, matrix->width(), 16, 0);
     }
@@ -467,65 +511,31 @@ void mqtt_callback(char *topic, byte *payload, unsigned int length) {
     String stop = extract_json_string_field(message, "stop");
     String stopId = extract_json_string_field(message, "stopId");
     String direction = extract_json_string_field(message, "direction");
-    String directionLabel = extract_json_string_field(message, "directionLabel");
-    String stopLabel = extract_json_string_field(message, "stop");
-    String multiPrimaryLine;
-    String multiRow1Label;
-    String multiRow1Eta;
-    String multiRow2Line;
-    String multiRow2Label;
-    String multiRow2Eta;
-    bool hasMultiLines = parse_lines_payload(
-        message, multiPrimaryLine, multiRow1Label, multiRow1Eta, multiRow2Line, multiRow2Label, multiRow2Eta);
+    parsing::ProviderPayload parsedPayload;
+    if (!parsing::parse_provider_payload(provider, message, parsedPayload) || !parsedPayload.hasRow1) {
+        Serial.println("[MQTT] Ignored command: parser returned no rows");
+        return;
+    }
 
-    if (hasMultiLines) {
-        currentRow1RouteId = multiPrimaryLine.length() ? multiPrimaryLine : transit::registry::default_line().id;
-        currentRow1Label = multiRow1Label.length() ? multiRow1Label : currentRow1RouteId;
-        currentRow1Eta = multiRow1Eta.length() ? multiRow1Eta : "--";
-        currentRow2RouteId = multiRow2Line;
-        currentRow2Label = multiRow2Label.length() ? multiRow2Label : currentRow2RouteId;
-        currentRow2Eta = multiRow2Eta.length() ? multiRow2Eta : "--";
+    currentRow1Provider = parsedPayload.row1.provider.length() ? parsedPayload.row1.provider : provider;
+    currentRow1RouteId = parsedPayload.row1.line.length() ? parsedPayload.row1.line : transit::registry::default_line().id;
+    currentRow1Label = parsedPayload.row1.label.length() ? parsedPayload.row1.label : currentRow1RouteId;
+    currentRow1Eta = parsedPayload.row1.eta.length() ? parsedPayload.row1.eta : "--";
+
+    if (parsedPayload.hasRow2) {
+        currentRow2Provider = parsedPayload.row2.provider;
+        currentRow2RouteId = parsedPayload.row2.line;
+        currentRow2Label = parsedPayload.row2.label.length() ? parsedPayload.row2.label : currentRow2RouteId;
+        currentRow2Eta = parsedPayload.row2.eta.length() ? parsedPayload.row2.eta : "--";
     } else {
-        String etaLine1, etaLine2, etaLine3;
-        build_eta_lines(message, etaLine1, etaLine2, etaLine3);
-
-        auto etaValue = [](const String &l) -> String {
-            int spacePos = l.indexOf(' ');
-            if (spacePos >= 0 && spacePos + 1 < (int)l.length()) {
-                return l.substring(spacePos + 1);
-            }
-            return l;
-        };
-
-        String e1 = etaValue(etaLine1);
-        String e2 = etaValue(etaLine2);
-        String e3 = etaValue(etaLine3);
-        String arrivalsCompact = "--";
-        if (e1 != "--") arrivalsCompact = e1;
-        else if (e2 != "--") arrivalsCompact = e2;
-        else if (e3 != "--") arrivalsCompact = e3;
-
-        String fallbackLine = lineRaw.length() ? lineRaw : "";
-        if (fallbackLine.length() == 0) {
-            const transit::LineDefinition *parsed = parse_route_command(message);
-            if (parsed) fallbackLine = parsed->id;
-        }
-        currentRow1RouteId = fallbackLine.length() ? fallbackLine : transit::registry::default_line().id;
-        if (directionLabel.length() > 0) {
-            currentRow1Label = directionLabel;
-        } else if (stopLabel.length() > 0) {
-            currentRow1Label = stopLabel;
-        } else if (direction == "N") {
-            currentRow1Label = "Uptown";
-        } else if (direction == "S") {
-            currentRow1Label = "Downtown";
-        } else {
-            currentRow1Label = currentRow1RouteId;
-        }
-        currentRow1Eta = arrivalsCompact;
+        currentRow2Provider = "";
         currentRow2RouteId = "";
         currentRow2Label = "";
         currentRow2Eta = "--";
+    }
+
+    if (lineRaw.length() == 0) {
+        lineRaw = currentRow1RouteId;
     }
     if (lineRaw.length() > 0 || provider.length() > 0 || stop.length() > 0 || stopId.length() > 0 || direction.length() > 0) {
         Serial.printf("[MQTT] Refresh payload provider=%s line=%s stop=%s stopId=%s direction=%s\n",
@@ -536,22 +546,31 @@ void mqtt_callback(char *topic, byte *payload, unsigned int length) {
                       direction.length() ? direction.c_str() : "-");
     }
 
+    const bool providerIsBus = provider == "mta-bus" || currentRow1Provider == "mta-bus";
     const transit::LineDefinition *line = nullptr;
-    if (hasMultiLines && currentRow1RouteId.length() > 0) {
-        line = transit::registry::find_line(currentRow1RouteId);
-    }
-    if (!line) {
-        line = parse_route_command(message);
-    }
-    if (!line) {
-        Serial.println("[MQTT] Ignored command: missing/invalid route");
-        return;
+    if (!providerIsBus) {
+        if (currentRow1RouteId.length() > 0) {
+            line = transit::registry::find_line(currentRow1RouteId);
+        }
+        if (!line) {
+            line = parse_route_command(message);
+        }
+        if (!line) {
+            Serial.println("[MQTT] Ignored command: missing/invalid route");
+            return;
+        }
     }
 
-    currentRouteId = line->id;
+    currentRouteId = line ? line->id : (currentRow1RouteId.length() ? currentRow1RouteId : transit::registry::default_line().id);
     hasTransitData = true;
     render_route_logo(currentRouteId);
-    Serial.printf("[MQTT] Rendered route logo: %s (%c)\n", line->id, line->symbol);
+    if (line) {
+        Serial.printf("[MQTT] Rendered route logo: %s (%c)\n", line->id, line->symbol);
+    } else {
+        Serial.printf("[MQTT] Rendered provider row: provider=%s line=%s\n",
+                      provider.length() ? provider.c_str() : "-",
+                      currentRow1RouteId.length() ? currentRow1RouteId.c_str() : "-");
+    }
 }
 
 
