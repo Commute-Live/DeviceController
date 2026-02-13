@@ -10,6 +10,12 @@
 #include "network/wifi_manager.h"
 #include "device/led_config.h"
 #include "transit/registry.h"
+#if __has_include("secrets.h")
+#include "secrets.h"
+#else
+#include "secrets.example.h"
+#warning "Using include/secrets.example.h defaults. Create include/secrets.h for real credentials."
+#endif
 #include "string.h"
 #include <Arduino.h>
 #include <WebServer.h>
@@ -39,14 +45,14 @@ MatrixPanel_I2S_DMA *matrix = nullptr;
 
 WebServer server(80);
 
-const char* ESP_ssid = "nikul-ESP32-AP";
-const char* ESP_password = "12345678";
+const char* ESP_ssid = COMMUTELIVE_AP_SSID;
+const char* ESP_password = COMMUTELIVE_AP_PASSWORD;
 
-const char* MQTT_HOST = "198.211.104.174";
-const int MQTT_PORT = 1883;
+const char* MQTT_HOST = COMMUTELIVE_MQTT_HOST;
+const int MQTT_PORT = COMMUTELIVE_MQTT_PORT;
 
-const char* MQTT_USER = "commutex";
-const char* MQTT_PASS = "lebron";
+const char* MQTT_USER = COMMUTELIVE_MQTT_USER;
+const char* MQTT_PASS = COMMUTELIVE_MQTT_PASS;
 
 // initialize the MQTT client with the WiFi client
 WiFiClient wifiClient;
