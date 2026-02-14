@@ -403,10 +403,14 @@ static void draw_row_with_logo(const String &routeId,
     const int logoCenterX = logoRadius + 2; // keep col[0] empty for logo rows too
     const bool isMtaBus = providerId == "mta-bus";
     const bool isCtaSubway = providerId == "cta-subway";
+    const bool isSeptaBus = providerId == "septa-bus" || providerId == "philly-bus";
+    const bool isSeptaRail = providerId == "septa-rail" || providerId == "philly-rail";
     const bool isMbta = transit::providers::boston::subway::is_mbta_provider_id(providerId);
     const bool isMbtaSubway = isMbta && transit::providers::boston::subway::is_subway_line(routeId);
     const bool isMbtaBus = isMbta && !isMbtaSubway;
-    const bool isBusLike = isMtaBus || isMbtaBus;
+    const bool isBusLike = isMtaBus || isMbtaBus || isSeptaBus;
+    const bool hasRectBusBadge = isMbtaBus || isSeptaBus;
+    const bool hasTrainBadge = isMbtaSubway || isSeptaRail;
 
     const String eta = etaText.length() ? etaText : "--";
 
@@ -431,9 +435,13 @@ static void draw_row_with_logo(const String &routeId,
     const int mbtaTrainBadgeH = 11;
     const int mbtaTrainBadgeX = LEFT_MARGIN_PX;
     const int mbtaTrainBadgeY = centerY - (mbtaTrainBadgeH / 2);
-    const int baseTextStartX = isBusLike ? (isMbtaBus ? (mbtaBusBadgeX + mbtaBusBadgeW + 2) : LEFT_MARGIN_PX)
+    const int septaTrainBadgeW = 20;
+    const int septaTrainBadgeH = 11;
+    const int septaTrainBadgeX = LEFT_MARGIN_PX;
+    const int septaTrainBadgeY = centerY - (septaTrainBadgeH / 2);
+    const int baseTextStartX = isBusLike ? (hasRectBusBadge ? (mbtaBusBadgeX + mbtaBusBadgeW + 2) : LEFT_MARGIN_PX)
                                          : (isCtaSubway ? (ctaBadgeX + ctaBadgeW + 2)
-                                                        : (isMbtaSubway ? (mbtaTrainBadgeX + mbtaTrainBadgeW + 2)
+                                                        : (hasTrainBadge ? ((isSeptaRail ? septaTrainBadgeW : mbtaTrainBadgeW) + LEFT_MARGIN_PX + 2)
                                                                         : (logoCenterX + logoRadius + 2)));
     const int labelStartX = baseTextStartX;
 
@@ -454,9 +462,11 @@ static void draw_row_with_logo(const String &routeId,
             matrix->setTextColor(transit::providers::nyc::subway::color_from_name(transit::providers::chicago::subway::route_text_color(routeId), 80), ctaColor);
             matrix->setCursor(ctaTextX, centerY - 3);
             matrix->print(ctaBadgeText);
-        } else if (isMbtaBus) {
+        } else if (hasRectBusBadge) {
             const String busBadgeText = routeId.length() ? routeId : String("BUS");
-            uint16_t busBadgeColor = transit::providers::nyc::subway::color_from_hex("#2A2F35", 40);
+            uint16_t busBadgeColor = isSeptaBus
+                ? transit::providers::nyc::subway::color_from_hex("#2A7F62", 40)
+                : transit::providers::nyc::subway::color_from_hex("#2A2F35", 40);
             matrix->fillRoundRect(mbtaBusBadgeX, mbtaBusBadgeY, mbtaBusBadgeW, mbtaBusBadgeH, display::layout::kBadgeCornerRadius, busBadgeColor);
             int16_t bx1, by1;
             uint16_t bTextW, bTextH;
@@ -466,18 +476,34 @@ static void draw_row_with_logo(const String &routeId,
             matrix->setTextColor(transit::providers::nyc::subway::color_from_name("white", 80), busBadgeColor);
             matrix->setCursor(busTextX, centerY - 3);
             matrix->print(busBadgeText);
-        } else if (isMbtaSubway) {
-            const String badge = transit::providers::boston::subway::subway_badge_text(routeId);
+        } else if (hasTrainBadge) {
+            String badge = transit::providers::boston::subway::subway_badge_text(routeId);
             const char *hex = transit::providers::boston::subway::subway_color_hex(routeId);
             uint16_t badgeColor = transit::providers::nyc::subway::color_from_hex(hex, 40);
+            int badgeX = mbtaTrainBadgeX;
+            int badgeY = mbtaTrainBadgeY;
+            int badgeW = mbtaTrainBadgeW;
+            int badgeH = mbtaTrainBadgeH;
+            int badgeRadius = 4;
+            if (isSeptaRail) {
+                badge = routeId.length() ? routeId : String("RR");
+                badge.toUpperCase();
+                if (badge.length() > 3) badge = badge.substring(0, 3);
+                badgeColor = transit::providers::nyc::subway::color_from_hex("#1B4F9C", 40);
+                badgeX = septaTrainBadgeX;
+                badgeY = septaTrainBadgeY;
+                badgeW = septaTrainBadgeW;
+                badgeH = septaTrainBadgeH;
+                badgeRadius = 3;
+            }
             uint16_t textColor = transit::providers::nyc::subway::color_from_name("white", 80);
-            matrix->fillRoundRect(mbtaTrainBadgeX, mbtaTrainBadgeY, mbtaTrainBadgeW, mbtaTrainBadgeH, 4, badgeColor);
+            matrix->fillRoundRect(badgeX, badgeY, badgeW, badgeH, badgeRadius, badgeColor);
             int16_t x1, y1;
             uint16_t w, h;
             matrix->setTextSize(1);
             matrix->getTextBounds(badge.c_str(), 0, 0, &x1, &y1, &w, &h);
-            int16_t tx = mbtaTrainBadgeX + ((mbtaTrainBadgeW - (int16_t)w) / 2) - x1 + 1;
-            int16_t ty = mbtaTrainBadgeY + ((mbtaTrainBadgeH - (int16_t)h) / 2) - y1 + 1;
+            int16_t tx = badgeX + ((badgeW - (int16_t)w) / 2) - x1 + 1;
+            int16_t ty = badgeY + ((badgeH - (int16_t)h) / 2) - y1 + 1;
             matrix->setTextColor(textColor, badgeColor);
             matrix->setCursor(tx, ty);
             matrix->print(badge);
