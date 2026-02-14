@@ -1,4 +1,4 @@
-#include "parsing/providers/mta_bus_payload_parser.h"
+#include "parsing/providers/chicago/cta_subway_payload_parser.h"
 
 #include "parsing/payload_parser.h"
 
@@ -25,11 +25,14 @@ static String first_eta_from_message(const String &message) {
   return "--";
 }
 
-bool parse_mta_bus_payload(const String &message, ProviderPayload &out) {
+bool parse_cta_subway_payload(const String &message, ProviderPayload &out) {
   out = {};
 
   String provider = extract_json_string_field(message, "provider");
-  if (provider.length() == 0) provider = "mta-bus";
+  if (provider.length() == 0) provider = "cta-subway";
+  String direction = extract_json_string_field(message, "direction");
+  String directionLabel = extract_json_string_field(message, "directionLabel");
+  String stop = extract_json_string_field(message, "stop");
 
   String line1;
   String provider1;
@@ -58,9 +61,11 @@ bool parse_mta_bus_payload(const String &message, ProviderPayload &out) {
   String line = extract_json_string_field(message, "line");
   if (line.length() == 0) return false;
 
-  String directionLabel = extract_json_string_field(message, "directionLabel");
-  String stop = extract_json_string_field(message, "stop");
   String label = directionLabel.length() ? directionLabel : stop;
+  if (label.length() == 0) {
+    if (direction == "1" || direction == "N") label = "Northbound";
+    else if (direction == "5" || direction == "S") label = "Southbound";
+  }
   if (label.length() == 0) label = line;
 
   out.hasRow1 = true;

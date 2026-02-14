@@ -1,4 +1,4 @@
-#include "parsing/providers/mta_payload_parser.h"
+#include "parsing/providers/nyc/mta_subway_payload_parser.h"
 
 #include "parsing/payload_parser.h"
 
@@ -25,7 +25,7 @@ static String first_eta_from_message(const String &message) {
   return "--";
 }
 
-bool parse_mta_payload(const String &message, ProviderPayload &out) {
+bool parse_mta_subway_payload(const String &message, ProviderPayload &out) {
   out = {};
 
   String provider = extract_json_string_field(message, "provider");

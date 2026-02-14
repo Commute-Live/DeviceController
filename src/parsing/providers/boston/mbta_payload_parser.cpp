@@ -1,8 +1,18 @@
-#include "parsing/providers/cta_subway_payload_parser.h"
+#include "parsing/providers/boston/mbta_payload_parser.h"
 
 #include "parsing/payload_parser.h"
 
 namespace parsing {
+
+static bool is_mbta_subway_line(const String &lineRaw) {
+  String line = lineRaw;
+  line.trim();
+  line.toUpperCase();
+  if (line == "RED" || line == "ORANGE" || line == "BLUE" || line == "MATTAPAN") {
+    return true;
+  }
+  return line.startsWith("GREEN");
+}
 
 static String first_eta_from_message(const String &message) {
   String eta1, eta2, eta3;
@@ -25,11 +35,11 @@ static String first_eta_from_message(const String &message) {
   return "--";
 }
 
-bool parse_cta_subway_payload(const String &message, ProviderPayload &out) {
+bool parse_mbta_payload(const String &message, ProviderPayload &out) {
   out = {};
 
   String provider = extract_json_string_field(message, "provider");
-  if (provider.length() == 0) provider = "cta-subway";
+  if (provider.length() == 0) provider = "mbta";
   String direction = extract_json_string_field(message, "direction");
   String directionLabel = extract_json_string_field(message, "directionLabel");
   String stop = extract_json_string_field(message, "stop");
@@ -44,6 +54,15 @@ bool parse_cta_subway_payload(const String &message, ProviderPayload &out) {
   String eta2;
 
   if (parse_lines_payload(message, line1, provider1, label1, eta1, line2, provider2, label2, eta2)) {
+    // Prefer MBTA subway/rapid-transit lines as row1 when mixed with bus rows.
+    if (line2.length() > 0 && is_mbta_subway_line(line2) && !is_mbta_subway_line(line1)) {
+      String tmp;
+      tmp = line1; line1 = line2; line2 = tmp;
+      tmp = provider1; provider1 = provider2; provider2 = tmp;
+      tmp = label1; label1 = label2; label2 = tmp;
+      tmp = eta1; eta1 = eta2; eta2 = tmp;
+    }
+
     out.hasRow1 = line1.length() > 0;
     out.row1.provider = provider1.length() ? provider1 : provider;
     out.row1.line = line1;
@@ -63,8 +82,11 @@ bool parse_cta_subway_payload(const String &message, ProviderPayload &out) {
 
   String label = directionLabel.length() ? directionLabel : stop;
   if (label.length() == 0) {
-    if (direction == "1" || direction == "N") label = "Northbound";
-    else if (direction == "5" || direction == "S") label = "Southbound";
+    // MBTA feeds frequently use 0/1 for direction ids.
+    if (direction == "0") label = "Outbound";
+    else if (direction == "1") label = "Inbound";
+    else if (direction == "N") label = "Northbound";
+    else if (direction == "S") label = "Southbound";
   }
   if (label.length() == 0) label = line;
 
