@@ -7,13 +7,6 @@
 
 namespace parsing {
 
-static bool is_septa_rail_provider(const String &provider) {
-  String p = provider;
-  p.trim();
-  p.toLowerCase();
-  return p == "septa-rail" || p == "philly-rail";
-}
-
 bool parse_provider_payload(const String &provider, const String &message, ProviderPayload &out) {
   String p = provider;
   p.trim();
@@ -32,16 +25,8 @@ bool parse_provider_payload(const String &provider, const String &message, Provi
     return parse_mbta_payload(message, out);
   }
   if (p == "septa-rail" || p == "septa-bus" || p == "philly-rail" || p == "philly-bus") {
-    // SEPTA payload shape matches generic parser; normalize rail labels to line id.
-    bool ok = parse_mta_bus_payload(message, out);
-    if (!ok) return false;
-    if (is_septa_rail_provider(out.row1.provider) && out.row1.line.length() > 0) {
-      out.row1.label = out.row1.line;
-    }
-    if (out.hasRow2 && is_septa_rail_provider(out.row2.provider) && out.row2.line.length() > 0) {
-      out.row2.label = out.row2.line;
-    }
-    return true;
+    // SEPTA payload shape matches generic parser.
+    return parse_mta_bus_payload(message, out);
   }
 
   // Unknown provider: prefer generic bus-like fallback instead of dropping.
