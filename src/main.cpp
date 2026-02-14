@@ -387,6 +387,46 @@ static String build_scrolled_label(const String &label, int rowIndex, int maxCha
     return window;
 }
 
+static String cta_route_label(const String &routeId) {
+    String route = routeId;
+    route.trim();
+    if (route.length() == 0) return "CTA";
+    String upper = route;
+    upper.toUpperCase();
+    if (upper == "RED") return "RED";
+    if (upper == "BLUE") return "BLU";
+    if (upper == "BRN") return "BRN";
+    if (upper == "ORG") return "ORG";
+    if (upper == "PINK") return "PNK";
+    if (upper == "P") return "P";
+    if (upper == "Y") return "YEL";
+    if (upper == "G") return "GRN";
+    return upper;
+}
+
+static const char *cta_route_color_hex(const String &routeId) {
+    String upper = routeId;
+    upper.trim();
+    upper.toUpperCase();
+    if (upper == "RED") return "#C60C30";
+    if (upper == "BLUE") return "#00A1DE";
+    if (upper == "BRN") return "#62361B";
+    if (upper == "G") return "#009B3A";
+    if (upper == "ORG") return "#F9461C";
+    if (upper == "P") return "#522398";
+    if (upper == "PINK") return "#E27EA6";
+    if (upper == "Y") return "#F9E300";
+    return "#7C858C";
+}
+
+static const char *cta_route_text_color(const String &routeId) {
+    String upper = routeId;
+    upper.trim();
+    upper.toUpperCase();
+    if (upper == "Y" || upper == "PINK") return "black";
+    return "white";
+}
+
 static void draw_row_with_logo(const String &routeId,
                                const String &providerId,
                                const String &labelText,
@@ -399,6 +439,7 @@ static void draw_row_with_logo(const String &routeId,
     const int logoRadius = 6;
     const int logoCenterX = logoRadius + 2; // keep col[0] empty for logo rows too
     const bool isBus = providerId == "mta-bus";
+    const bool isCtaSubway = providerId == "cta-subway";
 
     const String eta = etaText.length() ? etaText : "--";
 
@@ -410,7 +451,12 @@ static void draw_row_with_logo(const String &routeId,
 
     constexpr int LEFT_MARGIN_PX = 2; // match requested left margin for bus text
     const int etaX = matrix->width() - static_cast<int>(etaW) - 1; // fixed right margin = 1
-    const int baseTextStartX = isBus ? LEFT_MARGIN_PX : (logoCenterX + logoRadius + 2);
+    const String ctaBadgeText = cta_route_label(routeId);
+    const int ctaBadgeW = 24; // fixed CTA badge slot width
+    const int ctaBadgeH = 12;
+    const int ctaBadgeX = LEFT_MARGIN_PX;
+    const int ctaBadgeY = centerY - (ctaBadgeH / 2);
+    const int baseTextStartX = isBus ? LEFT_MARGIN_PX : (isCtaSubway ? (ctaBadgeX + ctaBadgeW + 2) : (logoCenterX + logoRadius + 2));
     const int labelStartX = baseTextStartX;
 
     const int labelEndX = etaX - 1;
@@ -418,7 +464,18 @@ static void draw_row_with_logo(const String &routeId,
     const int labelChars = labelPx > 0 ? labelPx / 6 : 0;
 
     if (redrawFixed) {
-        if (!isBus) {
+        if (isCtaSubway) {
+            uint16_t ctaColor = transit::providers::nyc::subway::color_from_hex(cta_route_color_hex(routeId), 40);
+            matrix->fillRoundRect(ctaBadgeX, ctaBadgeY, ctaBadgeW, ctaBadgeH, 2, ctaColor);
+            int16_t ctaX1, ctaY1;
+            uint16_t ctaTextW, ctaTextH;
+            matrix->getTextBounds(ctaBadgeText.c_str(), 0, 0, &ctaX1, &ctaY1, &ctaTextW, &ctaTextH);
+            int ctaTextX = ctaBadgeX + ((ctaBadgeW - (int)ctaTextW) / 2);
+            if (ctaTextX < ctaBadgeX + 1) ctaTextX = ctaBadgeX + 1;
+            matrix->setTextColor(transit::providers::nyc::subway::color_from_name(cta_route_text_color(routeId), 80), ctaColor);
+            matrix->setCursor(ctaTextX, centerY - 3);
+            matrix->print(ctaBadgeText);
+        } else if (!isBus) {
             if (line) {
                 draw_transit_logo(
                     logoCenterX,
@@ -460,7 +517,7 @@ static void draw_row_with_logo(const String &routeId,
         matrix->print(eta);
     }
 
-    if (isBus) {
+    if (isBus || isCtaSubway) {
         // Ensure left-most column remains blank for bus text rows.
         matrix->drawFastVLine(0, centerY - 8, 16, 0);
     }
