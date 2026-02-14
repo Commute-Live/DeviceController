@@ -63,7 +63,7 @@ PubSubClient mqtt(wifiClient);
 String deviceId;
 String currentRouteId = transit::registry::default_line().id;
 String lastRenderedRouteId = "";
-String currentRow1Provider = "mta";
+String currentRow1Provider = "mta-subway";
 String currentRow2Provider = "";
 String currentRow1RouteId = transit::registry::default_line().id;
 String currentRow2RouteId = "";
@@ -311,7 +311,7 @@ const transit::LineDefinition *parse_route_command(const String &message) {
     }
 
     // Handle double-encoded JSON payloads like:
-    // "{\"provider\":\"mta\",\"line\":\"E\",...}"
+    // "{\"provider\":\"mta-subway\",\"line\":\"E\",...}"
     String unescaped = message;
     unescaped.replace("\\\"", "\"");
     unescaped.replace("\\\\", "\\");
@@ -436,7 +436,7 @@ static void draw_row_with_logo(const String &routeId,
                     if (fallbackSymbol >= 'a' && fallbackSymbol <= 'z') {
                         fallbackSymbol = fallbackSymbol - 'a' + 'A';
                     }
-                } else if (providerId == "mta") {
+                } else if (providerId == "mta-subway" || providerId == "mta") {
                     fallbackSymbol = 'M';
                 }
                 draw_transit_logo(

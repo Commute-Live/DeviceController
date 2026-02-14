@@ -10,7 +10,7 @@ bool parse_provider_payload(const String &provider, const String &message, Provi
   p.trim();
   p.toLowerCase();
 
-  if (p == "mta") {
+  if (p == "mta-subway" || p == "mta") {
     return parse_mta_payload(message, out);
   }
   if (p == "mta-bus") {
