@@ -90,12 +90,14 @@ int rowLabelScrollOffset[2] = {0, 0};
 String rowLabelLastText[2] = {"", ""};
 int rowLabelPauseTicks[2] = {0, 0};
 bool advanceLabelScroll = false;
+bool recoveryApEnabled = false;
 
 constexpr uint32_t WIFI_RETRY_BASE_MS = 1000;
 constexpr uint32_t WIFI_RETRY_MAX_MS = 60000;
 constexpr uint32_t MQTT_RETRY_BASE_MS = 1000;
 constexpr uint32_t MQTT_RETRY_MAX_MS = 60000;
 constexpr uint32_t RETRY_JITTER_MS = 750;
+constexpr uint8_t WIFI_AP_RECOVERY_ATTEMPT_THRESHOLD = 3;
 constexpr uint32_t LABEL_SCROLL_INTERVAL_MS = 400;
 constexpr int LABEL_PAUSE_START_TICKS = 5;
 constexpr int LABEL_PAUSE_END_TICKS = 7;
@@ -547,8 +549,10 @@ void mqtt_callback(char *topic, byte *payload, unsigned int length) {
     }
 
     const bool providerIsBus = provider == "mta-bus" || currentRow1Provider == "mta-bus";
+    const bool providerIsNycSubway =
+        provider == "mta-subway" || provider == "mta" || currentRow1Provider == "mta-subway" || currentRow1Provider == "mta";
     const transit::LineDefinition *line = nullptr;
-    if (!providerIsBus) {
+    if (providerIsNycSubway) {
         if (currentRow1RouteId.length() > 0) {
             line = transit::registry::find_line(currentRow1RouteId);
         }
@@ -559,6 +563,9 @@ void mqtt_callback(char *topic, byte *payload, unsigned int length) {
             Serial.println("[MQTT] Ignored command: missing/invalid route");
             return;
         }
+    } else if (!providerIsBus) {
+        // Non-NYC subway providers (for example cta-subway) do not use NYC route registry.
+        line = nullptr;
     }
 
     currentRouteId = line ? line->id : (currentRow1RouteId.length() ? currentRow1RouteId : transit::registry::default_line().id);
@@ -638,6 +645,7 @@ void setup() {
 
           Serial.println("[ESP] Connected using saved credentials");
           setupModeActive = false;
+          recoveryApEnabled = false;
           reset_retry(wifiRetry, millis());
           sync_time_utc();
 
@@ -661,12 +669,14 @@ void setup() {
 
           wifi_manager::start_ap(ESP_ssid, ESP_password);
           setupModeActive = true;
+          recoveryApEnabled = true;
       }
 
   } else {
       hasSavedWifiCredentials = false;
       wifi_manager::start_ap(ESP_ssid, ESP_password);
       setupModeActive = true;
+      recoveryApEnabled = true;
   }
 
   server.on("/connect",
@@ -719,6 +729,7 @@ void loop() {
           if (wifi_manager::connect_station(savedWifiSsid.c_str(), savedWifiPassword.c_str(), savedWifiUser.c_str())) {
               Serial.println("[WIFI] Reconnected");
               setupModeActive = false;
+              recoveryApEnabled = false;
               reset_retry(wifiRetry, nowMs);
               timeSynced = false;
               lastTimeSyncAttemptMs = 0;
@@ -728,6 +739,13 @@ void loop() {
                   wifiRetry, nowMs, WIFI_RETRY_BASE_MS, WIFI_RETRY_MAX_MS, RETRY_JITTER_MS);
               Serial.printf("[WIFI] Retry scheduled in %lu ms (attempt %u)\n",
                             (unsigned long)waitMs, wifiRetry.attempt);
+              if (!recoveryApEnabled && wifiRetry.attempt >= WIFI_AP_RECOVERY_ATTEMPT_THRESHOLD) {
+                  if (wifi_manager::start_ap(ESP_ssid, ESP_password)) {
+                      Serial.println("[WIFI] Recovery AP enabled");
+                      setupModeActive = true;
+                      recoveryApEnabled = true;
+                  }
+              }
           }
       }
   } else if (WiFi.status() == WL_CONNECTED) {
