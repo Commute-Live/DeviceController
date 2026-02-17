@@ -6,6 +6,7 @@
 #include "WiFi.h"
 #include "display/Transit.h"
 #include "display/layout_constants.h"
+#include "display/providers/row_chrome.h"
 #include "parsing/payload_parser.h"
 #include "parsing/provider_parser_router.h"
 #include "network/retry_backoff.h"
@@ -25,8 +26,6 @@
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <time.h>
 #include "transit/providers/nyc/subway/colors.h"
-#include "transit/providers/boston/subway/style.h"
-#include "transit/providers/chicago/subway/style.h"
 
 // LED MATRIX PINS (MatrixPortal S3)
 #define R1_PIN 42
@@ -329,6 +328,134 @@ const transit::LineDefinition *parse_route_command(const String &message) {
     return nullptr;
 }
 
+static String compact_whitespace(const String &input) {
+    String output;
+    output.reserve(input.length());
+    bool inSpace = false;
+
+    for (int i = 0; i < (int)input.length(); i++) {
+        char c = input[i];
+        const bool isSpace = c == ' ' || c == '\t' || c == '\n' || c == '\r';
+        if (isSpace) {
+            if (!inSpace && output.length() > 0) {
+                output += ' ';
+            }
+            inSpace = true;
+        } else {
+            output += c;
+            inSpace = false;
+        }
+    }
+
+    output.trim();
+    return output;
+}
+
+static String normalize_eta_text(String etaRaw) {
+    etaRaw.trim();
+    if (etaRaw.length() == 0) return "--";
+
+    String upper = etaRaw;
+    upper.toUpperCase();
+    if (upper == "--") return "--";
+    if (upper == "NOW" || upper == "DUE") return "DUE";
+
+    const bool hasMinuteHint = upper.indexOf("MIN") >= 0 || upper.endsWith("M");
+    if (hasMinuteHint) {
+        int minutes = 0;
+        bool seenDigit = false;
+        for (int i = 0; i < (int)upper.length(); i++) {
+            char c = upper[i];
+            if (c >= '0' && c <= '9') {
+                seenDigit = true;
+                minutes = (minutes * 10) + (c - '0');
+            } else if (seenDigit) {
+                break;
+            }
+        }
+        if (seenDigit) {
+            if (minutes <= 1) return "DUE";
+            return String(minutes) + "m";
+        }
+    }
+
+    return etaRaw;
+}
+
+static int eta_minutes_for_sort(String etaRaw) {
+    etaRaw.trim();
+    if (etaRaw.length() == 0) return 100000;
+
+    String upper = etaRaw;
+    upper.toUpperCase();
+    if (upper == "--") return 100000;
+    if (upper == "NOW" || upper == "DUE") return 0;
+    if (upper.indexOf(':') >= 0) return 100000;
+
+    int minutes = 0;
+    bool seenDigit = false;
+    for (int i = 0; i < (int)upper.length(); i++) {
+        char c = upper[i];
+        if (c >= '0' && c <= '9') {
+            seenDigit = true;
+            minutes = (minutes * 10) + (c - '0');
+        } else if (seenDigit) {
+            break;
+        }
+    }
+
+    if (seenDigit) return minutes;
+    return 100000;
+}
+
+static uint16_t eta_color_for_text(const String &etaText) {
+    const int minutes = eta_minutes_for_sort(etaText);
+    if (minutes >= 100000) {
+        return transit::providers::nyc::subway::color_from_name("gray", 80);
+    }
+    if (minutes <= 1) {
+        return transit::providers::nyc::subway::color_from_hex("#FF5A5A", 120);
+    }
+    if (minutes <= 5) {
+        return transit::providers::nyc::subway::color_from_hex("#F6BC26", 120);
+    }
+    if (minutes <= 12) {
+        return transit::providers::nyc::subway::color_from_hex("#6EE7B7", 110);
+    }
+    return transit::providers::nyc::subway::color_from_name("white", 55);
+}
+
+static String normalize_label_text(const String &labelRaw,
+                                   const String &routeId,
+                                   bool prefixRoute) {
+    String label = compact_whitespace(labelRaw);
+    label.replace(" Station", "");
+    label.replace(" station", "");
+    label.replace(" St.", " St");
+    label.replace(" Ave.", " Ave");
+    label = compact_whitespace(label);
+
+    if (label.length() == 0 && routeId.length() > 0) {
+        label = routeId;
+    }
+
+    if (prefixRoute && routeId.length() > 0) {
+        String routeUpper = routeId;
+        routeUpper.trim();
+        routeUpper.toUpperCase();
+
+        String labelUpper = label;
+        labelUpper.trim();
+        labelUpper.toUpperCase();
+
+        if (!(labelUpper == routeUpper || labelUpper.startsWith(routeUpper + " "))) {
+            label = routeUpper + " " + label;
+        }
+    }
+
+    return compact_whitespace(label);
+}
+
 static String build_scrolled_label(const String &label, int rowIndex, int maxChars) {
     String text = label;
     text.trim();
@@ -398,171 +525,42 @@ static void draw_row_with_logo(const String &routeId,
                                int rowIndex,
                                bool redrawFixed) {
     const transit::LineDefinition *line = transit::registry::find_line(routeId);
-
-    const int logoRadius = 6;
-    const int logoCenterX = logoRadius + 2; // keep col[0] empty for logo rows too
-    const bool isMtaBus = providerId == "mta-bus";
-    const bool isCtaSubway = providerId == "cta-subway";
-    const bool isSeptaBus = providerId == "septa-bus" || providerId == "philly-bus";
-    const bool isSeptaRail = providerId == "septa-rail" || providerId == "philly-rail";
-    const bool isMbta = transit::providers::boston::subway::is_mbta_provider_id(providerId);
-    const bool isMbtaSubway = isMbta && transit::providers::boston::subway::is_subway_line(routeId);
-    const bool isMbtaBus = isMbta && !isMbtaSubway;
-    const bool isBusLike = isMtaBus || isMbtaBus || isSeptaBus;
-    const bool hasRectBusBadge = isMbtaBus || isSeptaBus;
-    const bool hasTrainBadge = isMbtaSubway || isSeptaRail;
-
-    const String eta = etaText.length() ? etaText : "--";
+    const String eta = normalize_eta_text(etaText.length() ? etaText : "--");
 
     int16_t etaX1, etaY1;
     uint16_t etaW, etaH;
     matrix->setTextWrap(false);
     matrix->setTextSize(1);
     matrix->getTextBounds(eta.c_str(), 0, 0, &etaX1, &etaY1, &etaW, &etaH);
+    const display::layout::RowLayoutProfile rowLayout =
+        display::layout::row_layout_profile_for_width(matrix->width());
+    const int etaSlotX = matrix->width() - rowLayout.rightFixedWidth;
+    const int etaSlotW = rowLayout.rightFixedWidth;
+    int etaX = etaSlotX + etaSlotW - static_cast<int>(etaW) - 1;
+    if (etaX < etaSlotX) etaX = etaSlotX;
 
-    constexpr int LEFT_MARGIN_PX = display::layout::kLeftMarginPx;
-    const int etaX = matrix->width() - static_cast<int>(etaW) - 1; // fixed right margin = 1
-    const String ctaBadgeText = transit::providers::chicago::subway::route_label(routeId);
-    const int ctaBadgeW = display::layout::kBadgeWidth;
-    const int ctaBadgeH = display::layout::kBadgeHeight;
-    const int ctaBadgeX = LEFT_MARGIN_PX;
-    const int ctaBadgeY = centerY - (ctaBadgeH / 2);
-    const int mbtaBusBadgeW = display::layout::kBadgeWidth;
-    const int mbtaBusBadgeH = display::layout::kBadgeHeight;
-    const int mbtaBusBadgeX = LEFT_MARGIN_PX;
-    const int mbtaBusBadgeY = centerY - (mbtaBusBadgeH / 2);
-    const int mbtaTrainBadgeW = 16;
-    const int mbtaTrainBadgeH = 11;
-    const int mbtaTrainBadgeX = LEFT_MARGIN_PX;
-    const int mbtaTrainBadgeY = centerY - (mbtaTrainBadgeH / 2);
-    const int septaTrainBadgeW = 20;
-    const int septaTrainBadgeH = 11;
-    const int septaTrainBadgeX = LEFT_MARGIN_PX;
-    const int septaTrainBadgeY = centerY - (septaTrainBadgeH / 2);
-    const int baseTextStartX = isBusLike ? (hasRectBusBadge ? (mbtaBusBadgeX + mbtaBusBadgeW + 2) : LEFT_MARGIN_PX)
-                                         : (isCtaSubway ? (ctaBadgeX + ctaBadgeW + 2)
-                                                        : (hasTrainBadge ? ((isSeptaRail ? septaTrainBadgeW : mbtaTrainBadgeW) + LEFT_MARGIN_PX + 2)
-                                                                        : (logoCenterX + logoRadius + 2)));
-    const int labelStartX = baseTextStartX;
+    display::providers::RowChromeResult chrome =
+        display::providers::draw_row_chrome(matrix, providerId, routeId, line, centerY, redrawFixed);
+    int labelStartX = rowLayout.leftFixedWidth + rowLayout.middleGap;
+    if (labelStartX < 1) labelStartX = 1;
+    if (labelStartX >= etaSlotX) labelStartX = 1;
 
-    const int labelEndX = etaX - 1;
+    const int labelEndX = etaSlotX - rowLayout.middleGap;
     const int labelPx = labelEndX - labelStartX + 1;
     const int labelChars = labelPx > 0 ? labelPx / 6 : 0;
 
     if (redrawFixed) {
-        if (isCtaSubway) {
-            uint16_t ctaColor =
-                transit::providers::nyc::subway::color_from_hex(transit::providers::chicago::subway::route_color_hex(routeId), 40);
-            matrix->fillRoundRect(ctaBadgeX, ctaBadgeY, ctaBadgeW, ctaBadgeH, display::layout::kBadgeCornerRadius, ctaColor);
-            int16_t ctaX1, ctaY1;
-            uint16_t ctaTextW, ctaTextH;
-            matrix->getTextBounds(ctaBadgeText.c_str(), 0, 0, &ctaX1, &ctaY1, &ctaTextW, &ctaTextH);
-            int ctaTextX = ctaBadgeX + ((ctaBadgeW - (int)ctaTextW) / 2);
-            if (ctaTextX < ctaBadgeX + 1) ctaTextX = ctaBadgeX + 1;
-            matrix->setTextColor(transit::providers::nyc::subway::color_from_name(transit::providers::chicago::subway::route_text_color(routeId), 80), ctaColor);
-            matrix->setCursor(ctaTextX, centerY - 3);
-            matrix->print(ctaBadgeText);
-        } else if (hasRectBusBadge) {
-            const String busBadgeText = routeId.length() ? routeId : String("BUS");
-            uint16_t busBadgeColor = isSeptaBus
-                ? transit::providers::nyc::subway::color_from_hex("#2A7F62", 40)
-                : transit::providers::nyc::subway::color_from_hex("#2A2F35", 40);
-            matrix->fillRoundRect(mbtaBusBadgeX, mbtaBusBadgeY, mbtaBusBadgeW, mbtaBusBadgeH, display::layout::kBadgeCornerRadius, busBadgeColor);
-            int16_t bx1, by1;
-            uint16_t bTextW, bTextH;
-            matrix->getTextBounds(busBadgeText.c_str(), 0, 0, &bx1, &by1, &bTextW, &bTextH);
-            int busTextX = mbtaBusBadgeX + ((mbtaBusBadgeW - (int)bTextW) / 2);
-            if (busTextX < mbtaBusBadgeX + 1) busTextX = mbtaBusBadgeX + 1;
-            matrix->setTextColor(transit::providers::nyc::subway::color_from_name("white", 80), busBadgeColor);
-            matrix->setCursor(busTextX, centerY - 3);
-            matrix->print(busBadgeText);
-        } else if (hasTrainBadge) {
-            String badge = transit::providers::boston::subway::subway_badge_text(routeId);
-            const char *hex = transit::providers::boston::subway::subway_color_hex(routeId);
-            uint16_t badgeColor = transit::providers::nyc::subway::color_from_hex(hex, 40);
-            int badgeX = mbtaTrainBadgeX;
-            int badgeY = mbtaTrainBadgeY;
-            int badgeW = mbtaTrainBadgeW;
-            int badgeH = mbtaTrainBadgeH;
-            int badgeRadius = 4;
-            if (isSeptaRail) {
-                badge = routeId.length() ? routeId : String("RR");
-                badge.toUpperCase();
-                if (badge.length() > 3) badge = badge.substring(0, 3);
-                badgeColor = transit::providers::nyc::subway::color_from_hex("#1B4F9C", 40);
-                badgeX = septaTrainBadgeX;
-                badgeY = septaTrainBadgeY;
-                badgeW = septaTrainBadgeW;
-                badgeH = septaTrainBadgeH;
-                badgeRadius = 3;
-            }
-            uint16_t textColor = transit::providers::nyc::subway::color_from_name("white", 80);
-            matrix->fillRoundRect(badgeX, badgeY, badgeW, badgeH, badgeRadius, badgeColor);
-            int16_t x1, y1;
-            uint16_t w, h;
-            matrix->setTextSize(1);
-            matrix->getTextBounds(badge.c_str(), 0, 0, &x1, &y1, &w, &h);
-            int16_t tx = badgeX + ((badgeW - (int16_t)w) / 2) - x1 + 1;
-            int16_t ty = badgeY + ((badgeH - (int16_t)h) / 2) - y1 + 1;
-            matrix->setTextColor(textColor, badgeColor);
-            matrix->setCursor(tx, ty);
-            matrix->print(badge);
-        } else if (!isBusLike) {
-            if (line) {
-                draw_transit_logo(
-                    logoCenterX,
-                    centerY,
-                    line->symbol,
-                    line->color_hex,
-                    logoRadius,
-                    20,
-                    1,
-                    false,
-                    "white",
-                    40);
-            } else {
-                char fallbackSymbol = 'B';
-                if (routeId.length() > 0) {
-                    fallbackSymbol = routeId[0];
-                    if (fallbackSymbol >= 'a' && fallbackSymbol <= 'z') {
-                        fallbackSymbol = fallbackSymbol - 'a' + 'A';
-                    }
-                } else if (providerId == "mta-subway" || providerId == "mta") {
-                    fallbackSymbol = 'M';
-                }
-                draw_transit_logo(
-                    logoCenterX,
-                    centerY,
-                    fallbackSymbol,
-                    "#7C858C",
-                    logoRadius,
-                    20,
-                    1,
-                    false,
-                    "white",
-                    40);
-            }
-        }
-
-        matrix->setTextColor(transit::providers::nyc::subway::color_from_name("white", 40));
+        matrix->fillRect(etaSlotX, centerY - 8, etaSlotW, 16, 0);
+        matrix->setTextColor(eta_color_for_text(eta));
         matrix->setCursor(etaX, centerY - 3);
         matrix->print(eta);
     }
 
-    if (isBusLike || isCtaSubway) {
-        // Ensure left-most column remains blank for bus text rows.
+    if (chrome.clearLeftColumn) {
         matrix->drawFastVLine(0, centerY - 8, 16, 0);
     }
 
-    String label = labelText;
-    label.trim();
-    if (isMtaBus && routeId.length() > 0) {
-        String route = routeId;
-        route.trim();
-        route.toUpperCase();
-        if (label.length() > 0) label = route + " " + label;
-        else label = route;
-    }
+    String label = normalize_label_text(labelText, routeId, chrome.prefixRouteInLabel && routeId.length() > 0);
     if (label.length() == 0) {
         label = routeId.length() > 0 ? routeId : (line ? String(line->id) : String("--"));
     }
@@ -618,6 +616,16 @@ void mqtt_callback(char *topic, byte *payload, unsigned int length) {
         currentRow2RouteId = parsedPayload.row2.line;
         currentRow2Label = parsedPayload.row2.label.length() ? parsedPayload.row2.label : currentRow2RouteId;
         currentRow2Eta = parsedPayload.row2.eta.length() ? parsedPayload.row2.eta : "--";
+
+        const int row1Mins = eta_minutes_for_sort(currentRow1Eta);
+        const int row2Mins = eta_minutes_for_sort(currentRow2Eta);
+        if (row2Mins < row1Mins) {
+            String tmp;
+            tmp = currentRow1Provider; currentRow1Provider = currentRow2Provider; currentRow2Provider = tmp;
+            tmp = currentRow1RouteId; currentRow1RouteId = currentRow2RouteId; currentRow2RouteId = tmp;
+            tmp = currentRow1Label; currentRow1Label = currentRow2Label; currentRow2Label = tmp;
+            tmp = currentRow1Eta; currentRow1Eta = currentRow2Eta; currentRow2Eta = tmp;
+        }
     } else {
         currentRow2Provider = "";
         currentRow2RouteId = "";

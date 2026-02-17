@@ -4,6 +4,8 @@
 #include "parsing/providers/chicago/cta_subway_payload_parser.h"
 #include "parsing/providers/nyc/mta_bus_payload_parser.h"
 #include "parsing/providers/nyc/mta_subway_payload_parser.h"
+#include "parsing/providers/philadelphia/septa_bus_payload_parser.h"
+#include "parsing/providers/philadelphia/septa_rail_payload_parser.h"
 
 namespace parsing {
 
@@ -24,9 +26,11 @@ bool parse_provider_payload(const String &provider, const String &message, Provi
   if (p == "mbta" || p == "mbta-subway" || p == "mbta-bus") {
     return parse_mbta_payload(message, out);
   }
-  if (p == "septa-rail" || p == "septa-bus" || p == "philly-rail" || p == "philly-bus") {
-    // SEPTA payload shape matches generic parser.
-    return parse_mta_bus_payload(message, out);
+  if (p == "septa-rail" || p == "philly-rail") {
+    return parse_septa_rail_payload(message, out);
+  }
+  if (p == "septa-bus" || p == "philly-bus") {
+    return parse_septa_bus_payload(message, out);
   }
 
   // Unknown provider: prefer generic bus-like fallback instead of dropping.
