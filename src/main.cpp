@@ -313,13 +313,29 @@ static String json_escape(const String &input) {
     return output;
 }
 
+static String now_iso_utc() {
+    time_t now = time(nullptr);
+    if (now <= 0) {
+        return String("");
+    }
+    struct tm tmUtc;
+    gmtime_r(&now, &tmUtc);
+    char buf[32];
+    strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tmUtc);
+    return String(buf);
+}
+
 void mqtt_publish_display_state() {
     if (!mqtt.connected()) return;
 
     String topic = "devices/" + deviceId + "/display";
+    String fetchedAt = now_iso_utc();
+    if (fetchedAt.length() == 0) {
+        fetchedAt = String((unsigned long)millis());
+    }
     String payload = "{";
     payload += "\"deviceId\":\"" + json_escape(deviceId) + "\",";
-    payload += "\"fetchedAt\":\"" + String((unsigned long)millis()) + "\",";
+    payload += "\"fetchedAt\":\"" + fetchedAt + "\",";
     payload += "\"row1\":{";
     payload += "\"provider\":\"" + json_escape(currentRow1Provider) + "\",";
     payload += "\"line\":\"" + json_escape(currentRow1RouteId) + "\",";
