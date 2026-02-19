@@ -107,6 +107,7 @@ constexpr int LABEL_PAUSE_END_TICKS = 7;
 // Forward declarations
 bool connect_ESP_to_mqtt();
 void mqtt_publish_online();
+void mqtt_publish_display_state();
 void mqtt_callback(char *topic, byte *payload, unsigned int length);
 const transit::LineDefinition *parse_route_command(const String &message);
 void render_route_logo(const String &route_id, bool fullRedraw = true);
@@ -295,6 +296,46 @@ void mqtt_publish_online() {
     mqtt.publish(topic.c_str(), "online", true);
 
     Serial.println("[MQTT] Published online");
+}
+
+static String json_escape(const String &input) {
+    String output;
+    output.reserve(input.length() + 8);
+    for (int i = 0; i < (int)input.length(); i++) {
+        char c = input[i];
+        if (c == '\\') output += "\\\\";
+        else if (c == '"') output += "\\\"";
+        else if (c == '\n') output += "\\n";
+        else if (c == '\r') output += "\\r";
+        else if (c == '\t') output += "\\t";
+        else output += c;
+    }
+    return output;
+}
+
+void mqtt_publish_display_state() {
+    if (!mqtt.connected()) return;
+
+    String topic = "devices/" + deviceId + "/display";
+    String payload = "{";
+    payload += "\"deviceId\":\"" + json_escape(deviceId) + "\",";
+    payload += "\"fetchedAt\":\"" + String((unsigned long)millis()) + "\",";
+    payload += "\"row1\":{";
+    payload += "\"provider\":\"" + json_escape(currentRow1Provider) + "\",";
+    payload += "\"line\":\"" + json_escape(currentRow1RouteId) + "\",";
+    payload += "\"label\":\"" + json_escape(currentRow1Label) + "\",";
+    payload += "\"eta\":\"" + json_escape(currentRow1Eta) + "\"";
+    payload += "},";
+    payload += "\"row2\":{";
+    payload += "\"provider\":\"" + json_escape(currentRow2Provider) + "\",";
+    payload += "\"line\":\"" + json_escape(currentRow2RouteId) + "\",";
+    payload += "\"label\":\"" + json_escape(currentRow2Label) + "\",";
+    payload += "\"eta\":\"" + json_escape(currentRow2Eta) + "\"";
+    payload += "}";
+    payload += "}";
+
+    mqtt.publish(topic.c_str(), payload.c_str(), false);
+    Serial.printf("[MQTT] Published display state to %s\n", topic.c_str());
 }
 
 const transit::LineDefinition *parse_route_command(const String &message) {
@@ -676,6 +717,7 @@ void mqtt_callback(char *topic, byte *payload, unsigned int length) {
     currentRouteId = line ? line->id : (currentRow1RouteId.length() ? currentRow1RouteId : transit::registry::default_line().id);
     hasTransitData = true;
     render_route_logo(currentRouteId);
+    mqtt_publish_display_state();
     if (line) {
         Serial.printf("[MQTT] Rendered route logo: %s (%c)\n", line->id, line->symbol);
     } else {
