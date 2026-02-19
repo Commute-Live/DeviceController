@@ -633,6 +633,14 @@ void mqtt_callback(char *topic, byte *payload, unsigned int length) {
         currentRow2Eta = "--";
     }
 
+    Serial.printf("[MQTT] Parsed rows r1={provider:%s line:%s eta:%s} r2={provider:%s line:%s eta:%s}\n",
+                  currentRow1Provider.length() ? currentRow1Provider.c_str() : "-",
+                  currentRow1RouteId.length() ? currentRow1RouteId.c_str() : "-",
+                  currentRow1Eta.length() ? currentRow1Eta.c_str() : "-",
+                  currentRow2Provider.length() ? currentRow2Provider.c_str() : "-",
+                  currentRow2RouteId.length() ? currentRow2RouteId.c_str() : "-",
+                  currentRow2Eta.length() ? currentRow2Eta.c_str() : "-");
+
     if (lineRaw.length() == 0) {
         lineRaw = currentRow1RouteId;
     }

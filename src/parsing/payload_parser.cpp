@@ -154,7 +154,9 @@ static String format_arrivals_compact(const String &json, const String &fallback
   int n = extract_next_arrival_list(json, arrivals, 3);
   if (n <= 0) return "--";
 
-  // Device display uses only the next upcoming ETA (one train min).
+  // Prefer the first non-DUE ETA so riders can still see a minute value when
+  // the nearest prediction is only a few seconds away.
+  bool sawDue = false;
   for (int i = 0; i < n; i++) {
     String label = "--";
     if (hasFetchedTs) {
@@ -162,9 +164,15 @@ static String format_arrivals_compact(const String &json, const String &fallback
     } else if (arrivals[i].length() >= 16) {
       label = arrivals[i].substring(11, 16);
     }
-    if (label != "--") return label;
+    if (label == "--") continue;
+    if (label == "DUE") {
+      sawDue = true;
+      continue;
+    }
+    return label;
   }
 
+  if (sawDue) return "DUE";
   return "--";
 }
 

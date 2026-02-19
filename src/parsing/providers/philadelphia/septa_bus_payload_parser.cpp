@@ -19,9 +19,14 @@ static String first_eta_from_message(const String &message) {
   String e1 = eta_value(eta1);
   String e2 = eta_value(eta2);
   String e3 = eta_value(eta3);
-  if (e1 != "--") return e1;
-  if (e2 != "--") return e2;
-  if (e3 != "--") return e3;
+  bool sawDue = false;
+  if (e1 == "DUE") sawDue = true;
+  else if (e1 != "--") return e1;
+  if (e2 == "DUE") sawDue = true;
+  else if (e2 != "--") return e2;
+  if (e3 == "DUE") sawDue = true;
+  else if (e3 != "--") return e3;
+  if (sawDue) return "DUE";
   return "--";
 }
 
