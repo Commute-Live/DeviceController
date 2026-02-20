@@ -70,6 +70,24 @@ static int extract_next_arrival_list(const String &json, String outArrivals[], i
   return count;
 }
 
+static int extract_next_eta_list(const String &json, String outEtas[], int maxCount) {
+  int arrPos = json.indexOf("\"nextArrivals\"");
+  if (arrPos < 0 || maxCount <= 0) return 0;
+
+  int count = 0;
+  int pos = arrPos;
+  while (count < maxCount) {
+    int keyPos = json.indexOf("\"eta\":\"", pos);
+    if (keyPos < 0) break;
+    int valueStart = keyPos + strlen("\"eta\":\"");
+    int valueEnd = json.indexOf('"', valueStart);
+    if (valueEnd < 0) break;
+    outEtas[count++] = json.substring(valueStart, valueEnd);
+    pos = valueEnd + 1;
+  }
+  return count;
+}
+
 static String eta_label_for_arrival(const String &arrivalIso, time_t fetchedTs) {
   time_t arrivalTs;
   if (parse_iso8601(arrivalIso, arrivalTs)) {
@@ -144,6 +162,24 @@ static int find_matching_bracket(const String &s, int openPos, char openCh, char
 }
 
 static String format_arrivals_compact(const String &json, const String &fallbackFetchedAt) {
+  String etaValues[3];
+  int etaCount = extract_next_eta_list(json, etaValues, 3);
+  if (etaCount > 0) {
+    bool sawDue = false;
+    for (int i = 0; i < etaCount; i++) {
+      String eta = etaValues[i];
+      eta.trim();
+      eta.toUpperCase();
+      if (eta.length() == 0 || eta == "--") continue;
+      if (eta == "DUE" || eta == "NOW") {
+        sawDue = true;
+        continue;
+      }
+      return etaValues[i];
+    }
+    if (sawDue) return "DUE";
+  }
+
   String fetchedAt = extract_json_string_field(json, "fetchedAt");
   if (fetchedAt.length() == 0) fetchedAt = fallbackFetchedAt;
 
