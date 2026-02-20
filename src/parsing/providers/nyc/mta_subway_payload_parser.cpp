@@ -31,7 +31,10 @@ bool parse_mta_subway_payload(const String &message, ProviderPayload &out) {
   String provider = extract_json_string_field(message, "provider");
   if (provider.length() == 0 || provider == "mta") provider = "mta-subway";
   String direction = extract_json_string_field(message, "direction");
-  String directionLabel = extract_json_string_field(message, "directionLabel");
+  String directionLabel = extract_json_string_field(message, "destination");
+  if (directionLabel.length() == 0) {
+    directionLabel = extract_json_string_field(message, "directionLabel");
+  }
   String stop = extract_json_string_field(message, "stop");
 
   String line1;

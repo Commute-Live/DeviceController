@@ -63,7 +63,10 @@ bool parse_septa_bus_payload(const String &message, ProviderPayload &out) {
   String line = extract_json_string_field(message, "line");
   if (line.length() == 0) return false;
 
-  String directionLabel = extract_json_string_field(message, "directionLabel");
+  String directionLabel = extract_json_string_field(message, "destination");
+  if (directionLabel.length() == 0) {
+    directionLabel = extract_json_string_field(message, "directionLabel");
+  }
   String stop = extract_json_string_field(message, "stop");
   String label = directionLabel.length() ? directionLabel : stop;
   if (label.length() == 0) label = line;

@@ -246,7 +246,10 @@ bool parse_lines_payload(const String &message,
     String line = extract_json_string_field(item, "line");
     if (line.length() == 0) continue;
     String provider = extract_json_string_field(item, "provider");
-    String directionLabel = extract_json_string_field(item, "directionLabel");
+    String directionLabel = extract_json_string_field(item, "destination");
+    if (directionLabel.length() == 0) {
+      directionLabel = extract_json_string_field(item, "directionLabel");
+    }
     if (directionLabel.length() == 0) {
       directionLabel = extract_json_string_field(item, "stop");
     }
