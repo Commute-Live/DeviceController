@@ -9,32 +9,43 @@
 
 namespace parsing {
 
+bool is_supported_provider_id(const String &provider) {
+  String p = provider;
+  p.trim();
+  p.toLowerCase();
+  return p == "mta-subway" ||
+         p == "mta-bus" ||
+         p == "mbta" ||
+         p == "cta-subway" ||
+         p == "septa-rail" ||
+         p == "septa-bus";
+}
+
 bool parse_provider_payload(const String &provider, const String &message, ProviderPayload &out) {
   String p = provider;
   p.trim();
   p.toLowerCase();
 
-  if (p == "mta-subway" || p == "mta") {
+  if (p == "mta-subway") {
     return parse_mta_subway_payload(message, out);
   }
-  if (p == "cta-subway" || p == "cta") {
+  if (p == "cta-subway") {
     return parse_cta_subway_payload(message, out);
   }
   if (p == "mta-bus") {
     return parse_mta_bus_payload(message, out);
   }
-  if (p == "mbta" || p == "mbta-subway" || p == "mbta-bus") {
+  if (p == "mbta") {
     return parse_mbta_payload(message, out);
   }
-  if (p == "septa-rail" || p == "philly-rail") {
+  if (p == "septa-rail") {
     return parse_septa_rail_payload(message, out);
   }
-  if (p == "septa-bus" || p == "philly-bus") {
+  if (p == "septa-bus") {
     return parse_septa_bus_payload(message, out);
   }
 
-  // Unknown provider: prefer generic bus-like fallback instead of dropping.
-  return parse_mta_bus_payload(message, out);
+  return false;
 }
 
 }  // namespace parsing

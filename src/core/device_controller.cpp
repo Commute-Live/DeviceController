@@ -261,8 +261,9 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   const String message(messageBuf);
 
   String provider = extract_json_string_field(message, "provider");
-  if (provider.length() == 0) {
-    provider = "mta-subway";
+  if (provider.length() == 0 || !parsing::is_supported_provider_id(provider)) {
+    Serial.printf("[MQTT] Ignored: unsupported provider '%s'\n", provider.c_str());
+    return;
   }
 
   parsing::ProviderPayload parsed{};
@@ -271,8 +272,22 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
     return;
   }
 
+  const String row1Provider = parsed.row1.provider.length() ? parsed.row1.provider : provider;
+  if (!parsing::is_supported_provider_id(row1Provider)) {
+    Serial.printf("[MQTT] Ignored: unsupported row1 provider '%s'\n", row1Provider.c_str());
+    return;
+  }
+
+  if (parsed.hasRow2) {
+    const String row2Provider = parsed.row2.provider.length() ? parsed.row2.provider : provider;
+    if (!parsing::is_supported_provider_id(row2Provider)) {
+      Serial.printf("[MQTT] Ignored: unsupported row2 provider '%s'\n", row2Provider.c_str());
+      return;
+    }
+  }
+
   copy_str(renderModel_.rows[0].providerId, sizeof(renderModel_.rows[0].providerId),
-           parsed.row1.provider.length() ? parsed.row1.provider.c_str() : provider.c_str());
+           row1Provider.c_str());
   copy_str(renderModel_.rows[0].routeId, sizeof(renderModel_.rows[0].routeId),
            parsed.row1.line.length() ? parsed.row1.line.c_str() : "--");
   copy_str(renderModel_.rows[0].destination, sizeof(renderModel_.rows[0].destination),

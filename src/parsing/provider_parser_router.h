@@ -5,6 +5,8 @@
 
 namespace parsing {
 
+bool is_supported_provider_id(const String &provider);
+
 bool parse_provider_payload(const String &provider, const String &message, ProviderPayload &out);
 
 }  // namespace parsing

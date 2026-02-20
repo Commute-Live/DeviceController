@@ -158,7 +158,7 @@ bool MqttClient::build_default_topics(const char *deviceId, MqttTopics &outTopic
   }
 
   const int s = snprintf(outTopics.state, sizeof(outTopics.state), "device/%s/state", deviceId);
-  const int c = snprintf(outTopics.command, sizeof(outTopics.command), "device/%s/command", deviceId);
+  const int c = snprintf(outTopics.command, sizeof(outTopics.command), "/device/%s/commands", deviceId);
   const int h = snprintf(outTopics.heartbeat, sizeof(outTopics.heartbeat), "device/%s/heartbeat", deviceId);
   const int e = snprintf(outTopics.event, sizeof(outTopics.event), "device/%s/event", deviceId);
   const int t = snprintf(outTopics.telemetry, sizeof(outTopics.telemetry), "device/%s/telemetry", deviceId);
