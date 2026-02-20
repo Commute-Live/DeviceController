@@ -231,6 +231,11 @@ bool parse_lines_payload(const String &message,
 
   String fallbackFetchedAt = extract_json_string_field(message, "fetchedAt");
   String linesJson = message.substring(arrayOpen + 1, arrayClose);
+  String firstItemJson = "";
+  String firstLine = "";
+  String firstProvider = "";
+  String firstLabel = "";
+  String firstEta = "";
 
   int cursor = 0;
   int rowCount = 0;
@@ -263,6 +268,11 @@ bool parse_lines_payload(const String &message,
       row1Provider = provider;
       row1Label = directionLabel;
       row1Eta = etaText;
+      firstItemJson = item;
+      firstLine = line;
+      firstProvider = provider;
+      firstLabel = directionLabel;
+      firstEta = etaText;
     } else if (rowCount == 1) {
       row2Line = line;
       row2Provider = provider;
@@ -270,6 +280,33 @@ bool parse_lines_payload(const String &message,
       row2Eta = etaText;
     }
     rowCount++;
+  }
+
+  // If only one configured line is present, render second row with the next ETA
+  // from the same line instead of leaving row2 empty.
+  if (rowCount == 1 && firstItemJson.length() > 0) {
+    String etaValues[3];
+    int etaCount = extract_next_eta_list(firstItemJson, etaValues, 3);
+    if (etaCount > 1) {
+      String nextEta = "--";
+      for (int i = 1; i < etaCount; i++) {
+        String candidate = etaValues[i];
+        candidate.trim();
+        candidate.toUpperCase();
+        if (candidate.length() == 0 || candidate == "--") continue;
+        nextEta = etaValues[i];
+        break;
+      }
+      if (nextEta == "--" && etaCount > 1) {
+        nextEta = etaValues[1];
+      }
+
+      row2Line = firstLine;
+      row2Provider = firstProvider;
+      row2Label = firstLabel;
+      row2Eta = nextEta;
+      rowCount = 2;
+    }
   }
 
   return rowCount > 0;
