@@ -70,7 +70,7 @@ void setup() {
   cfg.display.panelHeight = 32;
   cfg.display.brightness = 80;
   cfg.display.serpentine = false;
-  cfg.display.doubleBuffered = true;
+  cfg.display.doubleBuffered = false;
 
   copy_str(cfg.network.ssid, COMMUTELIVE_WIFI_SSID);
   copy_str(cfg.network.password, COMMUTELIVE_WIFI_PASSWORD);

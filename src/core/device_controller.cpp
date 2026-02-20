@@ -167,10 +167,6 @@ bool DeviceController::begin() {
     return false;
   }
 
-  if (!deps_.displayEngine->begin(runtimeConfig_.display)) {
-    return false;
-  }
-
   MqttTopics topics{};
   if (!MqttClient::build_default_topics(runtimeConfig_.deviceId, topics)) {
     return false;
@@ -180,17 +176,21 @@ bool DeviceController::begin() {
     return false;
   }
 
-  deps_.layoutEngine->set_viewport(deps_.displayEngine->geometry().totalWidth,
-                                   deps_.displayEngine->geometry().totalHeight);
-
   deps_.networkManager->set_state_callback(&DeviceController::on_network_state_change, this);
   deps_.mqttClient->set_command_callback(&DeviceController::on_mqtt_command, this);
   activeController_ = this;
   setup_http_routes();
+  deps_.networkManager->begin(runtimeConfig_.network);
   server_.begin();
   Serial.println("[HTTP] Core API ready");
 
-  deps_.networkManager->begin(runtimeConfig_.network);
+  if (!deps_.displayEngine->begin(runtimeConfig_.display)) {
+    return false;
+  }
+
+  deps_.layoutEngine->set_viewport(deps_.displayEngine->geometry().totalWidth,
+                                   deps_.displayEngine->geometry().totalHeight);
+
   update_ui_state();
   render_frame(millis());
   return true;

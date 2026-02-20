@@ -40,7 +40,7 @@ void apply_defaults(DeviceRuntimeConfig &cfg) {
   cfg.display.panelHeight = 32;
   cfg.display.brightness = 80;
   cfg.display.serpentine = false;
-  cfg.display.doubleBuffered = true;
+  cfg.display.doubleBuffered = false;
 }
 
 void sanitize_display(DisplayConfig &cfg) {
