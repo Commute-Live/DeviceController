@@ -215,7 +215,10 @@ bool parse_lines_payload(const String &message,
       directionLabel = extract_json_string_field(item, "stop");
     }
 
-    String etaText = format_arrivals_compact(item, fallbackFetchedAt);
+    String etaText = extract_json_string_field(item, "eta");
+    if (etaText.length() == 0) {
+      etaText = format_arrivals_compact(item, fallbackFetchedAt);
+    }
     if (rowCount == 0) {
       primaryLine = line;
       row1Provider = provider;
