@@ -66,14 +66,20 @@ void BadgeRenderer::draw_badge(DisplayEngine &display,
                                const char *routeId) const {
   if (size <= 0) return;
 
-  const int16_t r = static_cast<int16_t>(size / 2);
-  const int16_t cx = static_cast<int16_t>(x + r);
-  const int16_t cy = static_cast<int16_t>(y + r);
+  int16_t badgeSize = size;
+  if (badgeSize < 5) badgeSize = 5;
+  if ((badgeSize & 1) == 0) {
+    badgeSize -= 1;
+  }
+
+  const int16_t r = static_cast<int16_t>((badgeSize - 1) / 2);
+  const int16_t cx = static_cast<int16_t>(x + (badgeSize / 2));
+  const int16_t cy = static_cast<int16_t>(y + (badgeSize / 2));
   const uint16_t fill = transit::MtaColorMap::color_for_route(routeId);
 
   fill_circle_midpoint(display, cx, cy, r, fill);
 
-  const int16_t targetFontHeight = static_cast<int16_t>((size * 3) / 5);  // 0.6 * badgeSize
+  const int16_t targetFontHeight = static_cast<int16_t>((badgeSize * 3) / 5);  // 0.6 * badgeSize
   uint8_t textSize = static_cast<uint8_t>((targetFontHeight + 4) / 8);
   if (textSize < 1) textSize = 1;
 
@@ -81,7 +87,14 @@ void BadgeRenderer::draw_badge(DisplayEngine &display,
   route_text(routeId, textBuf, sizeof(textBuf));
   if (textBuf[0] == '\0') return;
 
-  const TextMetrics tm = display.measure_text(textBuf, textSize);
+  TextMetrics tm = display.measure_text(textBuf, textSize);
+  const int16_t maxGlyph = static_cast<int16_t>((badgeSize * 7) / 10);  // maintain visual breathing room
+  while (textSize > 1 && (tm.width > maxGlyph || tm.height > maxGlyph)) {
+    --textSize;
+    tm = display.measure_text(textBuf, textSize);
+  }
+
+  // Center using measured glyph bounds relative to cursor origin.
   const int16_t tx = static_cast<int16_t>(cx - (tm.width / 2) - tm.xOffset);
   const int16_t ty = static_cast<int16_t>(cy - (tm.height / 2) - tm.yOffset);
   display.draw_text(tx, ty, textBuf, kWhite, textSize, fill);

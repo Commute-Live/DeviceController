@@ -12,7 +12,11 @@ RowLayout LayoutEngine::compute_row_layout(int16_t totalWidth,
 
   // Strict geometry derived from row height.
   int16_t badgeSize = static_cast<int16_t>((frame.height * 3) / 4);  // 0.75 * rowHeight
-  if (badgeSize < 1) badgeSize = 1;
+  if (badgeSize < 5) badgeSize = 5;
+  // Force odd diameter so circle center maps to an exact pixel and stays symmetrical.
+  if ((badgeSize & 1) == 0) {
+    badgeSize -= 1;
+  }
 
   const int16_t etaWidth = static_cast<int16_t>(etaChars * 6 * textSize);
   const int16_t badgeX = kOuterMargin;
