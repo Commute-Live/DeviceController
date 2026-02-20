@@ -29,6 +29,16 @@ const char *route_text(const char *routeId, char *out, size_t outLen) {
 
 }  // namespace
 
+int16_t BadgeRenderer::corrected_radius(int16_t value, uint16_t aspectXQ8_8, uint16_t aspectYQ8_8) const {
+  if (value <= 0) return 0;
+  if (aspectXQ8_8 == 0) return value;
+  const int32_t num = static_cast<int32_t>(value) * static_cast<int32_t>(aspectYQ8_8) +
+                      static_cast<int32_t>(aspectXQ8_8 / 2);
+  const int32_t den = static_cast<int32_t>(aspectXQ8_8);
+  const int32_t out = num / den;
+  return static_cast<int16_t>(out > 0 ? out : 0);
+}
+
 void BadgeRenderer::fill_circle_midpoint(DisplayEngine &display,
                                          int16_t cx,
                                          int16_t cy,
@@ -44,10 +54,12 @@ void BadgeRenderer::fill_circle_midpoint(DisplayEngine &display,
   int16_t d = 1 - r;
 
   while (x >= y) {
-    display.draw_hline(cx - x, cy + y, static_cast<int16_t>(2 * x + 1), color);
-    display.draw_hline(cx - x, cy - y, static_cast<int16_t>(2 * x + 1), color);
-    display.draw_hline(cx - y, cy + x, static_cast<int16_t>(2 * y + 1), color);
-    display.draw_hline(cx - y, cy - x, static_cast<int16_t>(2 * y + 1), color);
+    const int16_t xCorr = corrected_radius(x, kAspectXQ8_8, kAspectYQ8_8);
+    const int16_t yCorr = corrected_radius(y, kAspectXQ8_8, kAspectYQ8_8);
+    display.draw_hline(cx - xCorr, cy + y, static_cast<int16_t>(2 * xCorr + 1), color);
+    display.draw_hline(cx - xCorr, cy - y, static_cast<int16_t>(2 * xCorr + 1), color);
+    display.draw_hline(cx - yCorr, cy + x, static_cast<int16_t>(2 * yCorr + 1), color);
+    display.draw_hline(cx - yCorr, cy - x, static_cast<int16_t>(2 * yCorr + 1), color);
 
     ++y;
     if (d < 0) {
@@ -69,7 +81,8 @@ void BadgeRenderer::draw_badge(DisplayEngine &display,
   int16_t badgeSize = size;
   if (badgeSize < 5) badgeSize = 5;
 
-  const int16_t r = static_cast<int16_t>((badgeSize - 1) / 2);
+  int16_t r = static_cast<int16_t>(badgeSize / 2 - kStrokePaddingPx);
+  if (r < 1) r = 1;
   const int16_t cx = static_cast<int16_t>(x + (badgeSize / 2));
   const int16_t cy = static_cast<int16_t>(y + (badgeSize / 2));
   const uint16_t fill = transit::MtaColorMap::color_for_route(routeId);
@@ -85,7 +98,7 @@ void BadgeRenderer::draw_badge(DisplayEngine &display,
   if (textBuf[0] == '\0') return;
 
   TextMetrics tm = display.measure_text(textBuf, textSize);
-  const int16_t maxGlyph = static_cast<int16_t>((badgeSize * 7) / 10);  // maintain visual breathing room
+  const int16_t maxGlyph = static_cast<int16_t>((badgeSize * 3) / 5);
   while (textSize > 1 && (tm.width > maxGlyph || tm.height > maxGlyph)) {
     --textSize;
     tm = display.measure_text(textBuf, textSize);

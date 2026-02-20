@@ -144,8 +144,9 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
 
   const VerticalLayoutResult layout = verticalLayout_.compute(height_, rowCount);
   const int16_t baseRowHeight = layout.rows[0].height > 0 ? layout.rows[0].height : static_cast<int16_t>(height_);
-  int16_t fixedBadgeSize =
-      static_cast<int16_t>(baseRowHeight - (2 * display::LayoutEngine::kOuterMargin));
+  const int16_t candidateBadgeSize = static_cast<int16_t>((baseRowHeight * 3) / 4);
+  const int16_t maxAllowed = static_cast<int16_t>(baseRowHeight - (2 * display::LayoutEngine::kOuterMargin));
+  int16_t fixedBadgeSize = candidateBadgeSize < maxAllowed ? candidateBadgeSize : maxAllowed;
   if (fixedBadgeSize < 5) fixedBadgeSize = 5;
   const int16_t targetTextHeight = static_cast<int16_t>((fixedBadgeSize * 3) / 5);  // 0.6 * badge size
   uint8_t rowFont = static_cast<uint8_t>((targetTextHeight + 4) / 8);
