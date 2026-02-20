@@ -13,6 +13,7 @@ constexpr size_t kMaxDestinationLen = 64;
 constexpr size_t kMaxEtaLen = 12;
 constexpr size_t kMaxErrorLen = 96;
 constexpr size_t kMaxStatusLen = 32;
+constexpr uint8_t kMaxTransitRows = 3;
 
 struct DisplayConfig {
   uint8_t panelRows;
@@ -65,10 +66,11 @@ struct TransitRowModel {
 struct RenderModel {
   UiState uiState;
   bool hasData;
+  uint8_t activeRows;
   uint32_t updatedAtMs;
   char statusLine[kMaxStatusLen];
   char statusDetail[kMaxDestinationLen];
-  TransitRowModel rows[2];
+  TransitRowModel rows[kMaxTransitRows];
 };
 
 }  // namespace core

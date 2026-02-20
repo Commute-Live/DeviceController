@@ -128,15 +128,58 @@ void normalize_eta(const String &input, char *out, size_t outLen) {
 }
 
 void set_default_rows(RenderModel &model) {
+  model.activeRows = 1;
   copy_str(model.rows[0].providerId, sizeof(model.rows[0].providerId), "");
   copy_str(model.rows[0].routeId, sizeof(model.rows[0].routeId), "--");
   copy_str(model.rows[0].destination, sizeof(model.rows[0].destination), "Waiting data");
   copy_str(model.rows[0].eta, sizeof(model.rows[0].eta), "--");
 
-  copy_str(model.rows[1].providerId, sizeof(model.rows[1].providerId), "");
-  copy_str(model.rows[1].routeId, sizeof(model.rows[1].routeId), "--");
-  copy_str(model.rows[1].destination, sizeof(model.rows[1].destination), "");
-  copy_str(model.rows[1].eta, sizeof(model.rows[1].eta), "--");
+  for (uint8_t i = 1; i < kMaxTransitRows; ++i) {
+    copy_str(model.rows[i].providerId, sizeof(model.rows[i].providerId), "");
+    copy_str(model.rows[i].routeId, sizeof(model.rows[i].routeId), "");
+    copy_str(model.rows[i].destination, sizeof(model.rows[i].destination), "");
+    copy_str(model.rows[i].eta, sizeof(model.rows[i].eta), "");
+  }
+}
+
+int clamp_rows_to_display(int value) {
+  if (value < 1) return 1;
+  if (value > static_cast<int>(kMaxTransitRows)) return static_cast<int>(kMaxTransitRows);
+  return value;
+}
+
+int split_eta_tokens(const char *etaRaw, char out[kMaxTransitRows][kMaxEtaLen]) {
+  for (uint8_t i = 0; i < kMaxTransitRows; ++i) {
+    out[i][0] = '\0';
+  }
+
+  if (!etaRaw || etaRaw[0] == '\0') {
+    return 0;
+  }
+
+  String eta = etaRaw;
+  int count = 0;
+  int start = 0;
+  while (start <= eta.length() && count < static_cast<int>(kMaxTransitRows)) {
+    int sep = eta.indexOf('/', start);
+    String token = sep < 0 ? eta.substring(start) : eta.substring(start, sep);
+    token.trim();
+    if (token == "NOW") token = "DUE";
+    if (token.length() > 0 && token != "--") {
+      copy_str(out[count], kMaxEtaLen, token.c_str());
+      count++;
+    }
+    if (sep < 0) break;
+    start = sep + 1;
+  }
+  return count;
+}
+
+void clear_row(TransitRowModel &row) {
+  copy_str(row.providerId, sizeof(row.providerId), "");
+  copy_str(row.routeId, sizeof(row.routeId), "");
+  copy_str(row.destination, sizeof(row.destination), "");
+  copy_str(row.eta, sizeof(row.eta), "");
 }
 
 void json_escape(const char *src, char *dst, size_t dstLen) {
@@ -292,6 +335,7 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   memcpy(messageBuf, payload, len);
   messageBuf[len] = '\0';
   const String message(messageBuf);
+  const int arrivalsToDisplay = clamp_rows_to_display(extract_json_int_field(message, "arrivalsToDisplay", 1));
   Serial.printf("[MQTT] Incoming topic=%s len=%u\n", topic ? topic : "(null)", static_cast<unsigned>(len));
   Serial.printf("[MQTT] Payload=%s\n", message.c_str());
 
@@ -345,11 +389,43 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
       renderModel_.rows[0] = renderModel_.rows[1];
       renderModel_.rows[1] = tmp;
     }
+    renderModel_.activeRows = 2;
+    for (uint8_t i = 2; i < kMaxTransitRows; ++i) {
+      clear_row(renderModel_.rows[i]);
+    }
   } else {
-    copy_str(renderModel_.rows[1].providerId, sizeof(renderModel_.rows[1].providerId), "");
-    copy_str(renderModel_.rows[1].routeId, sizeof(renderModel_.rows[1].routeId), "");
-    copy_str(renderModel_.rows[1].destination, sizeof(renderModel_.rows[1].destination), "");
-    copy_str(renderModel_.rows[1].eta, sizeof(renderModel_.rows[1].eta), "");
+    char etaParts[kMaxTransitRows][kMaxEtaLen];
+    const int etaCount = split_eta_tokens(renderModel_.rows[0].eta, etaParts);
+    int rowsToRender = arrivalsToDisplay;
+    if (etaCount > 0 && rowsToRender > etaCount) {
+      rowsToRender = etaCount;
+    }
+    if (rowsToRender < 1) {
+      rowsToRender = 1;
+    }
+
+    if (etaCount > 0) {
+      copy_str(renderModel_.rows[0].eta, sizeof(renderModel_.rows[0].eta), etaParts[0]);
+    }
+
+    for (int i = 1; i < rowsToRender; ++i) {
+      copy_str(renderModel_.rows[i].providerId, sizeof(renderModel_.rows[i].providerId),
+               renderModel_.rows[0].providerId);
+      copy_str(renderModel_.rows[i].routeId, sizeof(renderModel_.rows[i].routeId),
+               renderModel_.rows[0].routeId);
+      copy_str(renderModel_.rows[i].destination, sizeof(renderModel_.rows[i].destination),
+               renderModel_.rows[0].destination);
+      if (i < etaCount) {
+        copy_str(renderModel_.rows[i].eta, sizeof(renderModel_.rows[i].eta), etaParts[i]);
+      } else {
+        copy_str(renderModel_.rows[i].eta, sizeof(renderModel_.rows[i].eta), "--");
+      }
+    }
+
+    renderModel_.activeRows = static_cast<uint8_t>(rowsToRender);
+    for (int i = rowsToRender; i < static_cast<int>(kMaxTransitRows); ++i) {
+      clear_row(renderModel_.rows[i]);
+    }
   }
 
   renderModel_.hasData = true;
@@ -482,6 +558,10 @@ void DeviceController::publish_display_state() {
   char r2Line[80];
   char r2Label[128];
   char r2Eta[32];
+  char r3Provider[80];
+  char r3Line[80];
+  char r3Label[128];
+  char r3Eta[32];
 
   json_escape(renderModel_.rows[0].providerId, r1Provider, sizeof(r1Provider));
   json_escape(renderModel_.rows[0].routeId, r1Line, sizeof(r1Line));
@@ -491,12 +571,17 @@ void DeviceController::publish_display_state() {
   json_escape(renderModel_.rows[1].routeId, r2Line, sizeof(r2Line));
   json_escape(renderModel_.rows[1].destination, r2Label, sizeof(r2Label));
   json_escape(renderModel_.rows[1].eta, r2Eta, sizeof(r2Eta));
+  json_escape(renderModel_.rows[2].providerId, r3Provider, sizeof(r3Provider));
+  json_escape(renderModel_.rows[2].routeId, r3Line, sizeof(r3Line));
+  json_escape(renderModel_.rows[2].destination, r3Label, sizeof(r3Label));
+  json_escape(renderModel_.rows[2].eta, r3Eta, sizeof(r3Eta));
 
-  char payload[512];
+  char payload[768];
   snprintf(payload,
            sizeof(payload),
-           "{\"deviceId\":\"%s\",\"row1\":{\"provider\":\"%s\",\"line\":\"%s\",\"label\":\"%s\",\"eta\":\"%s\"},\"row2\":{\"provider\":\"%s\",\"line\":\"%s\",\"label\":\"%s\",\"eta\":\"%s\"}}",
+           "{\"deviceId\":\"%s\",\"activeRows\":%u,\"row1\":{\"provider\":\"%s\",\"line\":\"%s\",\"label\":\"%s\",\"eta\":\"%s\"},\"row2\":{\"provider\":\"%s\",\"line\":\"%s\",\"label\":\"%s\",\"eta\":\"%s\"},\"row3\":{\"provider\":\"%s\",\"line\":\"%s\",\"label\":\"%s\",\"eta\":\"%s\"}}",
            runtimeConfig_.deviceId,
+           static_cast<unsigned>(renderModel_.activeRows),
            r1Provider,
            r1Line,
            r1Label,
@@ -504,7 +589,11 @@ void DeviceController::publish_display_state() {
            r2Provider,
            r2Line,
            r2Label,
-           r2Eta);
+           r2Eta,
+           r3Provider,
+           r3Line,
+           r3Label,
+           r3Eta);
 
   deps_.mqttClient->publish_state(payload, false);
 }

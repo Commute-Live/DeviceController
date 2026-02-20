@@ -138,16 +138,17 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
     return;
   }
 
-  const int16_t rowHeight = static_cast<int16_t>(height_ / 2U);
-  const uint8_t rowFont = height_ >= 64 ? 2 : 1;
+  uint8_t rowCount = model.activeRows;
+  if (rowCount < 1) rowCount = 1;
+  if (rowCount > kMaxTransitRows) rowCount = kMaxTransitRows;
+
+  const VerticalLayoutResult layout = verticalLayout_.compute(height_, rowCount);
+  const int16_t baseRowHeight = layout.rows[0].height > 0 ? layout.rows[0].height : static_cast<int16_t>(height_);
+  const uint8_t rowFont = baseRowHeight >= 18 ? 2 : 1;
   const int16_t routeSlotW = rowFont == 2 ? 24 : 18;
   int maxEtaChars = 3;
-  for (uint8_t i = 0; i < 2; ++i) {
+  for (uint8_t i = 0; i < rowCount; ++i) {
     const TransitRowModel &row = model.rows[i];
-    const bool hasRoute = row.routeId[0] != '\0' && strcmp(row.routeId, "--") != 0;
-    if (i == 1 && !hasRoute) {
-      continue;
-    }
     int len = static_cast<int>(strnlen(row.eta, kMaxEtaLen - 1));
     if (len > maxEtaChars) {
       maxEtaChars = len;
@@ -158,18 +159,20 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
   }
   const int16_t etaSlotW = static_cast<int16_t>(maxEtaChars * 6 * rowFont + 2);
 
-  for (uint8_t i = 0; i < 2; ++i) {
+  for (uint8_t i = 0; i < rowCount; ++i) {
     const TransitRowModel &row = model.rows[i];
-    const int16_t rowTop = static_cast<int16_t>(i * rowHeight);
+    const RowFrame frame = layout.rows[i];
     const bool hasRoute = row.routeId[0] != '\0' && strcmp(row.routeId, "--") != 0;
-    if (i == 1 && !hasRoute) {
-      continue;
+    const int16_t textH = static_cast<int16_t>(8 * rowFont);
+    int16_t routeY = static_cast<int16_t>(frame.yStart + ((frame.height - textH) / 2));
+    if (routeY < frame.yStart) {
+      routeY = frame.yStart;
     }
 
     DrawCommand route{};
     route.type = DrawCommandType::kText;
     route.x = 1;
-    route.y = static_cast<int16_t>(rowTop + (rowFont == 2 ? 3 : 2));
+    route.y = routeY;
     route.color = kColorWhite;
     route.bg = kColorBlack;
     route.size = rowFont;
@@ -186,7 +189,7 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
     eta.text = trim_for_width(row.eta[0] ? row.eta : "--", static_cast<uint8_t>(maxEtaChars), out);
     out.push(eta);
 
-    const int16_t labelX = routeSlotW;
+    const int16_t labelX = static_cast<int16_t>(routeSlotW + 1);
     const int16_t labelPx = static_cast<int16_t>(width_ - routeSlotW - etaSlotW - 2);
     const uint8_t labelChars = labelPx > 0 ? static_cast<uint8_t>(labelPx / (6 * rowFont)) : 0;
 
