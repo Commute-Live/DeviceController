@@ -7,6 +7,7 @@
 
 #include "parsing/payload_parser.h"
 #include "parsing/provider_parser_router.h"
+#include "display/BadgeRenderer.h"
 #include "network/wifi_manager.h"
 
 namespace core {
@@ -18,6 +19,7 @@ namespace {
 constexpr uint32_t kHeartbeatEveryMs = 15000;
 constexpr uint32_t kTelemetryEveryMs = 30000;
 constexpr uint32_t kMinRenderGapMs = 40;
+display::BadgeRenderer gBadgeRenderer;
 
 void copy_str(char *dst, size_t dstLen, const char *src) {
   if (dstLen == 0) {
@@ -535,6 +537,9 @@ void DeviceController::render_frame(uint32_t nowMs) {
         break;
       case DrawCommandType::kText:
         deps_.displayEngine->draw_text(cmd.x, cmd.y, cmd.text, cmd.color, cmd.size, cmd.bg);
+        break;
+      case DrawCommandType::kBadge:
+        gBadgeRenderer.draw_badge(*deps_.displayEngine, cmd.x, cmd.y, cmd.w, cmd.text);
         break;
       default:
         break;

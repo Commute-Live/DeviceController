@@ -209,6 +209,39 @@ void DisplayEngine::fill_rect(int16_t x, int16_t y, int16_t w, int16_t h, uint16
   canvas_->fillRect(x, y, w, h, color);
 }
 
+void DisplayEngine::draw_pixel(int16_t x, int16_t y, uint16_t color) {
+  if (!canvas_) {
+    return;
+  }
+  canvas_->drawPixel(x, y, color);
+}
+
+void DisplayEngine::draw_hline(int16_t x, int16_t y, int16_t w, uint16_t color) {
+  if (!canvas_ || w <= 0) {
+    return;
+  }
+  canvas_->drawFastHLine(x, y, w, color);
+}
+
+display::TextMetrics DisplayEngine::measure_text(const char *text, uint8_t size) {
+  display::TextMetrics tm{};
+  if (!canvas_ || !text) {
+    return tm;
+  }
+
+  canvas_->setTextSize(size);
+  int16_t x1 = 0;
+  int16_t y1 = 0;
+  uint16_t w = 0;
+  uint16_t h = 0;
+  canvas_->getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
+  tm.xOffset = x1;
+  tm.yOffset = y1;
+  tm.width = static_cast<int16_t>(w);
+  tm.height = static_cast<int16_t>(h);
+  return tm;
+}
+
 bool DisplayEngine::present() {
   if (!ready_ || !matrix_) {
     return false;

@@ -145,58 +145,50 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
   const VerticalLayoutResult layout = verticalLayout_.compute(height_, rowCount);
   const int16_t baseRowHeight = layout.rows[0].height > 0 ? layout.rows[0].height : static_cast<int16_t>(height_);
   const uint8_t rowFont = baseRowHeight >= 18 ? 2 : 1;
-  const int16_t routeSlotW = rowFont == 2 ? 24 : 18;
-  int maxEtaChars = 3;
-  for (uint8_t i = 0; i < rowCount; ++i) {
-    const TransitRowModel &row = model.rows[i];
-    int len = static_cast<int>(strnlen(row.eta, kMaxEtaLen - 1));
-    if (len > maxEtaChars) {
-      maxEtaChars = len;
-    }
-  }
-  if (maxEtaChars > 10) {
-    maxEtaChars = 10;
-  }
-  const int16_t etaSlotW = static_cast<int16_t>(maxEtaChars * 6 * rowFont + 2);
+  constexpr uint8_t kEtaChars = 3;
+  const int16_t charW = static_cast<int16_t>(6 * rowFont);
 
   for (uint8_t i = 0; i < rowCount; ++i) {
     const TransitRowModel &row = model.rows[i];
     const RowFrame frame = layout.rows[i];
     const bool hasRoute = row.routeId[0] != '\0' && strcmp(row.routeId, "--") != 0;
-    const int16_t textH = static_cast<int16_t>(8 * rowFont);
-    int16_t routeY = static_cast<int16_t>(frame.yStart + ((frame.height - textH) / 2));
-    if (routeY < frame.yStart) {
-      routeY = frame.yStart;
-    }
+    display::RowFrame rowFrame{
+        frame.yStart,
+        frame.height,
+    };
+    const display::RowLayout rowGeom = rowLayout_.compute_row_layout(static_cast<int16_t>(width_), rowFrame, rowFont, kEtaChars);
 
-    DrawCommand route{};
-    route.type = DrawCommandType::kText;
-    route.x = 1;
-    route.y = routeY;
-    route.color = kColorWhite;
-    route.bg = kColorBlack;
-    route.size = rowFont;
-    route.text = trim_for_width(hasRoute ? row.routeId : "--", rowFont == 2 ? 3 : 2, out);
-    out.push(route);
+    DrawCommand badge{};
+    badge.type = DrawCommandType::kBadge;
+    badge.x = rowGeom.badgeX;
+    badge.y = rowGeom.badgeY;
+    badge.w = rowGeom.badgeSize;
+    badge.h = rowGeom.badgeSize;
+    badge.color = kColorWhite;
+    badge.bg = kColorBlack;
+    badge.size = rowFont;
+    badge.text = trim_for_width(hasRoute ? row.routeId : "--", 2, out);
+    out.push(badge);
 
     DrawCommand eta{};
     eta.type = DrawCommandType::kText;
-    eta.x = static_cast<int16_t>(width_ - etaSlotW);
-    eta.y = route.y;
+    const uint8_t etaLen = static_cast<uint8_t>(strnlen(row.eta[0] ? row.eta : "--", kMaxEtaLen - 1));
+    const int16_t etaDrawW = static_cast<int16_t>(etaLen * charW);
+    eta.x = static_cast<int16_t>(rowGeom.etaX + rowGeom.etaWidth - etaDrawW);
+    eta.y = rowGeom.textY;
     eta.color = eta_color(row.eta);
     eta.bg = kColorBlack;
     eta.size = rowFont;
-    eta.text = trim_for_width(row.eta[0] ? row.eta : "--", static_cast<uint8_t>(maxEtaChars), out);
+    eta.text = trim_for_width(row.eta[0] ? row.eta : "--", kEtaChars, out);
     out.push(eta);
 
-    const int16_t labelX = static_cast<int16_t>(routeSlotW + 1);
-    const int16_t labelPx = static_cast<int16_t>(width_ - routeSlotW - etaSlotW - 2);
-    const uint8_t labelChars = labelPx > 0 ? static_cast<uint8_t>(labelPx / (6 * rowFont)) : 0;
+    const uint8_t labelChars =
+        rowGeom.destinationWidth > 0 ? static_cast<uint8_t>(rowGeom.destinationWidth / charW) : 0;
 
     DrawCommand destination{};
     destination.type = DrawCommandType::kText;
-    destination.x = labelX;
-    destination.y = route.y;
+    destination.x = rowGeom.destinationX;
+    destination.y = rowGeom.textY;
     destination.color = kColorWhite;
     destination.bg = kColorBlack;
     destination.size = rowFont;

@@ -5,12 +5,14 @@
 
 #include "core/models.h"
 #include "core/vertical_layout_engine.h"
+#include "display/LayoutEngine.h"
 
 namespace core {
 
 enum class DrawCommandType : uint8_t {
   kFillRect,
   kText,
+  kBadge,
 };
 
 struct DrawCommand {
@@ -61,6 +63,7 @@ class LayoutEngine final {
  uint16_t width_;
   uint16_t height_;
   VerticalLayoutEngine verticalLayout_;
+  display::LayoutEngine rowLayout_;
 
   const char *trim_for_width(const char *src, uint8_t charLimit, DrawList &out);
 };

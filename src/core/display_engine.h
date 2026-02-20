@@ -4,6 +4,7 @@
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 
 #include "core/models.h"
+#include "display/DisplayEngine.h"
 
 class VirtualMatrixPanel;
 class Adafruit_GFX;
@@ -38,7 +39,7 @@ class SerpentinePanelMapper final : public IPanelMapper {
   PhysicalPoint map(const DisplayConfig &cfg, int16_t x, int16_t y) const override;
 };
 
-class DisplayEngine final {
+class DisplayEngine final : public display::DisplayEngine {
  public:
   DisplayEngine();
   ~DisplayEngine();
@@ -53,9 +54,12 @@ class DisplayEngine final {
   void set_brightness(uint8_t brightness);
   bool begin_frame();
   void clear(uint16_t color);
-  void draw_text(int16_t x, int16_t y, const char *text, uint16_t color, uint8_t size = 1, uint16_t bg = 0);
+  void draw_text(int16_t x, int16_t y, const char *text, uint16_t color, uint8_t size = 1, uint16_t bg = 0) override;
   void draw_rect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color);
-  void fill_rect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color);
+  void fill_rect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) override;
+  void draw_pixel(int16_t x, int16_t y, uint16_t color) override;
+  void draw_hline(int16_t x, int16_t y, int16_t w, uint16_t color) override;
+  display::TextMetrics measure_text(const char *text, uint8_t size) override;
   bool present();
 
   uint16_t color565(uint8_t r, uint8_t g, uint8_t b) const;
