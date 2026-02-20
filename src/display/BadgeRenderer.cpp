@@ -68,9 +68,6 @@ void BadgeRenderer::draw_badge(DisplayEngine &display,
 
   int16_t badgeSize = size;
   if (badgeSize < 5) badgeSize = 5;
-  if ((badgeSize & 1) == 0) {
-    badgeSize -= 1;
-  }
 
   const int16_t r = static_cast<int16_t>((badgeSize - 1) / 2);
   const int16_t cx = static_cast<int16_t>(x + (badgeSize / 2));
