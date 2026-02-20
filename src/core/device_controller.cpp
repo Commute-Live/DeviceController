@@ -252,7 +252,6 @@ void DeviceController::handle_network_state(NetworkState state) {
 }
 
 void DeviceController::handle_command(const char *topic, const uint8_t *payload, size_t len) {
-  (void)topic;
   if (!payload || len == 0 || len >= kMaxPayloadLen) {
     return;
   }
@@ -261,6 +260,8 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   memcpy(messageBuf, payload, len);
   messageBuf[len] = '\0';
   const String message(messageBuf);
+  Serial.printf("[MQTT] Incoming topic=%s len=%u\n", topic ? topic : "(null)", static_cast<unsigned>(len));
+  Serial.printf("[MQTT] Payload=%s\n", message.c_str());
 
   String provider = extract_json_string_field(message, "provider");
   if (provider.length() == 0 || !parsing::is_supported_provider_id(provider)) {
@@ -318,6 +319,17 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
     copy_str(renderModel_.rows[1].destination, sizeof(renderModel_.rows[1].destination), "");
     copy_str(renderModel_.rows[1].eta, sizeof(renderModel_.rows[1].eta), "--");
   }
+
+  Serial.printf(
+      "[MQTT] Parsed r1={provider:%s line:%s label:%s eta:%s} r2={provider:%s line:%s label:%s eta:%s}\n",
+      renderModel_.rows[0].providerId,
+      renderModel_.rows[0].routeId,
+      renderModel_.rows[0].destination,
+      renderModel_.rows[0].eta,
+      renderModel_.rows[1].providerId,
+      renderModel_.rows[1].routeId,
+      renderModel_.rows[1].destination,
+      renderModel_.rows[1].eta);
 
   renderModel_.hasData = true;
   renderModel_.uiState = UiState::kTransit;
