@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <esp_system.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -57,6 +58,7 @@ core::DeviceController gController(gDeps);
 void setup() {
   Serial.begin(115200);
   delay(200);
+  randomSeed(esp_random());
 
   core::DeviceRuntimeConfig cfg{};
   cfg.schemaVersion = 1;
@@ -72,6 +74,9 @@ void setup() {
 
   copy_str(cfg.network.ssid, COMMUTELIVE_WIFI_SSID);
   copy_str(cfg.network.password, COMMUTELIVE_WIFI_PASSWORD);
+  copy_str(cfg.network.username, "");
+  copy_str(cfg.network.apSsid, COMMUTELIVE_AP_SSID);
+  copy_str(cfg.network.apPassword, COMMUTELIVE_AP_PASSWORD);
 
   copy_str(cfg.mqtt.host, COMMUTELIVE_MQTT_HOST);
   cfg.mqtt.port = static_cast<uint16_t>(COMMUTELIVE_MQTT_PORT);

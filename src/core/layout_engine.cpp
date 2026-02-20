@@ -1,6 +1,71 @@
 #include "core/layout_engine.h"
 
+#include <stdio.h>
+#include <string.h>
+
 namespace core {
+
+namespace {
+
+constexpr uint16_t kColorBlack = 0x0000;
+constexpr uint16_t kColorWhite = 0xFFFF;
+constexpr uint16_t kColorCyan = 0x5F1A;
+constexpr uint16_t kColorGray = 0x7BEF;
+constexpr uint16_t kColorAmber = 0xFD20;
+constexpr uint16_t kColorRed = 0xF800;
+constexpr uint16_t kColorGreen = 0x07E0;
+
+uint16_t eta_color(const char *eta) {
+  if (!eta || eta[0] == '\0' || strcmp(eta, "--") == 0) {
+    return kColorGray;
+  }
+  if (strcmp(eta, "DUE") == 0 || strcmp(eta, "NOW") == 0) {
+    return kColorRed;
+  }
+
+  int minutes = 0;
+  bool foundDigit = false;
+  for (const char *p = eta; *p != '\0'; ++p) {
+    if (*p >= '0' && *p <= '9') {
+      foundDigit = true;
+      minutes = (minutes * 10) + (*p - '0');
+    } else if (foundDigit) {
+      break;
+    }
+  }
+
+  if (!foundDigit) {
+    return kColorGray;
+  }
+  if (minutes <= 1) {
+    return kColorRed;
+  }
+  if (minutes <= 5) {
+    return kColorAmber;
+  }
+  if (minutes <= 12) {
+    return kColorGreen;
+  }
+  return kColorWhite;
+}
+
+}  // namespace
+
+const char *DrawList::copy_text(const char *text) {
+  if (!text) {
+    return nullptr;
+  }
+  const size_t len = strnlen(text, kTextPoolSize);
+  if (len == 0 || len >= (kTextPoolSize - textUsed)) {
+    return nullptr;
+  }
+
+  char *dst = &textPool[textUsed];
+  memcpy(dst, text, len);
+  dst[len] = '\0';
+  textUsed += len + 1;
+  return dst;
+}
 
 LayoutEngine::LayoutEngine() : width_(128), height_(32) {}
 
@@ -9,36 +74,112 @@ void LayoutEngine::set_viewport(uint16_t width, uint16_t height) {
   height_ = height;
 }
 
-void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out) const {
+const char *LayoutEngine::trim_for_width(const char *src, uint8_t charLimit, DrawList &out) {
+  if (!src || charLimit == 0) {
+    return out.copy_text("");
+  }
+
+  char buf[kMaxDestinationLen];
+  size_t n = strnlen(src, sizeof(buf) - 1);
+  if (n > static_cast<size_t>(charLimit)) {
+    n = charLimit;
+  }
+  memcpy(buf, src, n);
+  buf[n] = '\0';
+  return out.copy_text(buf);
+}
+
+void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out) {
   out.reset();
 
+  DrawCommand bg{};
+  bg.type = DrawCommandType::kFillRect;
+  bg.x = 0;
+  bg.y = 0;
+  bg.w = static_cast<int16_t>(width_);
+  bg.h = static_cast<int16_t>(height_);
+  bg.color = kColorBlack;
+  bg.bg = kColorBlack;
+  bg.size = 1;
+  bg.text = nullptr;
+  out.push(bg);
+
+  const bool transitView = model.hasData && model.uiState == UiState::kTransit;
+  if (!transitView) {
+    DrawCommand title{};
+    title.type = DrawCommandType::kText;
+    title.x = 2;
+    title.y = 2;
+    title.color = kColorCyan;
+    title.bg = kColorBlack;
+    title.size = height_ >= 64 ? 2 : 1;
+    title.text = out.copy_text("Commute Live");
+    out.push(title);
+
+    DrawCommand status{};
+    status.type = DrawCommandType::kText;
+    status.x = 2;
+    status.y = static_cast<int16_t>(height_ / 2U - 4);
+    status.color = kColorWhite;
+    status.bg = kColorBlack;
+    status.size = 1;
+    status.text = out.copy_text(model.statusLine[0] ? model.statusLine : "BOOTING");
+    out.push(status);
+
+    DrawCommand detail{};
+    detail.type = DrawCommandType::kText;
+    detail.x = 2;
+    detail.y = static_cast<int16_t>(height_ - 10);
+    detail.color = kColorGray;
+    detail.bg = kColorBlack;
+    detail.size = 1;
+    detail.text = out.copy_text(model.statusDetail[0] ? model.statusDetail : "");
+    out.push(detail);
+    return;
+  }
+
   const int16_t rowHeight = static_cast<int16_t>(height_ / 2U);
-  const uint8_t fontSize = height_ >= 64 ? 2 : 1;
+  const uint8_t rowFont = height_ >= 64 ? 2 : 1;
+  const int16_t routeSlotW = rowFont == 2 ? 24 : 18;
+  const int16_t etaSlotW = rowFont == 2 ? 30 : 24;
 
   for (uint8_t i = 0; i < 2; ++i) {
+    const TransitRowModel &row = model.rows[i];
     const int16_t rowTop = static_cast<int16_t>(i * rowHeight);
 
-    DrawCommand bg{};
-    bg.type = DrawCommandType::kFillRect;
-    bg.x = 0;
-    bg.y = rowTop;
-    bg.w = static_cast<int16_t>(width_);
-    bg.h = rowHeight;
-    bg.color = 0x0000;
-    bg.size = 1;
-    bg.text = nullptr;
-    out.push(bg);
+    DrawCommand route{};
+    route.type = DrawCommandType::kText;
+    route.x = 1;
+    route.y = static_cast<int16_t>(rowTop + (rowFont == 2 ? 3 : 2));
+    route.color = kColorWhite;
+    route.bg = kColorBlack;
+    route.size = rowFont;
+    route.text = trim_for_width(row.routeId[0] ? row.routeId : "--", rowFont == 2 ? 3 : 2, out);
+    out.push(route);
 
-    DrawCommand text{};
-    text.type = DrawCommandType::kText;
-    text.x = 2;
-    text.y = static_cast<int16_t>(rowTop + (fontSize == 2 ? 3 : 2));
-    text.w = 0;
-    text.h = 0;
-    text.color = 0xFFFF;
-    text.size = fontSize;
-    text.text = model.hasData ? model.rows[i].routeId : "--";
-    out.push(text);
+    DrawCommand eta{};
+    eta.type = DrawCommandType::kText;
+    eta.x = static_cast<int16_t>(width_ - etaSlotW);
+    eta.y = route.y;
+    eta.color = eta_color(row.eta);
+    eta.bg = kColorBlack;
+    eta.size = rowFont;
+    eta.text = trim_for_width(row.eta[0] ? row.eta : "--", rowFont == 2 ? 4 : 3, out);
+    out.push(eta);
+
+    const int16_t labelX = routeSlotW;
+    const int16_t labelPx = static_cast<int16_t>(width_ - routeSlotW - etaSlotW - 2);
+    const uint8_t labelChars = labelPx > 0 ? static_cast<uint8_t>(labelPx / (6 * rowFont)) : 0;
+
+    DrawCommand destination{};
+    destination.type = DrawCommandType::kText;
+    destination.x = labelX;
+    destination.y = route.y;
+    destination.color = kColorWhite;
+    destination.bg = kColorBlack;
+    destination.size = rowFont;
+    destination.text = trim_for_width(row.destination[0] ? row.destination : "-", labelChars, out);
+    out.push(destination);
   }
 }
 

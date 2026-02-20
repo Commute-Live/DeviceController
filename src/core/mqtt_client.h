@@ -1,12 +1,14 @@
 #pragma once
 
+#include <PubSubClient.h>
+#include <WiFiClient.h>
 #include <stddef.h>
 #include <stdint.h>
 
 namespace core {
 
 constexpr size_t kMaxTopicLen = 96;
-constexpr size_t kMaxPayloadLen = 512;
+constexpr size_t kMaxPayloadLen = 1024;
 
 struct MqttConfig {
   char host[64];
@@ -44,13 +46,22 @@ class MqttClient final {
   static bool build_default_topics(const char *deviceId, MqttTopics &outTopics);
 
  private:
+  static void global_on_message(char *topic, uint8_t *payload, unsigned int len);
+  void on_message(char *topic, uint8_t *payload, unsigned int len);
+
   MqttConfig config_;
   MqttTopics topics_;
+  WiFiClient wifiClient_;
+  PubSubClient mqtt_;
+
   bool connected_;
   uint32_t nextRetryAtMs_;
   uint8_t retryCount_;
+
   CommandCallback commandCallback_;
   void *commandCtx_;
+
+  static MqttClient *activeInstance_;
 };
 
 }  // namespace core

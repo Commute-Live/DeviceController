@@ -12,6 +12,7 @@ constexpr size_t kMaxRouteIdLen = 24;
 constexpr size_t kMaxDestinationLen = 64;
 constexpr size_t kMaxEtaLen = 12;
 constexpr size_t kMaxErrorLen = 96;
+constexpr size_t kMaxStatusLen = 32;
 
 struct DisplayConfig {
   uint8_t panelRows;
@@ -45,6 +46,15 @@ inline bool compute_geometry(const DisplayConfig &cfg, DisplayGeometry &out) {
   return true;
 }
 
+enum class UiState : uint8_t {
+  kBooting,
+  kSetupMode,
+  kNoWifi,
+  kWifiOkNoMqtt,
+  kConnectedWaitingData,
+  kTransit,
+};
+
 struct TransitRowModel {
   char providerId[kMaxProviderIdLen];
   char routeId[kMaxRouteIdLen];
@@ -53,8 +63,11 @@ struct TransitRowModel {
 };
 
 struct RenderModel {
+  UiState uiState;
   bool hasData;
   uint32_t updatedAtMs;
+  char statusLine[kMaxStatusLen];
+  char statusDetail[kMaxDestinationLen];
   TransitRowModel rows[2];
 };
 
