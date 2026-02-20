@@ -320,17 +320,6 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
     copy_str(renderModel_.rows[1].eta, sizeof(renderModel_.rows[1].eta), "--");
   }
 
-  Serial.printf(
-      "[MQTT] Parsed r1={provider:%s line:%s label:%s eta:%s} r2={provider:%s line:%s label:%s eta:%s}\n",
-      renderModel_.rows[0].providerId,
-      renderModel_.rows[0].routeId,
-      renderModel_.rows[0].destination,
-      renderModel_.rows[0].eta,
-      renderModel_.rows[1].providerId,
-      renderModel_.rows[1].routeId,
-      renderModel_.rows[1].destination,
-      renderModel_.rows[1].eta);
-
   renderModel_.hasData = true;
   renderModel_.uiState = UiState::kTransit;
   renderModel_.updatedAtMs = millis();
