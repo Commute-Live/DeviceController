@@ -118,8 +118,10 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
       const int16_t brandW = static_cast<int16_t>(strnlen(brand, 32) * charW);
       int16_t brandX = static_cast<int16_t>((static_cast<int16_t>(width_) - brandW) / 2);
       if (brandX < 2) brandX = 2;
-      int16_t brandY = static_cast<int16_t>(frame.yStart + ((frame.height - textH) / 2));
-      if (brandY < frame.yStart) brandY = frame.yStart;
+      // Adafruit_GFX built-in font uses cursor Y as baseline. Convert centered top to baseline.
+      int16_t brandTop = static_cast<int16_t>(frame.yStart + ((frame.height - textH) / 2));
+      if (brandTop < frame.yStart) brandTop = frame.yStart;
+      int16_t brandY = static_cast<int16_t>(brandTop + textH - 1);
 
       DrawCommand title{};
       title.type = DrawCommandType::kText;
