@@ -119,7 +119,6 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
       int16_t brandX = static_cast<int16_t>((static_cast<int16_t>(width_) - brandW) / 2);
       if (brandX < 2) brandX = 2;
       int16_t brandY = static_cast<int16_t>(frame.yStart + ((frame.height - textH) / 2));
-      brandY = static_cast<int16_t>(brandY + 1);  // 1px top margin
       if (brandY < frame.yStart) brandY = frame.yStart;
 
       DrawCommand title{};
