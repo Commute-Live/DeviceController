@@ -19,7 +19,7 @@ uint16_t eta_color(const char *eta) {
   if (!eta || eta[0] == '\0' || strcmp(eta, "--") == 0) {
     return kColorGray;
   }
-  if (strcmp(eta, "DUE") == 0 || strcmp(eta, "NOW") == 0) {
+  if (strncmp(eta, "DUE", 3) == 0 || strncmp(eta, "NOW", 3) == 0) {
     return kColorRed;
   }
 
@@ -141,7 +141,22 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
   const int16_t rowHeight = static_cast<int16_t>(height_ / 2U);
   const uint8_t rowFont = height_ >= 64 ? 2 : 1;
   const int16_t routeSlotW = rowFont == 2 ? 24 : 18;
-  const int16_t etaSlotW = rowFont == 2 ? 30 : 24;
+  int maxEtaChars = 3;
+  for (uint8_t i = 0; i < 2; ++i) {
+    const TransitRowModel &row = model.rows[i];
+    const bool hasRoute = row.routeId[0] != '\0' && strcmp(row.routeId, "--") != 0;
+    if (i == 1 && !hasRoute) {
+      continue;
+    }
+    int len = static_cast<int>(strnlen(row.eta, kMaxEtaLen - 1));
+    if (len > maxEtaChars) {
+      maxEtaChars = len;
+    }
+  }
+  if (maxEtaChars > 10) {
+    maxEtaChars = 10;
+  }
+  const int16_t etaSlotW = static_cast<int16_t>(maxEtaChars * 6 * rowFont + 2);
 
   for (uint8_t i = 0; i < 2; ++i) {
     const TransitRowModel &row = model.rows[i];
@@ -168,7 +183,7 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
     eta.color = eta_color(row.eta);
     eta.bg = kColorBlack;
     eta.size = rowFont;
-    eta.text = trim_for_width(row.eta[0] ? row.eta : "--", rowFont == 2 ? 4 : 3, out);
+    eta.text = trim_for_width(row.eta[0] ? row.eta : "--", static_cast<uint8_t>(maxEtaChars), out);
     out.push(eta);
 
     const int16_t labelX = routeSlotW;

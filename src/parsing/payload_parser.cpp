@@ -35,6 +35,44 @@ String extract_json_string_field(const String &json, const char *field) {
   return json.substring(i, end);
 }
 
+int extract_json_int_field(const String &json, const char *field, int fallbackValue) {
+  String key = "\"";
+  key += field;
+  key += "\"";
+
+  int keyPos = json.indexOf(key);
+  if (keyPos < 0) return fallbackValue;
+
+  int colonPos = json.indexOf(':', keyPos + key.length());
+  if (colonPos < 0) return fallbackValue;
+
+  int i = colonPos + 1;
+  while (i < (int)json.length() && (json[i] == ' ' || json[i] == '\t')) i++;
+  if (i >= (int)json.length()) return fallbackValue;
+
+  bool neg = false;
+  if (json[i] == '-') {
+    neg = true;
+    i++;
+  }
+
+  int value = 0;
+  bool foundDigit = false;
+  while (i < (int)json.length()) {
+    char c = json[i];
+    if (c >= '0' && c <= '9') {
+      foundDigit = true;
+      value = value * 10 + (c - '0');
+      i++;
+      continue;
+    }
+    break;
+  }
+
+  if (!foundDigit) return fallbackValue;
+  return neg ? -value : value;
+}
+
 static bool parse_iso8601(const String &iso, time_t &out) {
   int y, mo, d, h, mi, s;
   if (sscanf(iso.c_str(), "%d-%d-%dT%d:%d:%d", &y, &mo, &d, &h, &mi, &s) != 6) {
@@ -161,23 +199,40 @@ static int find_matching_bracket(const String &s, int openPos, char openCh, char
   return -1;
 }
 
-static String format_arrivals_compact(const String &json, const String &fallbackFetchedAt) {
+static int clamp_arrivals_to_display(int value) {
+  if (value < 1) return 1;
+  if (value > 3) return 3;
+  return value;
+}
+
+static String normalize_eta_label(String etaRaw) {
+  etaRaw.trim();
+  etaRaw.toUpperCase();
+  if (etaRaw == "NOW") return "DUE";
+  if (etaRaw.length() == 0) return "--";
+  return etaRaw;
+}
+
+static String format_arrivals_compact(const String &json, const String &fallbackFetchedAt, int arrivalsToDisplay) {
+  const int maxEtas = clamp_arrivals_to_display(arrivalsToDisplay);
   String etaValues[3];
   int etaCount = extract_next_eta_list(json, etaValues, 3);
   if (etaCount > 0) {
-    bool sawDue = false;
-    for (int i = 0; i < etaCount; i++) {
-      String eta = etaValues[i];
-      eta.trim();
-      eta.toUpperCase();
-      if (eta.length() == 0 || eta == "--") continue;
-      if (eta == "DUE" || eta == "NOW") {
-        sawDue = true;
-        continue;
-      }
-      return etaValues[i];
+    String parts[3];
+    int partCount = 0;
+    for (int i = 0; i < etaCount && partCount < maxEtas; i++) {
+      String eta = normalize_eta_label(etaValues[i]);
+      if (eta == "--") continue;
+      parts[partCount++] = eta;
     }
-    if (sawDue) return "DUE";
+    if (partCount > 0) {
+      String merged = parts[0];
+      for (int i = 1; i < partCount; ++i) {
+        merged += "/";
+        merged += parts[i];
+      }
+      return merged;
+    }
   }
 
   String fetchedAt = extract_json_string_field(json, "fetchedAt");
@@ -190,25 +245,28 @@ static String format_arrivals_compact(const String &json, const String &fallback
   int n = extract_next_arrival_list(json, arrivals, 3);
   if (n <= 0) return "--";
 
-  // Prefer the first non-DUE ETA so riders can still see a minute value when
-  // the nearest prediction is only a few seconds away.
-  bool sawDue = false;
-  for (int i = 0; i < n; i++) {
+  String parts[3];
+  int partCount = 0;
+  for (int i = 0; i < n && partCount < maxEtas; i++) {
     String label = "--";
     if (hasFetchedTs) {
       label = eta_label_for_arrival(arrivals[i], fetchedTs);
     } else if (arrivals[i].length() >= 16) {
       label = arrivals[i].substring(11, 16);
     }
+    label = normalize_eta_label(label);
     if (label == "--") continue;
-    if (label == "DUE") {
-      sawDue = true;
-      continue;
-    }
-    return label;
+    parts[partCount++] = label;
   }
 
-  if (sawDue) return "DUE";
+  if (partCount > 0) {
+    String merged = parts[0];
+    for (int i = 1; i < partCount; ++i) {
+      merged += "/";
+      merged += parts[i];
+    }
+    return merged;
+  }
   return "--";
 }
 
@@ -230,6 +288,7 @@ bool parse_lines_payload(const String &message,
   if (arrayClose < 0) return false;
 
   String fallbackFetchedAt = extract_json_string_field(message, "fetchedAt");
+  const int arrivalsToDisplay = clamp_arrivals_to_display(extract_json_int_field(message, "arrivalsToDisplay", 1));
   String linesJson = message.substring(arrayOpen + 1, arrayClose);
   int cursor = 0;
   int rowCount = 0;
@@ -255,7 +314,7 @@ bool parse_lines_payload(const String &message,
 
     String etaText = extract_json_string_field(item, "eta");
     if (etaText.length() == 0) {
-      etaText = format_arrivals_compact(item, fallbackFetchedAt);
+      etaText = format_arrivals_compact(item, fallbackFetchedAt, arrivalsToDisplay);
     }
     if (rowCount == 0) {
       primaryLine = line;

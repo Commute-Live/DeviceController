@@ -3,6 +3,7 @@
 #include <Arduino.h>
 
 String extract_json_string_field(const String &json, const char *field);
+int extract_json_int_field(const String &json, const char *field, int fallbackValue);
 
 void build_eta_lines(const String &message, String &line1, String &line2, String &line3);
 

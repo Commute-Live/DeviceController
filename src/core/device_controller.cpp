@@ -69,6 +69,38 @@ void normalize_eta(const String &input, char *out, size_t outLen) {
     return;
   }
 
+  // Preserve multi-arrival strings like "DUE/3M/8M" generated from nextArrivals.
+  if (eta.indexOf('/') >= 0) {
+    String normalized = "";
+    int start = 0;
+    while (start <= eta.length()) {
+      int sep = eta.indexOf('/', start);
+      String token;
+      if (sep < 0) {
+        token = eta.substring(start);
+      } else {
+        token = eta.substring(start, sep);
+      }
+      token.trim();
+      if (token == "NOW") token = "DUE";
+
+      if (token.length() > 0 && token != "--") {
+        if (normalized.length() > 0) normalized += "/";
+        normalized += token;
+      }
+
+      if (sep < 0) break;
+      start = sep + 1;
+    }
+
+    if (normalized.length() == 0) {
+      copy_str(out, outLen, "--");
+      return;
+    }
+    copy_str(out, outLen, normalized.c_str());
+    return;
+  }
+
   int minutes = 0;
   bool foundDigit = false;
   for (int i = 0; i < eta.length(); ++i) {
