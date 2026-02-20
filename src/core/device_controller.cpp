@@ -22,6 +22,14 @@ bool DeviceController::begin() {
     return false;
   }
 
+  MqttTopics topics{};
+  if (!MqttClient::build_default_topics(runtimeConfig_.deviceId, topics)) {
+    return false;
+  }
+  if (!deps_.mqttClient->begin(runtimeConfig_.mqtt, topics)) {
+    return false;
+  }
+
   deps_.layoutEngine->set_viewport(deps_.displayEngine->geometry().totalWidth,
                                    deps_.displayEngine->geometry().totalHeight);
   deps_.networkManager->set_state_callback(&DeviceController::on_network_state_change, this);

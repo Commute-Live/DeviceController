@@ -22,9 +22,12 @@ class ConfigStore final {
   bool begin();
   bool load(DeviceRuntimeConfig &outConfig);
   bool save(const DeviceRuntimeConfig &config);
+  void set_bootstrap_config(const DeviceRuntimeConfig &config);
 
  private:
   static constexpr uint16_t kCurrentSchemaVersion = 1;
+  DeviceRuntimeConfig bootstrapConfig_;
+  bool hasBootstrapConfig_;
 };
 
 }  // namespace core
