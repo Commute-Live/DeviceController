@@ -106,35 +106,151 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
 
   const bool transitView = model.hasData && model.uiState == UiState::kTransit;
   if (!transitView) {
-    DrawCommand title{};
-    title.type = DrawCommandType::kText;
-    title.x = 2;
-    title.y = 2;
-    title.color = kColorCyan;
-    title.bg = kColorBlack;
-    title.size = height_ >= 64 ? 2 : 1;
-    title.text = out.copy_text("Commute Live");
-    out.push(title);
+    const VerticalLayoutResult home = verticalLayout_.compute(height_, 3);
+    const uint8_t homeFont = height_ >= 64 ? 2 : 1;
+    const int16_t charW = static_cast<int16_t>(6 * homeFont);
+    const int16_t textH = static_cast<int16_t>(8 * homeFont);
 
-    DrawCommand status{};
-    status.type = DrawCommandType::kText;
-    status.x = 2;
-    status.y = static_cast<int16_t>(height_ / 2U - 4);
-    status.color = kColorWhite;
-    status.bg = kColorBlack;
-    status.size = 1;
-    status.text = out.copy_text(model.statusLine[0] ? model.statusLine : "BOOTING");
-    out.push(status);
+    // Subtle top accent.
+    DrawCommand accent{};
+    accent.type = DrawCommandType::kFillRect;
+    accent.x = 0;
+    accent.y = 0;
+    accent.w = static_cast<int16_t>(width_);
+    accent.h = 1;
+    accent.color = kColorCyan;
+    accent.bg = kColorBlack;
+    accent.size = 1;
+    accent.text = nullptr;
+    out.push(accent);
 
-    DrawCommand detail{};
-    detail.type = DrawCommandType::kText;
-    detail.x = 2;
-    detail.y = static_cast<int16_t>(height_ - 10);
-    detail.color = kColorGray;
-    detail.bg = kColorBlack;
-    detail.size = 1;
-    detail.text = out.copy_text(model.statusDetail[0] ? model.statusDetail : "");
-    out.push(detail);
+    // Row 1: brand.
+    {
+      const RowFrame frame = home.rows[0];
+      const char *brand = "COMMUTE LIVE";
+      const int16_t brandW = static_cast<int16_t>(strnlen(brand, 32) * charW);
+      int16_t brandX = static_cast<int16_t>((static_cast<int16_t>(width_) - brandW) / 2);
+      if (brandX < 2) brandX = 2;
+      int16_t brandY = static_cast<int16_t>(frame.yStart + ((frame.height - textH) / 2));
+      if (brandY < frame.yStart) brandY = frame.yStart;
+
+      DrawCommand title{};
+      title.type = DrawCommandType::kText;
+      title.x = brandX;
+      title.y = brandY;
+      title.color = kColorCyan;
+      title.bg = kColorBlack;
+      title.size = homeFont;
+      title.text = out.copy_text(brand);
+      out.push(title);
+    }
+
+    // Row 2: supported cities with MTA/CTA style chips.
+    {
+      const RowFrame frame = home.rows[1];
+      const uint8_t chipFont = 1;
+      const int16_t chipH = 8;
+      const int16_t chipY = static_cast<int16_t>(frame.yStart + ((frame.height - chipH) / 2));
+
+      struct Chip {
+        const char *text;
+        uint16_t bg;
+      };
+      const Chip chips[] = {
+          {"MTA", 0x01B4},  // NYC subway blue
+          {"CTA", 0xF800},  // Chicago red accent
+          {"MBTA", 0xFD20},
+          {"SEPTA", 0x5F1A},
+      };
+
+      int16_t totalChipW = 0;
+      for (size_t i = 0; i < sizeof(chips) / sizeof(chips[0]); ++i) {
+        const int16_t textW = static_cast<int16_t>(strnlen(chips[i].text, 16) * 6);
+        totalChipW = static_cast<int16_t>(totalChipW + textW + 4);  // 2px pad each side
+        if (i + 1 < sizeof(chips) / sizeof(chips[0])) totalChipW = static_cast<int16_t>(totalChipW + 2);
+      }
+
+      int16_t x = static_cast<int16_t>((static_cast<int16_t>(width_) - totalChipW) / 2);
+      if (x < 2) x = 2;
+
+      for (size_t i = 0; i < sizeof(chips) / sizeof(chips[0]); ++i) {
+        const int16_t textW = static_cast<int16_t>(strnlen(chips[i].text, 16) * 6);
+        const int16_t chipW = static_cast<int16_t>(textW + 4);
+
+        DrawCommand chipBg{};
+        chipBg.type = DrawCommandType::kFillRect;
+        chipBg.x = x;
+        chipBg.y = chipY;
+        chipBg.w = chipW;
+        chipBg.h = chipH;
+        chipBg.color = chips[i].bg;
+        chipBg.bg = kColorBlack;
+        chipBg.size = 1;
+        chipBg.text = nullptr;
+        out.push(chipBg);
+
+        DrawCommand chipText{};
+        chipText.type = DrawCommandType::kText;
+        chipText.x = static_cast<int16_t>(x + 2);
+        chipText.y = chipY;
+        chipText.color = kColorWhite;
+        chipText.bg = chips[i].bg;
+        chipText.size = chipFont;
+        chipText.text = out.copy_text(chips[i].text);
+        out.push(chipText);
+
+        x = static_cast<int16_t>(x + chipW + 2);
+      }
+    }
+
+    // Row 3: status line + detail.
+    {
+      const RowFrame frame = home.rows[2];
+      const uint8_t statusFont = 1;
+      const int16_t statusTextH = 8;
+      const int16_t y = static_cast<int16_t>(frame.yStart + ((frame.height - statusTextH) / 2));
+      const int16_t rightChars = static_cast<int16_t>((static_cast<int16_t>(width_) - 2) / 6);
+
+      if (frame.height >= 16) {
+        DrawCommand status{};
+        status.type = DrawCommandType::kText;
+        status.x = 2;
+        status.y = frame.yStart;
+        status.color = kColorWhite;
+        status.bg = kColorBlack;
+        status.size = statusFont;
+        status.text = trim_for_width(model.statusLine[0] ? model.statusLine : "BOOTING",
+                                     static_cast<uint8_t>(rightChars), out);
+        out.push(status);
+
+        DrawCommand detail{};
+        detail.type = DrawCommandType::kText;
+        detail.x = 2;
+        detail.y = static_cast<int16_t>(frame.yStart + 8);
+        detail.color = kColorGray;
+        detail.bg = kColorBlack;
+        detail.size = 1;
+        detail.text = trim_for_width(model.statusDetail[0] ? model.statusDetail : "",
+                                     static_cast<uint8_t>(rightChars), out);
+        out.push(detail);
+      } else {
+        char compact[kMaxDestinationLen];
+        snprintf(compact, sizeof(compact), "%s %s",
+                 model.statusLine[0] ? model.statusLine : "BOOTING",
+                 model.statusDetail[0] ? model.statusDetail : "");
+
+        DrawCommand compactLine{};
+        compactLine.type = DrawCommandType::kText;
+        compactLine.x = 2;
+        compactLine.y = y < frame.yStart ? frame.yStart : y;
+        compactLine.color = kColorWhite;
+        compactLine.bg = kColorBlack;
+        compactLine.size = 1;
+        compactLine.text = trim_for_width(compact, static_cast<uint8_t>(rightChars), out);
+        out.push(compactLine);
+      }
+    }
+
     return;
   }
 
