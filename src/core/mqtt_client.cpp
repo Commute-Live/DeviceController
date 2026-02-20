@@ -66,7 +66,7 @@ void MqttClient::tick(uint32_t nowMs) {
   }
 }
 
-bool MqttClient::connected() const {
+bool MqttClient::connected() {
   return connected_ && mqtt_.connected();
 }
 

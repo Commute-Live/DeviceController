@@ -34,7 +34,7 @@ class MqttClient final {
 
   bool begin(const MqttConfig &config, const MqttTopics &topics);
   void tick(uint32_t nowMs);
-  bool connected() const;
+  bool connected();
   bool ensure_connected(uint32_t nowMs);
   void set_command_callback(CommandCallback callback, void *ctx);
 
