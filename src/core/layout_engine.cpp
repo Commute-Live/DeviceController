@@ -146,6 +146,10 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
   for (uint8_t i = 0; i < 2; ++i) {
     const TransitRowModel &row = model.rows[i];
     const int16_t rowTop = static_cast<int16_t>(i * rowHeight);
+    const bool hasRoute = row.routeId[0] != '\0' && strcmp(row.routeId, "--") != 0;
+    if (i == 1 && !hasRoute) {
+      continue;
+    }
 
     DrawCommand route{};
     route.type = DrawCommandType::kText;
@@ -154,7 +158,7 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
     route.color = kColorWhite;
     route.bg = kColorBlack;
     route.size = rowFont;
-    route.text = trim_for_width(row.routeId[0] ? row.routeId : "--", rowFont == 2 ? 3 : 2, out);
+    route.text = trim_for_width(hasRoute ? row.routeId : "--", rowFont == 2 ? 3 : 2, out);
     out.push(route);
 
     DrawCommand eta{};

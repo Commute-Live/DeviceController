@@ -315,9 +315,9 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
     }
   } else {
     copy_str(renderModel_.rows[1].providerId, sizeof(renderModel_.rows[1].providerId), "");
-    copy_str(renderModel_.rows[1].routeId, sizeof(renderModel_.rows[1].routeId), "--");
+    copy_str(renderModel_.rows[1].routeId, sizeof(renderModel_.rows[1].routeId), "");
     copy_str(renderModel_.rows[1].destination, sizeof(renderModel_.rows[1].destination), "");
-    copy_str(renderModel_.rows[1].eta, sizeof(renderModel_.rows[1].eta), "--");
+    copy_str(renderModel_.rows[1].eta, sizeof(renderModel_.rows[1].eta), "");
   }
 
   renderModel_.hasData = true;
