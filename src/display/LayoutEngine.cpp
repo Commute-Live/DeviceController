@@ -28,7 +28,8 @@ RowLayout LayoutEngine::compute_row_layout(int16_t totalWidth,
   if (destinationWidth < 0) destinationWidth = 0;
 
   const int16_t textHeight = static_cast<int16_t>(8 * textSize);
-  const int16_t textY = static_cast<int16_t>(frame.yStart + ((frame.height - textHeight) / 2));
+  // Keep destination + ETA vertically centered to the badge (logo), not just the row box.
+  const int16_t textY = static_cast<int16_t>(badgeY + ((badgeSize - textHeight) / 2));
 
   out.badgeX = badgeX;
   out.badgeY = badgeY;
