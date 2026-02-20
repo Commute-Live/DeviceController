@@ -4,14 +4,14 @@ namespace display {
 
 RowLayout LayoutEngine::compute_row_layout(int16_t totalWidth,
                                            const RowFrame &frame,
+                                           int16_t fixedBadgeSize,
                                            uint8_t textSize,
                                            uint8_t etaChars) const {
   RowLayout out{};
   if (textSize < 1) textSize = 1;
   if (etaChars < 1) etaChars = 1;
 
-  // Strict geometry derived from row height.
-  int16_t badgeSize = static_cast<int16_t>((frame.height * 3) / 4);  // 0.75 * rowHeight
+  int16_t badgeSize = fixedBadgeSize;
   if (badgeSize < 5) badgeSize = 5;
   // Force odd diameter so circle center maps to an exact pixel and stays symmetrical.
   if ((badgeSize & 1) == 0) {

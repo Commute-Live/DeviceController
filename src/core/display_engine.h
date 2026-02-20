@@ -55,6 +55,7 @@ class DisplayEngine final : public display::DisplayEngine {
   bool begin_frame();
   void clear(uint16_t color);
   void draw_text(int16_t x, int16_t y, const char *text, uint16_t color, uint8_t size = 1, uint16_t bg = 0) override;
+  void draw_text_transparent(int16_t x, int16_t y, const char *text, uint16_t color, uint8_t size = 1) override;
   void draw_rect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color);
   void fill_rect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) override;
   void draw_pixel(int16_t x, int16_t y, uint16_t color) override;

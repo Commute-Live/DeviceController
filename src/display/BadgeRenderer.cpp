@@ -21,7 +21,7 @@ const char *route_text(const char *routeId, char *out, size_t outLen) {
     char c = routeId[i];
     if (c == ' ' || c == '-' || c == '_') continue;
     out[j++] = static_cast<char>(toupper(static_cast<unsigned char>(c)));
-    if (j == 2) break;  // keep badge text compact and centered
+    if (j == 1) break;  // MTA badge symbol is single route character
   }
   out[j] = '\0';
   return out;
@@ -97,7 +97,7 @@ void BadgeRenderer::draw_badge(DisplayEngine &display,
   // Center using measured glyph bounds relative to cursor origin.
   const int16_t tx = static_cast<int16_t>(cx - (tm.width / 2) - tm.xOffset);
   const int16_t ty = static_cast<int16_t>(cy - (tm.height / 2) - tm.yOffset);
-  display.draw_text(tx, ty, textBuf, kWhite, textSize, fill);
+  display.draw_text_transparent(tx, ty, textBuf, kWhite, textSize);
 }
 
 }  // namespace display
