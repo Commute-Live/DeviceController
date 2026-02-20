@@ -111,19 +111,6 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
     const int16_t charW = static_cast<int16_t>(6 * homeFont);
     const int16_t textH = static_cast<int16_t>(8 * homeFont);
 
-    // Subtle top accent.
-    DrawCommand accent{};
-    accent.type = DrawCommandType::kFillRect;
-    accent.x = 0;
-    accent.y = 0;
-    accent.w = static_cast<int16_t>(width_);
-    accent.h = 1;
-    accent.color = kColorCyan;
-    accent.bg = kColorBlack;
-    accent.size = 1;
-    accent.text = nullptr;
-    out.push(accent);
-
     // Row 1: brand.
     {
       const RowFrame frame = home.rows[0];
