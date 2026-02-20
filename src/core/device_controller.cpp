@@ -17,7 +17,7 @@ namespace {
 
 constexpr uint32_t kHeartbeatEveryMs = 15000;
 constexpr uint32_t kTelemetryEveryMs = 30000;
-constexpr uint32_t kRenderEveryMs = 125;
+constexpr uint32_t kMinRenderGapMs = 40;
 
 void copy_str(char *dst, size_t dstLen, const char *src) {
   if (dstLen == 0) {
@@ -149,7 +149,8 @@ DeviceController::DeviceController(const Dependencies &deps)
       server_(80),
       lastHeartbeatAtMs_(0),
       lastTelemetryAtMs_(0),
-      lastRenderAtMs_(0) {
+      lastRenderAtMs_(0),
+      renderDirty_(true) {
   memset(&renderModel_, 0, sizeof(renderModel_));
   renderModel_.uiState = UiState::kBooting;
   copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "BOOTING");
@@ -192,6 +193,7 @@ bool DeviceController::begin() {
                                    deps_.displayEngine->geometry().totalHeight);
 
   update_ui_state();
+  renderDirty_ = true;
   render_frame(millis());
   return true;
 }
@@ -320,6 +322,7 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   renderModel_.hasData = true;
   renderModel_.uiState = UiState::kTransit;
   renderModel_.updatedAtMs = millis();
+  renderDirty_ = true;
   publish_display_state();
 }
 
@@ -363,6 +366,12 @@ void DeviceController::http_heartbeat_handler() {
 }
 
 void DeviceController::update_ui_state() {
+  const UiState previousState = renderModel_.uiState;
+  char prevStatus[kMaxStatusLen];
+  char prevDetail[kMaxDestinationLen];
+  copy_str(prevStatus, sizeof(prevStatus), renderModel_.statusLine);
+  copy_str(prevDetail, sizeof(prevDetail), renderModel_.statusDetail);
+
   const bool wifiUp = deps_.networkManager->is_connected();
   const bool mqttUp = deps_.mqttClient->connected();
 
@@ -370,37 +379,36 @@ void DeviceController::update_ui_state() {
     renderModel_.uiState = UiState::kTransit;
     copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "TRANSIT");
     copy_str(renderModel_.statusDetail, sizeof(renderModel_.statusDetail), "Live arrivals");
-    return;
-  }
-
-  if (deps_.networkManager->setup_mode_active() && !wifiUp) {
+  } else if (deps_.networkManager->setup_mode_active() && !wifiUp) {
     renderModel_.uiState = UiState::kSetupMode;
     copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "SETUP MODE");
     copy_str(renderModel_.statusDetail, sizeof(renderModel_.statusDetail), "Connect to device Wi-Fi");
-    return;
-  }
-
-  if (!wifiUp) {
+  } else if (!wifiUp) {
     renderModel_.uiState = UiState::kNoWifi;
     copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "NO WIFI");
     copy_str(renderModel_.statusDetail, sizeof(renderModel_.statusDetail), "Trying reconnect");
-    return;
-  }
-
-  if (!mqttUp) {
+  } else if (!mqttUp) {
     renderModel_.uiState = UiState::kWifiOkNoMqtt;
     copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "WIFI OK");
     copy_str(renderModel_.statusDetail, sizeof(renderModel_.statusDetail), "MQTT offline");
-    return;
+  } else {
+    renderModel_.uiState = UiState::kConnectedWaitingData;
+    copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "CONNECTED");
+    copy_str(renderModel_.statusDetail, sizeof(renderModel_.statusDetail), "Waiting transit data");
   }
 
-  renderModel_.uiState = UiState::kConnectedWaitingData;
-  copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "CONNECTED");
-  copy_str(renderModel_.statusDetail, sizeof(renderModel_.statusDetail), "Waiting transit data");
+  if (previousState != renderModel_.uiState ||
+      strcmp(prevStatus, renderModel_.statusLine) != 0 ||
+      strcmp(prevDetail, renderModel_.statusDetail) != 0) {
+    renderDirty_ = true;
+  }
 }
 
 void DeviceController::render_frame(uint32_t nowMs) {
-  if (nowMs - lastRenderAtMs_ < kRenderEveryMs) {
+  if (!renderDirty_) {
+    return;
+  }
+  if (nowMs - lastRenderAtMs_ < kMinRenderGapMs) {
     return;
   }
   lastRenderAtMs_ = nowMs;
@@ -425,6 +433,7 @@ void DeviceController::render_frame(uint32_t nowMs) {
   }
 
   deps_.displayEngine->present();
+  renderDirty_ = false;
 }
 
 void DeviceController::publish_display_state() {

@@ -37,6 +37,7 @@ class DeviceController final {
   uint32_t lastHeartbeatAtMs_;
   uint32_t lastTelemetryAtMs_;
   uint32_t lastRenderAtMs_;
+  bool renderDirty_;
   static DeviceController *activeController_;
 
   static void on_network_state_change(NetworkState state, void *ctx);
