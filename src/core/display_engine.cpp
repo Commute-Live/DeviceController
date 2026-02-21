@@ -1,9 +1,15 @@
 #include "core/display_engine.h"
 
 #include <Adafruit_GFX.h>
+#include <Fonts/TomThumb.h>
 #include <ESP32-VirtualMatrixPanel-I2S-DMA.h>
 
 namespace core {
+
+namespace {
+constexpr uint8_t kTextSizeTiny = 0;
+constexpr uint8_t kTextSizeTinyPlus = 255;
+}
 
 namespace {
 
@@ -206,6 +212,20 @@ void DisplayEngine::draw_text(int16_t x, int16_t y, const char *text, uint16_t c
   }
   const LogicalPoint p = with_offset(x, y);
   canvas_->setTextWrap(false);
+  if (size == kTextSizeTiny || size == kTextSizeTinyPlus) {
+    canvas_->setFont(&TomThumb);
+    canvas_->setTextSize(1);
+    canvas_->setTextColor(color, bg);
+    canvas_->setCursor(p.x, p.y);
+    canvas_->print(text);
+    if (size == kTextSizeTinyPlus) {
+      // Tiny-plus mode: add a subtle overdraw to make glyphs feel slightly larger.
+      canvas_->setCursor(static_cast<int16_t>(p.x + 1), p.y);
+      canvas_->print(text);
+    }
+    canvas_->setFont();
+    return;
+  }
   canvas_->setTextSize(size);
   canvas_->setTextColor(color, bg);
   canvas_->setCursor(p.x, p.y);
@@ -262,12 +282,24 @@ display::TextMetrics DisplayEngine::measure_text(const char *text, uint8_t size)
     return tm;
   }
 
-  canvas_->setTextSize(size);
+  if (size == kTextSizeTiny || size == kTextSizeTinyPlus) {
+    canvas_->setFont(&TomThumb);
+    canvas_->setTextSize(1);
+  } else {
+    canvas_->setTextSize(size);
+    canvas_->setFont();
+  }
   int16_t x1 = 0;
   int16_t y1 = 0;
   uint16_t w = 0;
   uint16_t h = 0;
   canvas_->getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
+  if (size == kTextSizeTiny || size == kTextSizeTinyPlus) {
+    if (size == kTextSizeTinyPlus) {
+      w = static_cast<uint16_t>(w + 1);
+    }
+    canvas_->setFont();
+  }
   tm.xOffset = x1;
   tm.yOffset = y1;
   tm.width = static_cast<int16_t>(w);

@@ -14,6 +14,65 @@ constexpr uint16_t kColorGray = 0x7BEF;
 constexpr uint16_t kColorAmber = 0xFD20;
 constexpr uint16_t kColorRed = 0xF800;
 constexpr uint16_t kColorGreen = 0x07E0;
+constexpr uint8_t kMinDisplayType = 1;
+constexpr uint8_t kMaxDisplayType = 5;
+constexpr uint8_t kTextSizeTiny = 0;
+constexpr uint8_t kTextSizeTinyPlus = 255;
+
+struct TransitPresetConfig {
+  int16_t topMarginTwoRow;
+  int16_t betweenMarginTwoRow;
+  int16_t bottomMarginTwoRow;
+  int16_t topMarginThreeRow;
+  int16_t betweenMarginThreeRow;
+  int16_t bottomMarginThreeRow;
+  int16_t rowXShift;
+  int16_t rowYNudge;
+  int16_t etaRightNudgePx;
+  int16_t destinationYNudge;
+  int16_t etaYNudge;
+};
+
+constexpr TransitPresetConfig kPreset1Config{
+    2,   // topMarginTwoRow
+    2,   // betweenMarginTwoRow
+    2,   // bottomMarginTwoRow
+    1,   // topMarginThreeRow
+    1,   // betweenMarginThreeRow
+    1,   // bottomMarginThreeRow
+    -1,  // rowXShift
+    -1,  // rowYNudge
+    2,   // etaRightNudgePx
+    1,   // destinationYNudge
+    1,   // etaYNudge
+};
+
+uint8_t normalize_display_type(uint8_t value) {
+  if (value < kMinDisplayType) return kMinDisplayType;
+  if (value > kMaxDisplayType) return kMaxDisplayType;
+  return value;
+}
+
+const TransitPresetConfig &transit_preset_config(uint8_t displayType) {
+  // Presets 2-5 will get dedicated geometry later; keep preset 1 behavior for now.
+  switch (normalize_display_type(displayType)) {
+    case 2:
+    case 3:
+    case 4:
+    case 5:
+    case 1:
+    default:
+      return kPreset1Config;
+  }
+}
+
+const char *row_label_for_display_type(const TransitRowModel &row, uint8_t displayType) {
+  const uint8_t normalizedDisplayType = normalize_display_type(displayType);
+  if (normalizedDisplayType == 2 && row.direction[0] != '\0') {
+    return row.direction;
+  }
+  return row.destination[0] ? row.destination : "-";
+}
 
 uint16_t eta_color(const char *eta) {
   if (!eta || eta[0] == '\0' || strcmp(eta, "--") == 0) {
@@ -244,11 +303,12 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
   uint8_t rowCount = model.activeRows;
   if (rowCount < 1) rowCount = 1;
   if (rowCount > kMaxTransitRows) rowCount = kMaxTransitRows;
+  const TransitPresetConfig &preset = transit_preset_config(model.displayType);
 
   RowFrame rowFrames[kMaxTransitRows]{};
-  const int16_t kTopMargin = (rowCount == 3) ? 1 : 2;
-  const int16_t kBetweenMargin = (rowCount == 3) ? 1 : 2;
-  const int16_t kBottomMargin = (rowCount == 3) ? 1 : 2;
+  const int16_t kTopMargin = (rowCount == 3) ? preset.topMarginThreeRow : preset.topMarginTwoRow;
+  const int16_t kBetweenMargin = (rowCount == 3) ? preset.betweenMarginThreeRow : preset.betweenMarginTwoRow;
+  const int16_t kBottomMargin = (rowCount == 3) ? preset.bottomMarginThreeRow : preset.bottomMarginTwoRow;
   const int16_t totalHeight = static_cast<int16_t>(height_);
   const int16_t totalGap = static_cast<int16_t>(kTopMargin + kBottomMargin + (rowCount - 1) * kBetweenMargin);
   const int16_t drawable = static_cast<int16_t>(totalHeight - totalGap);
@@ -286,20 +346,22 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
 
   for (uint8_t i = 0; i < rowCount; ++i) {
     const TransitRowModel &row = model.rows[i];
+    const uint8_t normalizedDisplayType = normalize_display_type(model.displayType);
     const RowFrame frame = rowFrames[i];
     const bool hasRoute = row.routeId[0] != '\0' && strcmp(row.routeId, "--") != 0;
-    const int16_t rowY = frame.yStart > 0 ? static_cast<int16_t>(frame.yStart - 1) : frame.yStart;
+    const int16_t rowY =
+        frame.yStart > 0 ? static_cast<int16_t>(frame.yStart + preset.rowYNudge) : frame.yStart;
     display::RowFrame rowFrame{
         rowY,
         frame.height,
     };
     const display::RowLayout rowGeom =
         rowLayout_.compute_row_layout(static_cast<int16_t>(width_), rowFrame, fixedBadgeSize, rowFont, kEtaChars);
-    const int16_t rowXShift = -1;
-    const int16_t badgeX = rowGeom.badgeX > 0 ? static_cast<int16_t>(rowGeom.badgeX + rowXShift) : rowGeom.badgeX;
+    const int16_t badgeX =
+        rowGeom.badgeX > 0 ? static_cast<int16_t>(rowGeom.badgeX + preset.rowXShift) : rowGeom.badgeX;
     const int16_t destinationX =
-        rowGeom.destinationX > 0 ? static_cast<int16_t>(rowGeom.destinationX + rowXShift) : rowGeom.destinationX;
-    const int16_t etaX = rowGeom.etaX > 0 ? static_cast<int16_t>(rowGeom.etaX + rowXShift) : rowGeom.etaX;
+        rowGeom.destinationX > 0 ? static_cast<int16_t>(rowGeom.destinationX + preset.rowXShift) : rowGeom.destinationX;
+    const int16_t etaX = rowGeom.etaX > 0 ? static_cast<int16_t>(rowGeom.etaX + preset.rowXShift) : rowGeom.etaX;
 
     DrawCommand badge{};
     badge.type = DrawCommandType::kBadge;
@@ -313,66 +375,104 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
     badge.text = trim_for_width(hasRoute ? row.routeId : "--", 2, out);
     out.push(badge);
 
-    constexpr int16_t kEtaRightNudgePx = 2;
-
     DrawCommand eta{};
     eta.type = DrawCommandType::kText;
+    const uint8_t etaFont =
+        (normalizedDisplayType == 4 || normalizedDisplayType == 5)
+            ? (rowFont > 1 ? static_cast<uint8_t>(rowFont - 1) : 1)
+            : rowFont;
+    const int16_t etaCharW = static_cast<int16_t>(6 * etaFont);
     const uint8_t etaLen = static_cast<uint8_t>(strnlen(row.eta[0] ? row.eta : "--", kMaxEtaLen - 1));
-    const int16_t etaDrawW = static_cast<int16_t>(etaLen * charW);
-    eta.x = static_cast<int16_t>(etaX + rowGeom.etaWidth - etaDrawW + kEtaRightNudgePx);
-    eta.y = static_cast<int16_t>(rowGeom.textY + 1);
+    const int16_t etaDrawW = static_cast<int16_t>(etaLen * etaCharW);
+    eta.x = static_cast<int16_t>(etaX + rowGeom.etaWidth - etaDrawW + preset.etaRightNudgePx);
+    eta.y = static_cast<int16_t>(rowGeom.textY + preset.etaYNudge);
     eta.color = eta_color(row.eta);
     eta.bg = kColorBlack;
-    eta.size = rowFont;
+    eta.size = etaFont;
     eta.text = trim_for_width(row.eta[0] ? row.eta : "--", kEtaChars, out);
     out.push(eta);
 
-    const uint8_t destinationFont = rowFont > 1 ? static_cast<uint8_t>(rowFont - 1) : 1;
-    const int16_t destinationCharW = static_cast<int16_t>(6 * destinationFont);
-    const int16_t effectiveDestinationWidth = static_cast<int16_t>(rowGeom.destinationWidth + kEtaRightNudgePx);
+    const uint8_t destinationFont = (normalizedDisplayType == 3)
+                                        ? kTextSizeTiny
+                                        : (rowFont > 1 ? static_cast<uint8_t>(rowFont - 1) : 1);
+    const int16_t destinationCharW =
+        (destinationFont == kTextSizeTiny || destinationFont == kTextSizeTinyPlus)
+            ? 4
+            : static_cast<int16_t>(6 * destinationFont);
+    const int16_t effectiveDestinationWidth = static_cast<int16_t>(rowGeom.destinationWidth + preset.etaRightNudgePx);
     const uint8_t labelChars =
         (effectiveDestinationWidth > 0 && destinationCharW > 0)
             ? static_cast<uint8_t>(effectiveDestinationWidth / destinationCharW)
             : 0;
+    const uint8_t renderLabelChars =
+        ((normalizedDisplayType == 3 || normalizedDisplayType == 4 || normalizedDisplayType == 5) && labelChars > 2)
+            ? static_cast<uint8_t>(labelChars - 2)
+            : labelChars;
 
-    const char *destinationTrimmed = trim_for_width(row.destination[0] ? row.destination : "-", labelChars, out);
-    const int16_t destinationY = static_cast<int16_t>(rowGeom.textY + 1);
-    const int16_t spaceAdvance = destinationCharW > 2 ? static_cast<int16_t>(destinationCharW - 2) : 1;
+    const int16_t destinationY = static_cast<int16_t>(rowGeom.textY + preset.destinationYNudge);
+    const int16_t spaceAdvance = (normalizedDisplayType == 3)
+                                     ? destinationCharW
+                                     : (destinationCharW > 2 ? static_cast<int16_t>(destinationCharW - 2) : 1);
 
-    char destinationBuf[kMaxDestinationLen];
-    const char *destinationSrc = destinationTrimmed ? destinationTrimmed : "-";
-    strncpy(destinationBuf, destinationSrc, sizeof(destinationBuf) - 1);
-    destinationBuf[sizeof(destinationBuf) - 1] = '\0';
+    auto draw_compact_line = [&](const char *text, int16_t y, uint16_t color = kColorWhite) {
+      const char *trimmed = trim_for_width(text, renderLabelChars, out);
+      char destinationBuf[kMaxDestinationLen];
+      const char *src = trimmed ? trimmed : "";
+      strncpy(destinationBuf, src, sizeof(destinationBuf) - 1);
+      destinationBuf[sizeof(destinationBuf) - 1] = '\0';
 
-    int16_t cursorX = destinationX;
-    char token[kMaxDestinationLen];
-    size_t tokenLen = 0;
+      int16_t cursorX = destinationX;
+      char token[kMaxDestinationLen];
+      size_t tokenLen = 0;
 
-    auto flush_token = [&](void) {
-      if (tokenLen == 0) return;
-      token[tokenLen] = '\0';
-      DrawCommand destinationPart{};
-      destinationPart.type = DrawCommandType::kText;
-      destinationPart.x = cursorX;
-      destinationPart.y = destinationY;
-      destinationPart.color = kColorWhite;
-      destinationPart.bg = kColorBlack;
-      destinationPart.size = destinationFont;
-      destinationPart.text = out.copy_text(token);
-      out.push(destinationPart);
-      cursorX = static_cast<int16_t>(cursorX + static_cast<int16_t>(tokenLen) * destinationCharW);
-      tokenLen = 0;
+      auto flush_token = [&]() {
+        if (tokenLen == 0) return;
+        token[tokenLen] = '\0';
+        DrawCommand destinationPart{};
+        destinationPart.type = DrawCommandType::kText;
+        destinationPart.x = cursorX;
+        destinationPart.y = y;
+        destinationPart.color = color;
+        destinationPart.bg = kColorBlack;
+        destinationPart.size = destinationFont;
+        destinationPart.text = out.copy_text(token);
+        out.push(destinationPart);
+        cursorX = static_cast<int16_t>(cursorX + static_cast<int16_t>(tokenLen) * destinationCharW);
+        tokenLen = 0;
+      };
+
+      for (size_t c = 0; destinationBuf[c] != '\0'; ++c) {
+        if (destinationBuf[c] == ' ') {
+          flush_token();
+          cursorX = static_cast<int16_t>(cursorX + spaceAdvance);
+        } else if (tokenLen + 1 < sizeof(token)) {
+          token[tokenLen++] = destinationBuf[c];
+        }
+      }
+      flush_token();
     };
 
-    for (size_t i = 0; destinationBuf[i] != '\0'; ++i) {
-      if (destinationBuf[i] == ' ') {
-        flush_token();
-        cursorX = static_cast<int16_t>(cursorX + spaceAdvance);
-      } else if (tokenLen + 1 < sizeof(token)) {
-        token[tokenLen++] = destinationBuf[i];
+    if (normalizedDisplayType == 3) {
+      // Preset 3: two-line label, nudged down for visual balance.
+      const int16_t preset3Y = static_cast<int16_t>(destinationY + 2);
+      const char *line1 = row.direction[0] ? row.direction : (row.destination[0] ? row.destination : "-");
+      const char *line2 = row.direction[0] ? (row.destination[0] ? row.destination : "") : "";
+      draw_compact_line(line1, preset3Y);
+      if (line2[0] != '\0') {
+        draw_compact_line(line2, static_cast<int16_t>(preset3Y + 7));
       }
+    } else if (normalizedDisplayType == 4 || normalizedDisplayType == 5) {
+      const int16_t preset45Y = static_cast<int16_t>(destinationY - 2);
+      const char *line1 = (normalizedDisplayType == 5)
+                              ? (row.direction[0] ? row.direction : (row.destination[0] ? row.destination : "-"))
+                              : (row.destination[0] ? row.destination : "-");
+      draw_compact_line(line1, preset45Y);
+      if (row.etaExtra[0] != '\0') {
+        draw_compact_line(row.etaExtra, static_cast<int16_t>(preset45Y + 7), kColorAmber);
+      }
+    } else {
+      draw_compact_line(row_label_for_display_type(row, model.displayType), destinationY);
     }
-    flush_token();
   }
 }
 

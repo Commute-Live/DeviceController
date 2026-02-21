@@ -19,6 +19,8 @@ namespace {
 constexpr uint32_t kHeartbeatEveryMs = 15000;
 constexpr uint32_t kTelemetryEveryMs = 30000;
 constexpr uint32_t kMinRenderGapMs = 40;
+constexpr uint8_t kMinDisplayType = 1;
+constexpr uint8_t kMaxDisplayType = 5;
 display::BadgeRenderer gBadgeRenderer;
 
 void copy_str(char *dst, size_t dstLen, const char *src) {
@@ -130,17 +132,22 @@ void normalize_eta(const String &input, char *out, size_t outLen) {
 }
 
 void set_default_rows(RenderModel &model) {
+  model.displayType = kMinDisplayType;
   model.activeRows = 1;
   copy_str(model.rows[0].providerId, sizeof(model.rows[0].providerId), "");
   copy_str(model.rows[0].routeId, sizeof(model.rows[0].routeId), "--");
+  copy_str(model.rows[0].direction, sizeof(model.rows[0].direction), "");
   copy_str(model.rows[0].destination, sizeof(model.rows[0].destination), "Waiting data");
   copy_str(model.rows[0].eta, sizeof(model.rows[0].eta), "--");
+  copy_str(model.rows[0].etaExtra, sizeof(model.rows[0].etaExtra), "");
 
   for (uint8_t i = 1; i < kMaxTransitRows; ++i) {
     copy_str(model.rows[i].providerId, sizeof(model.rows[i].providerId), "");
     copy_str(model.rows[i].routeId, sizeof(model.rows[i].routeId), "");
+    copy_str(model.rows[i].direction, sizeof(model.rows[i].direction), "");
     copy_str(model.rows[i].destination, sizeof(model.rows[i].destination), "");
     copy_str(model.rows[i].eta, sizeof(model.rows[i].eta), "");
+    copy_str(model.rows[i].etaExtra, sizeof(model.rows[i].etaExtra), "");
   }
 }
 
@@ -148,6 +155,143 @@ int clamp_rows_to_display(int value) {
   if (value < 1) return 1;
   if (value > static_cast<int>(kMaxTransitRows)) return static_cast<int>(kMaxTransitRows);
   return value;
+}
+
+uint8_t clamp_display_type(int value) {
+  if (value < static_cast<int>(kMinDisplayType)) return kMinDisplayType;
+  if (value > static_cast<int>(kMaxDisplayType)) return kMaxDisplayType;
+  return static_cast<uint8_t>(value);
+}
+
+int find_matching_bracket(const String &text, int openPos, char openCh, char closeCh) {
+  if (openPos < 0 || openPos >= static_cast<int>(text.length()) || text[openPos] != openCh) return -1;
+  int depth = 0;
+  bool inQuotes = false;
+  bool escapeNext = false;
+  for (int i = openPos; i < static_cast<int>(text.length()); ++i) {
+    const char c = text[i];
+    if (escapeNext) {
+      escapeNext = false;
+      continue;
+    }
+    if (c == '\\') {
+      escapeNext = true;
+      continue;
+    }
+    if (c == '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (inQuotes) continue;
+    if (c == openCh) depth++;
+    else if (c == closeCh) {
+      depth--;
+      if (depth == 0) return i;
+    }
+  }
+  return -1;
+}
+
+bool extract_lines_object_at(const String &message, uint8_t index, String &outObject) {
+  outObject = "";
+  const int linesKeyPos = message.indexOf("\"lines\"");
+  if (linesKeyPos < 0) return false;
+  const int arrayOpen = message.indexOf('[', linesKeyPos);
+  if (arrayOpen < 0) return false;
+  const int arrayClose = find_matching_bracket(message, arrayOpen, '[', ']');
+  if (arrayClose < 0) return false;
+
+  const String linesJson = message.substring(arrayOpen + 1, arrayClose);
+  int cursor = 0;
+  uint8_t seen = 0;
+  while (true) {
+    const int objStart = linesJson.indexOf('{', cursor);
+    if (objStart < 0) break;
+    const int objEnd = find_matching_bracket(linesJson, objStart, '{', '}');
+    if (objEnd < 0) break;
+
+    if (seen == index) {
+      outObject = linesJson.substring(objStart, objEnd + 1);
+      return true;
+    }
+    seen++;
+    cursor = objEnd + 1;
+  }
+  return false;
+}
+
+String direction_from_code(const String &directionCode) {
+  String code = directionCode;
+  code.trim();
+  code.toUpperCase();
+  if (code == "N") return "Uptown";
+  if (code == "S") return "Downtown";
+  if (code == "E") return "Eastbound";
+  if (code == "W") return "Westbound";
+  return "";
+}
+
+String extract_row_direction_label(const String &message, uint8_t rowIndex) {
+  String item;
+  if (extract_lines_object_at(message, rowIndex, item)) {
+    String dirLabel = extract_json_string_field(item, "directionLabel");
+    if (dirLabel.length() > 0) return dirLabel;
+    dirLabel = direction_from_code(extract_json_string_field(item, "direction"));
+    if (dirLabel.length() > 0) return dirLabel;
+  }
+
+  if (rowIndex == 0) {
+    String topLevel = extract_json_string_field(message, "directionLabel");
+    if (topLevel.length() > 0) return topLevel;
+    topLevel = direction_from_code(extract_json_string_field(message, "direction"));
+    if (topLevel.length() > 0) return topLevel;
+  }
+  return "";
+}
+
+int extract_eta_values_from_line_object(const String &lineObject, String outEtas[], int maxCount) {
+  if (maxCount <= 0) return 0;
+  int count = 0;
+  int pos = 0;
+  while (count < maxCount) {
+    const int keyPos = lineObject.indexOf("\"eta\":\"", pos);
+    if (keyPos < 0) break;
+    const int valueStart = keyPos + static_cast<int>(strlen("\"eta\":\""));
+    const int valueEnd = lineObject.indexOf('"', valueStart);
+    if (valueEnd < 0) break;
+    outEtas[count++] = lineObject.substring(valueStart, valueEnd);
+    pos = valueEnd + 1;
+  }
+  return count;
+}
+
+String normalize_eta_token(String token) {
+  token.trim();
+  token.toUpperCase();
+  if (token == "NOW" || token == "DUE") return "0m";
+  if (token.length() == 0 || token == "--") return "";
+  return token;
+}
+
+void extract_row_eta_extra(const String &message, uint8_t rowIndex, char *out, size_t outLen) {
+  if (!out || outLen == 0) return;
+  out[0] = '\0';
+
+  String lineObj;
+  if (!extract_lines_object_at(message, rowIndex, lineObj)) return;
+
+  String etaValues[3];
+  const int etaCount = extract_eta_values_from_line_object(lineObj, etaValues, 3);
+  if (etaCount <= 1) return;
+
+  String merged = "";
+  for (int i = 1; i < etaCount; ++i) {
+    const String token = normalize_eta_token(etaValues[i]);
+    if (token.length() == 0) continue;
+    if (merged.length() > 0) merged += ",";
+    merged += token;
+  }
+  copy_str(out, outLen, merged.c_str());
 }
 
 int split_eta_tokens(const char *etaRaw, char out[kMaxTransitRows][kMaxEtaLen]) {
@@ -180,8 +324,10 @@ int split_eta_tokens(const char *etaRaw, char out[kMaxTransitRows][kMaxEtaLen]) 
 void clear_row(TransitRowModel &row) {
   copy_str(row.providerId, sizeof(row.providerId), "");
   copy_str(row.routeId, sizeof(row.routeId), "");
+  copy_str(row.direction, sizeof(row.direction), "");
   copy_str(row.destination, sizeof(row.destination), "");
   copy_str(row.eta, sizeof(row.eta), "");
+  copy_str(row.etaExtra, sizeof(row.etaExtra), "");
 }
 
 void json_escape(const char *src, char *dst, size_t dstLen) {
@@ -338,6 +484,7 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   messageBuf[len] = '\0';
   const String message(messageBuf);
   const int arrivalsToDisplay = clamp_rows_to_display(extract_json_int_field(message, "arrivalsToDisplay", 1));
+  const uint8_t displayType = clamp_display_type(extract_json_int_field(message, "displayType", 1));
   Serial.printf("[MQTT] Incoming topic=%s len=%u\n", topic ? topic : "(null)", static_cast<unsigned>(len));
   Serial.printf("[MQTT] Payload=%s\n", message.c_str());
 
@@ -351,6 +498,18 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   if (!parsing::parse_provider_payload(provider, message, parsed) || !parsed.hasRow1) {
     Serial.println("[MQTT] Ignored: no row data");
     return;
+  }
+
+  const String row1Direction = extract_row_direction_label(message, 0);
+  const String row2Direction = extract_row_direction_label(message, 1);
+  char row1EtaExtra[kMaxDestinationLen];
+  char row2EtaExtra[kMaxDestinationLen];
+  row1EtaExtra[0] = '\0';
+  row2EtaExtra[0] = '\0';
+  const bool compactExtraEtaPreset = (displayType == 4 || displayType == 5);
+  if (compactExtraEtaPreset) {
+    extract_row_eta_extra(message, 0, row1EtaExtra, sizeof(row1EtaExtra));
+    extract_row_eta_extra(message, 1, row2EtaExtra, sizeof(row2EtaExtra));
   }
 
   const String row1Provider = parsed.row1.provider.length() ? parsed.row1.provider : provider;
@@ -371,18 +530,26 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
            row1Provider.c_str());
   copy_str(renderModel_.rows[0].routeId, sizeof(renderModel_.rows[0].routeId),
            parsed.row1.line.length() ? parsed.row1.line.c_str() : "--");
+  copy_str(renderModel_.rows[0].direction, sizeof(renderModel_.rows[0].direction),
+           row1Direction.c_str());
   copy_str(renderModel_.rows[0].destination, sizeof(renderModel_.rows[0].destination),
            parsed.row1.label.length() ? parsed.row1.label.c_str() : renderModel_.rows[0].routeId);
   normalize_eta(parsed.row1.eta, renderModel_.rows[0].eta, sizeof(renderModel_.rows[0].eta));
+  copy_str(renderModel_.rows[0].etaExtra, sizeof(renderModel_.rows[0].etaExtra),
+           compactExtraEtaPreset ? row1EtaExtra : "");
 
   if (parsed.hasRow2) {
     copy_str(renderModel_.rows[1].providerId, sizeof(renderModel_.rows[1].providerId),
              parsed.row2.provider.c_str());
     copy_str(renderModel_.rows[1].routeId, sizeof(renderModel_.rows[1].routeId),
              parsed.row2.line.length() ? parsed.row2.line.c_str() : "--");
+    copy_str(renderModel_.rows[1].direction, sizeof(renderModel_.rows[1].direction),
+             row2Direction.c_str());
     copy_str(renderModel_.rows[1].destination, sizeof(renderModel_.rows[1].destination),
              parsed.row2.label.length() ? parsed.row2.label.c_str() : renderModel_.rows[1].routeId);
     normalize_eta(parsed.row2.eta, renderModel_.rows[1].eta, sizeof(renderModel_.rows[1].eta));
+    copy_str(renderModel_.rows[1].etaExtra, sizeof(renderModel_.rows[1].etaExtra),
+             compactExtraEtaPreset ? row2EtaExtra : "");
 
     const int row1Eta = parse_eta_minutes(renderModel_.rows[0].eta);
     const int row2Eta = parse_eta_minutes(renderModel_.rows[1].eta);
@@ -402,6 +569,14 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
     if (etaCount > 0 && rowsToRender > etaCount) {
       rowsToRender = etaCount;
     }
+    if (compactExtraEtaPreset) {
+      rowsToRender = 1;
+    } else {
+      // For single-line payloads, always show at least the next two ETAs when available.
+      if (etaCount >= 2 && rowsToRender < 2) {
+        rowsToRender = 2;
+      }
+    }
     if (rowsToRender < 1) {
       rowsToRender = 1;
     }
@@ -409,14 +584,33 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
     if (etaCount > 0) {
       copy_str(renderModel_.rows[0].eta, sizeof(renderModel_.rows[0].eta), etaParts[0]);
     }
+    if (compactExtraEtaPreset && row1EtaExtra[0] != '\0') {
+      copy_str(renderModel_.rows[0].etaExtra, sizeof(renderModel_.rows[0].etaExtra), row1EtaExtra);
+    } else if (compactExtraEtaPreset && etaCount > 1) {
+      char extraBuf[kMaxDestinationLen];
+      extraBuf[0] = '\0';
+      for (int i = 1; i < etaCount; ++i) {
+        if (etaParts[i][0] == '\0') continue;
+        if (extraBuf[0] != '\0') {
+          strncat(extraBuf, ",", sizeof(extraBuf) - strlen(extraBuf) - 1);
+        }
+        strncat(extraBuf, etaParts[i], sizeof(extraBuf) - strlen(extraBuf) - 1);
+      }
+      copy_str(renderModel_.rows[0].etaExtra, sizeof(renderModel_.rows[0].etaExtra), extraBuf);
+    } else {
+      copy_str(renderModel_.rows[0].etaExtra, sizeof(renderModel_.rows[0].etaExtra), "");
+    }
 
     for (int i = 1; i < rowsToRender; ++i) {
       copy_str(renderModel_.rows[i].providerId, sizeof(renderModel_.rows[i].providerId),
                renderModel_.rows[0].providerId);
       copy_str(renderModel_.rows[i].routeId, sizeof(renderModel_.rows[i].routeId),
                renderModel_.rows[0].routeId);
+      copy_str(renderModel_.rows[i].direction, sizeof(renderModel_.rows[i].direction),
+               renderModel_.rows[0].direction);
       copy_str(renderModel_.rows[i].destination, sizeof(renderModel_.rows[i].destination),
                renderModel_.rows[0].destination);
+      copy_str(renderModel_.rows[i].etaExtra, sizeof(renderModel_.rows[i].etaExtra), "");
       if (i < etaCount) {
         copy_str(renderModel_.rows[i].eta, sizeof(renderModel_.rows[i].eta), etaParts[i]);
       } else {
@@ -431,6 +625,7 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   }
 
   renderModel_.hasData = true;
+  renderModel_.displayType = displayType;
   renderModel_.uiState = UiState::kTransit;
   renderModel_.updatedAtMs = millis();
   renderDirty_ = true;

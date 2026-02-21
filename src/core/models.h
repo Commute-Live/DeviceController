@@ -62,13 +62,16 @@ enum class UiState : uint8_t {
 struct TransitRowModel {
   char providerId[kMaxProviderIdLen];
   char routeId[kMaxRouteIdLen];
+  char direction[kMaxDestinationLen];
   char destination[kMaxDestinationLen];
   char eta[kMaxEtaLen];
+  char etaExtra[kMaxDestinationLen];
 };
 
 struct RenderModel {
   UiState uiState;
   bool hasData;
+  uint8_t displayType;
   uint8_t activeRows;
   uint32_t updatedAtMs;
   char statusLine[kMaxStatusLen];
