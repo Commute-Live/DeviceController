@@ -1,0 +1,65 @@
+{
+  "nyc_subway_colors": [
+    {
+      "group": "123",
+      "routes": ["1", "2", "3"],
+      "hex": "#EE352E"
+    },
+    {
+      "group": "456",
+      "routes": ["4", "5", "6", "6X"],
+      "hex": "#00933C"
+    },
+    {
+      "group": "7",
+      "routes": ["7", "7X"],
+      "hex": "#B933AD"
+    },
+    {
+      "group": "ACE",
+      "routes": ["A", "C", "E"],
+      "hex": "#0039A6"
+    },
+    {
+      "group": "BDFM",
+      "routes": ["B", "D", "F", "FX", "M"],
+      "hex": "#FF6319"
+    },
+    {
+      "group": "G",
+      "routes": ["G"],
+      "hex": "#6CBE45"
+    },
+    {
+      "group": "JZ",
+      "routes": ["J", "Z"],
+      "hex": "#996633"
+    },
+    {
+      "group": "L",
+      "routes": ["L"],
+      "hex": "#A7A9AC"
+    },
+    {
+      "group": "NQRW",
+      "routes": ["N", "Q", "R", "W"],
+      "hex": "#FCCC0A"
+    },
+    {
+      "group": "S",
+      "routes": ["S"],
+      "hex": "#808183"
+    },
+    {
+      "group": "T",
+      "routes": ["T"],
+      "hex": "#00ADD0"
+    }
+  ],
+  "mta_additional_colors": [
+    { "name": "Red Accent", "hex": "#BD3831" },
+    { "name": "Green Accent", "hex": "#34915A" },
+    { "name": "Blue Accent", "hex": "#2578AC" },
+    { "name": "Gold Accent", "hex": "#E2B244" }
+  ]
+}
