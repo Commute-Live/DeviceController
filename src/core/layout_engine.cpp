@@ -313,30 +313,66 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
     badge.text = trim_for_width(hasRoute ? row.routeId : "--", 2, out);
     out.push(badge);
 
+    constexpr int16_t kEtaRightNudgePx = 2;
+
     DrawCommand eta{};
     eta.type = DrawCommandType::kText;
     const uint8_t etaLen = static_cast<uint8_t>(strnlen(row.eta[0] ? row.eta : "--", kMaxEtaLen - 1));
     const int16_t etaDrawW = static_cast<int16_t>(etaLen * charW);
-    eta.x = static_cast<int16_t>(etaX + rowGeom.etaWidth - etaDrawW);
-    eta.y = rowGeom.textY;
+    eta.x = static_cast<int16_t>(etaX + rowGeom.etaWidth - etaDrawW + kEtaRightNudgePx);
+    eta.y = static_cast<int16_t>(rowGeom.textY + 1);
     eta.color = eta_color(row.eta);
     eta.bg = kColorBlack;
     eta.size = rowFont;
     eta.text = trim_for_width(row.eta[0] ? row.eta : "--", kEtaChars, out);
     out.push(eta);
 
+    const uint8_t destinationFont = rowFont > 1 ? static_cast<uint8_t>(rowFont - 1) : 1;
+    const int16_t destinationCharW = static_cast<int16_t>(6 * destinationFont);
+    const int16_t effectiveDestinationWidth = static_cast<int16_t>(rowGeom.destinationWidth + kEtaRightNudgePx);
     const uint8_t labelChars =
-        rowGeom.destinationWidth > 0 ? static_cast<uint8_t>(rowGeom.destinationWidth / charW) : 0;
+        (effectiveDestinationWidth > 0 && destinationCharW > 0)
+            ? static_cast<uint8_t>(effectiveDestinationWidth / destinationCharW)
+            : 0;
 
-    DrawCommand destination{};
-    destination.type = DrawCommandType::kText;
-    destination.x = destinationX;
-    destination.y = rowGeom.textY;
-    destination.color = kColorWhite;
-    destination.bg = kColorBlack;
-    destination.size = rowFont;
-    destination.text = trim_for_width(row.destination[0] ? row.destination : "-", labelChars, out);
-    out.push(destination);
+    const char *destinationTrimmed = trim_for_width(row.destination[0] ? row.destination : "-", labelChars, out);
+    const int16_t destinationY = static_cast<int16_t>(rowGeom.textY + 1);
+    const int16_t spaceAdvance = destinationCharW > 2 ? static_cast<int16_t>(destinationCharW - 2) : 1;
+
+    char destinationBuf[kMaxDestinationLen];
+    const char *destinationSrc = destinationTrimmed ? destinationTrimmed : "-";
+    strncpy(destinationBuf, destinationSrc, sizeof(destinationBuf) - 1);
+    destinationBuf[sizeof(destinationBuf) - 1] = '\0';
+
+    int16_t cursorX = destinationX;
+    char token[kMaxDestinationLen];
+    size_t tokenLen = 0;
+
+    auto flush_token = [&](void) {
+      if (tokenLen == 0) return;
+      token[tokenLen] = '\0';
+      DrawCommand destinationPart{};
+      destinationPart.type = DrawCommandType::kText;
+      destinationPart.x = cursorX;
+      destinationPart.y = destinationY;
+      destinationPart.color = kColorWhite;
+      destinationPart.bg = kColorBlack;
+      destinationPart.size = destinationFont;
+      destinationPart.text = out.copy_text(token);
+      out.push(destinationPart);
+      cursorX = static_cast<int16_t>(cursorX + static_cast<int16_t>(tokenLen) * destinationCharW);
+      tokenLen = 0;
+    };
+
+    for (size_t i = 0; destinationBuf[i] != '\0'; ++i) {
+      if (destinationBuf[i] == ' ') {
+        flush_token();
+        cursorX = static_cast<int16_t>(cursorX + spaceAdvance);
+      } else if (tokenLen + 1 < sizeof(token)) {
+        token[tokenLen++] = destinationBuf[i];
+      }
+    }
+    flush_token();
   }
 }
 
