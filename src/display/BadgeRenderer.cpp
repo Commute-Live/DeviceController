@@ -10,6 +10,7 @@ namespace display {
 namespace {
 
 constexpr uint16_t kWhite = 0xFFFF;
+constexpr uint16_t kBlack = 0x0000;
 
 const char *route_text(const char *routeId, char *out, size_t outLen) {
   if (!out || outLen < 2) return "";
@@ -17,14 +18,32 @@ const char *route_text(const char *routeId, char *out, size_t outLen) {
   if (!routeId) return out;
 
   size_t j = 0;
+  char first = '\0';
   for (size_t i = 0; routeId[i] != '\0' && j + 1 < outLen; ++i) {
     char c = routeId[i];
     if (c == ' ' || c == '-' || c == '_') continue;
-    out[j++] = static_cast<char>(toupper(static_cast<unsigned char>(c)));
-    if (j == 1) break;  // MTA badge symbol is single route character
+    c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+    if (j == 0) {
+      out[j++] = c;
+      first = c;
+      continue;
+    }
+    // Preserve express suffix style from logo branch (e.g. 6X, 7X, FX) only.
+    if (c == 'X' && first != '\0') {
+      out[j++] = c;
+    }
+    break;
   }
   out[j] = '\0';
   return out;
+}
+
+uint16_t badge_text_color(uint16_t fill) {
+  const uint8_t r = static_cast<uint8_t>(((fill >> 11) & 0x1F) * 255 / 31);
+  const uint8_t g = static_cast<uint8_t>(((fill >> 5) & 0x3F) * 255 / 63);
+  const uint8_t b = static_cast<uint8_t>((fill & 0x1F) * 255 / 31);
+  const uint16_t luminance = static_cast<uint16_t>((r * 299U + g * 587U + b * 114U) / 1000U);
+  return luminance > 160U ? kBlack : kWhite;
 }
 
 }  // namespace
@@ -93,7 +112,7 @@ void BadgeRenderer::draw_badge(DisplayEngine &display,
   uint8_t textSize = static_cast<uint8_t>((targetFontHeight + 4) / 8);
   if (textSize < 1) textSize = 1;
 
-  char textBuf[3];
+  char textBuf[4];
   route_text(routeId, textBuf, sizeof(textBuf));
   if (textBuf[0] == '\0') return;
 
@@ -107,7 +126,7 @@ void BadgeRenderer::draw_badge(DisplayEngine &display,
   // Center using measured glyph bounds relative to cursor origin.
   const int16_t tx = static_cast<int16_t>(cx - (tm.width / 2) - tm.xOffset);
   const int16_t ty = static_cast<int16_t>(cy - (tm.height / 2) - tm.yOffset);
-  display.draw_text_transparent(tx, ty, textBuf, kWhite, textSize);
+  display.draw_text_transparent(tx, ty, textBuf, badge_text_color(fill), textSize);
 }
 
 }  // namespace display
