@@ -182,6 +182,11 @@ void DisplayEngine::set_brightness(uint8_t brightness) {
   }
 }
 
+void DisplayEngine::set_offsets(int8_t xOffset, int8_t yOffset) {
+  config_.xOffset = xOffset;
+  config_.yOffset = yOffset;
+}
+
 bool DisplayEngine::begin_frame() { return ready_ && canvas_ != nullptr; }
 
 void DisplayEngine::clear(uint16_t color) {

@@ -52,6 +52,7 @@ class DisplayEngine final : public display::DisplayEngine {
   const DisplayGeometry &geometry() const;
 
   void set_brightness(uint8_t brightness);
+  void set_offsets(int8_t xOffset, int8_t yOffset);
   bool begin_frame();
   void clear(uint16_t color);
   void draw_text(int16_t x, int16_t y, const char *text, uint16_t color, uint8_t size = 1, uint16_t bg = 0) override;

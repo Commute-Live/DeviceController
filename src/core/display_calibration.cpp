@@ -1,6 +1,7 @@
 #include "core/display_calibration.h"
 
 #include <Arduino.h>
+#include <Preferences.h>
 #include <ctype.h>
 
 namespace core {
@@ -13,9 +14,13 @@ constexpr uint16_t kRed = 0xF800;
 constexpr uint16_t kGreen = 0x07E0;
 constexpr uint16_t kBlue = 0x001F;
 constexpr uint16_t kYellow = 0xFFE0;
+constexpr const char *kPrefsNs = "corecfg";
+constexpr const char *kKeyChain = "chain";
+constexpr const char *kKeyXOff = "xoff";
+constexpr const char *kKeyYOff = "yoff";
 
 void print_help() {
-  Serial.println("[CAL] Commands: n/p map, l/r/t/b edge-fix, i/j/k/m fine XY, s save, x cancel, h help");
+  Serial.println("[CAL] Commands: n/p map, l/r/t/b edge-fix, i/j/k/m fine XY, u/d up/down, s save, x cancel, h help");
 }
 
 void draw_test_pattern(DisplayEngine &display, const DisplayConfig &cfg) {
@@ -59,6 +64,16 @@ bool maybe_run(DisplayEngine &display,
                ConfigStore &configStore,
                DeviceRuntimeConfig &runtimeConfig,
                uint32_t enterWindowMs) {
+  {
+    Preferences prefs;
+    if (prefs.begin(kPrefsNs, true)) {
+      runtimeConfig.display.chainMode = prefs.getUChar(kKeyChain, runtimeConfig.display.chainMode);
+      runtimeConfig.display.xOffset = prefs.getChar(kKeyXOff, runtimeConfig.display.xOffset);
+      runtimeConfig.display.yOffset = prefs.getChar(kKeyYOff, runtimeConfig.display.yOffset);
+      prefs.end();
+    }
+  }
+
   Serial.printf("[CAL] Send 'c' in %lu ms to calibrate display mapping\n",
                 static_cast<unsigned long>(enterWindowMs));
 
@@ -85,6 +100,7 @@ bool maybe_run(DisplayEngine &display,
     Serial.println("[CAL] Display init failed");
     return true;
   }
+  display.set_offsets(work.xOffset, work.yOffset);
   draw_test_pattern(display, work);
   display.present();
 
@@ -112,10 +128,10 @@ bool maybe_run(DisplayEngine &display,
     } else if (ch == 'r' || ch == 'j') {
       --work.xOffset;
       redraw = true;
-    } else if (ch == 't' || ch == 'k') {
+    } else if (ch == 't' || ch == 'k' || ch == 'd') {
       ++work.yOffset;
       redraw = true;
-    } else if (ch == 'b' || ch == 'i') {
+    } else if (ch == 'b' || ch == 'i' || ch == 'u') {
       --work.yOffset;
       redraw = true;
     } else if (ch == 'h') {
@@ -147,6 +163,7 @@ bool maybe_run(DisplayEngine &display,
         return true;
       }
     }
+    display.set_offsets(work.xOffset, work.yOffset);
 
     if (redraw) {
       draw_test_pattern(display, work);
@@ -157,4 +174,3 @@ bool maybe_run(DisplayEngine &display,
 
 }  // namespace calibration
 }  // namespace core
-
