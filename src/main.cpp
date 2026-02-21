@@ -141,13 +141,21 @@ void save_badge_text_config() {
   prefs.end();
 }
 
-void draw_route_badge(int16_t cx, int16_t cy, int16_t radius, const RouteEntry &route, uint8_t textSize) {
+void draw_route_badge(int16_t cx, int16_t cy, int16_t radius, const RouteEntry &route, uint8_t textSize,
+                      bool rectangle) {
   if (!gVirtualMatrix || !gMatrix) return;
 
   const uint16_t bg = gMatrix->color565(route.r, route.g, route.b);
   const uint16_t fg = label_color_for(route);
 
-  gVirtualMatrix->fillCircle(apply_x(cx), apply_y(cy), radius, bg);
+  if (rectangle) {
+    const int16_t side = static_cast<int16_t>((radius * 2) + 1);
+    const int16_t left = static_cast<int16_t>(cx - radius);
+    const int16_t top = static_cast<int16_t>(cy - radius);
+    gVirtualMatrix->fillRect(apply_x(left), apply_y(top), side, side, bg);
+  } else {
+    gVirtualMatrix->fillCircle(apply_x(cx), apply_y(cy), radius, bg);
+  }
 
   int16_t x1 = 0;
   int16_t y1 = 0;
@@ -217,7 +225,7 @@ void draw_logo_scene(bool tuningPreview = false) {
     }
     const int16_t blockTop = static_cast<int16_t>(modeTopMargin + i * (blockH + modeBetweenMargin));
     const int16_t cy = static_cast<int16_t>(blockTop + (blockH / 2));
-    draw_route_badge(cx, cy, radius, *route, textSize);
+    draw_route_badge(cx, cy, radius, *route, textSize, blocks == 3);
   }
 }
 
