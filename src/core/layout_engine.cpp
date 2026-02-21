@@ -147,7 +147,7 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
           {"MTA", 0x01B4},  // NYC subway blue
           {"CTA", 0xF800},  // Chicago red accent
           {"MBTA", 0xFD20},
-          {"SEPTA", 0x5F1A},
+          {"SEPTA", 0x1A74},  // #1F4FA3
       };
 
       int16_t totalChipW = 0;
