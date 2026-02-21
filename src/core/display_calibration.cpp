@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include <ctype.h>
+#include <esp_system.h>
 
 namespace core {
 namespace calibration {
@@ -20,7 +21,7 @@ constexpr const char *kKeyXOff = "xoff";
 constexpr const char *kKeyYOff = "yoff";
 
 void print_help() {
-  Serial.println("[CAL] Commands: n/p map, l/r/t/b edge-fix, i/j/k/m fine XY, u/d up/down, s save, x cancel, h help");
+  Serial.println("[CAL] Commands: n/p map, l/r/t/b edge-fix, i/j/k/m fine XY, u/d up/down, z reset XY, s save, x cancel, h help");
 }
 
 void draw_test_pattern(DisplayEngine &display, const DisplayConfig &cfg) {
@@ -134,6 +135,10 @@ bool maybe_run(DisplayEngine &display,
     } else if (ch == 'b' || ch == 'i' || ch == 'u') {
       --work.yOffset;
       redraw = true;
+    } else if (ch == 'z') {
+      work.xOffset = 0;
+      work.yOffset = 0;
+      redraw = true;
     } else if (ch == 'h') {
       print_help();
     } else if (ch == 'x') {
@@ -146,6 +151,9 @@ bool maybe_run(DisplayEngine &display,
         Serial.println("[CAL] Save failed");
       } else {
         Serial.println("[CAL] Saved display calibration");
+        Serial.println("[CAL] Restarting to apply mapping cleanly...");
+        delay(200);
+        ESP.restart();
       }
       display.end();
       return true;
