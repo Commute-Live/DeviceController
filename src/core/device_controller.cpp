@@ -67,7 +67,7 @@ void normalize_eta(const String &input, char *out, size_t outLen) {
     return;
   }
   if (eta == "NOW" || eta == "DUE") {
-    copy_str(out, outLen, "DUE");
+    copy_str(out, outLen, "0m");
     return;
   }
 
@@ -84,7 +84,7 @@ void normalize_eta(const String &input, char *out, size_t outLen) {
         token = eta.substring(start, sep);
       }
       token.trim();
-      if (token == "NOW") token = "DUE";
+      if (token == "NOW" || token == "DUE") token = "0m";
 
       if (token.length() > 0 && token != "--") {
         if (normalized.length() > 0) normalized += "/";
@@ -166,7 +166,7 @@ int split_eta_tokens(const char *etaRaw, char out[kMaxTransitRows][kMaxEtaLen]) 
     int sep = eta.indexOf('/', start);
     String token = sep < 0 ? eta.substring(start) : eta.substring(start, sep);
     token.trim();
-    if (token == "NOW") token = "DUE";
+    if (token == "NOW" || token == "DUE") token = "0m";
     if (token.length() > 0 && token != "--") {
       copy_str(out[count], kMaxEtaLen, token.c_str());
       count++;
