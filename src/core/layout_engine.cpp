@@ -246,43 +246,36 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
   if (rowCount > kMaxTransitRows) rowCount = kMaxTransitRows;
 
   RowFrame rowFrames[kMaxTransitRows]{};
-  bool customFrames = false;
-  constexpr int16_t kTopMargin = 2;
-  constexpr int16_t kBetweenMargin = 2;
-  constexpr int16_t kBottomMargin = 2;
+  const int16_t kTopMargin = (rowCount == 3) ? 1 : 2;
+  const int16_t kBetweenMargin = (rowCount == 3) ? 1 : 2;
+  const int16_t kBottomMargin = (rowCount == 3) ? 1 : 2;
   const int16_t totalHeight = static_cast<int16_t>(height_);
+  const int16_t totalGap = static_cast<int16_t>(kTopMargin + kBottomMargin + (rowCount - 1) * kBetweenMargin);
+  const int16_t drawable = static_cast<int16_t>(totalHeight - totalGap);
+  int16_t blockH = rowCount > 0 ? static_cast<int16_t>(drawable / rowCount) : 0;
 
-  // Match the proven logo branch badge row placement for 1 and 2 arrivals.
-  if (rowCount == 1) {
-    const int16_t usable = static_cast<int16_t>(totalHeight - kTopMargin - kBottomMargin);
-    if (usable > 0) {
-      rowFrames[0] = {kTopMargin, usable};
-      customFrames = true;
-    }
-  } else if (rowCount == 2) {
-    const int16_t totalGap = static_cast<int16_t>(kTopMargin + kBetweenMargin + kBottomMargin);
-    const int16_t usable = static_cast<int16_t>(totalHeight - totalGap);
-    if (usable >= 2) {
-      const int16_t h0 = static_cast<int16_t>(usable / 2);
-      const int16_t h1 = static_cast<int16_t>(usable - h0);
-      rowFrames[0] = {kTopMargin, h0};
-      rowFrames[1] = {static_cast<int16_t>(kTopMargin + h0 + kBetweenMargin), h1};
-      customFrames = true;
-    }
-  }
-
-  if (!customFrames) {
-    const uint8_t layoutRows = rowCount;
-    const VerticalLayoutResult layout = verticalLayout_.compute(height_, layoutRows);
+  // Fallback to legacy vertical layout only if constraints are invalid.
+  if (blockH <= 0) {
+    const VerticalLayoutResult layout = verticalLayout_.compute(height_, rowCount);
+    for (uint8_t i = 0; i < rowCount; ++i) rowFrames[i] = layout.rows[i];
+    blockH = rowFrames[0].height > 0 ? rowFrames[0].height : 1;
+  } else {
     for (uint8_t i = 0; i < rowCount; ++i) {
-      rowFrames[i] = layout.rows[i];
+      rowFrames[i] = {
+          static_cast<int16_t>(kTopMargin + i * (blockH + kBetweenMargin)),
+          blockH,
+      };
     }
   }
 
-  const int16_t baseRowHeight = rowFrames[0].height > 0 ? rowFrames[0].height : static_cast<int16_t>(height_);
-  const int16_t candidateBadgeSize = static_cast<int16_t>((baseRowHeight * 3) / 4);
-  const int16_t maxAllowed = static_cast<int16_t>(baseRowHeight - (2 * display::LayoutEngine::kOuterMargin));
-  int16_t fixedBadgeSize = candidateBadgeSize < maxAllowed ? candidateBadgeSize : maxAllowed;
+  int16_t targetRadius = static_cast<int16_t>((blockH - 1) / 2);
+  if (rowCount == 3) {
+    targetRadius = 4;  // Logos branch rule.
+  }
+  if (targetRadius < 1) targetRadius = 1;
+
+  // BadgeRenderer uses r = (size / 2) - 1, so invert to preserve target radius.
+  int16_t fixedBadgeSize = static_cast<int16_t>(2 * (targetRadius + 1));
   if (fixedBadgeSize < 5) fixedBadgeSize = 5;
   const int16_t targetTextHeight = static_cast<int16_t>((fixedBadgeSize * 3) / 5);  // 0.6 * badge size
   uint8_t rowFont = static_cast<uint8_t>((targetTextHeight + 4) / 8);
