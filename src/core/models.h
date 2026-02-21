@@ -23,6 +23,9 @@ struct DisplayConfig {
   uint8_t brightness;
   bool serpentine;
   bool doubleBuffered;
+  uint8_t chainMode;  // 0=TL_DOWN, 1=TR_DOWN, 2=TL_ZZ
+  int8_t xOffset;
+  int8_t yOffset;
 };
 
 struct DisplayGeometry {

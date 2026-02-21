@@ -73,7 +73,7 @@ PhysicalPoint SerpentinePanelMapper::map(const DisplayConfig &cfg, int16_t x, in
 }
 
 DisplayEngine::DisplayEngine()
-    : config_{1, 2, 64, 32, 80, false, true},
+    : config_{1, 2, 64, 32, 80, false, true, 0, 0, 0},
       geometry_{128, 32},
       ready_(false),
       matrix_(nullptr),
@@ -124,7 +124,14 @@ bool DisplayEngine::begin(const DisplayConfig &config) {
     return false;
   }
 
-  const PANEL_CHAIN_TYPE chainType = config_.serpentine ? CHAIN_TOP_LEFT_DOWN_ZZ : CHAIN_TOP_LEFT_DOWN;
+  PANEL_CHAIN_TYPE chainType = CHAIN_TOP_LEFT_DOWN;
+  if (config_.chainMode == 1) {
+    chainType = CHAIN_TOP_RIGHT_DOWN;
+  } else if (config_.chainMode == 2) {
+    chainType = CHAIN_TOP_LEFT_DOWN_ZZ;
+  } else {
+    chainType = config_.serpentine ? CHAIN_TOP_LEFT_DOWN_ZZ : CHAIN_TOP_LEFT_DOWN;
+  }
   virtualMatrix_ = new VirtualMatrixPanel(*matrix_, config_.panelRows, config_.panelCols, config_.panelWidth,
                                           config_.panelHeight, chainType);
 
@@ -184,14 +191,19 @@ void DisplayEngine::clear(uint16_t color) {
   canvas_->fillScreen(color);
 }
 
+LogicalPoint DisplayEngine::with_offset(int16_t x, int16_t y) const {
+  return {static_cast<int16_t>(x + config_.xOffset), static_cast<int16_t>(y + config_.yOffset)};
+}
+
 void DisplayEngine::draw_text(int16_t x, int16_t y, const char *text, uint16_t color, uint8_t size, uint16_t bg) {
   if (!canvas_ || !text) {
     return;
   }
+  const LogicalPoint p = with_offset(x, y);
   canvas_->setTextWrap(false);
   canvas_->setTextSize(size);
   canvas_->setTextColor(color, bg);
-  canvas_->setCursor(x, y);
+  canvas_->setCursor(p.x, p.y);
   canvas_->print(text);
 }
 
@@ -199,10 +211,11 @@ void DisplayEngine::draw_text_transparent(int16_t x, int16_t y, const char *text
   if (!canvas_ || !text) {
     return;
   }
+  const LogicalPoint p = with_offset(x, y);
   canvas_->setTextWrap(false);
   canvas_->setTextSize(size);
   canvas_->setTextColor(color);
-  canvas_->setCursor(x, y);
+  canvas_->setCursor(p.x, p.y);
   canvas_->print(text);
 }
 
@@ -210,28 +223,32 @@ void DisplayEngine::draw_rect(int16_t x, int16_t y, int16_t w, int16_t h, uint16
   if (!canvas_) {
     return;
   }
-  canvas_->drawRect(x, y, w, h, color);
+  const LogicalPoint p = with_offset(x, y);
+  canvas_->drawRect(p.x, p.y, w, h, color);
 }
 
 void DisplayEngine::fill_rect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
   if (!canvas_) {
     return;
   }
-  canvas_->fillRect(x, y, w, h, color);
+  const LogicalPoint p = with_offset(x, y);
+  canvas_->fillRect(p.x, p.y, w, h, color);
 }
 
 void DisplayEngine::draw_pixel(int16_t x, int16_t y, uint16_t color) {
   if (!canvas_) {
     return;
   }
-  canvas_->drawPixel(x, y, color);
+  const LogicalPoint p = with_offset(x, y);
+  canvas_->drawPixel(p.x, p.y, color);
 }
 
 void DisplayEngine::draw_hline(int16_t x, int16_t y, int16_t w, uint16_t color) {
   if (!canvas_ || w <= 0) {
     return;
   }
-  canvas_->drawFastHLine(x, y, w, color);
+  const LogicalPoint p = with_offset(x, y);
+  canvas_->drawFastHLine(p.x, p.y, w, color);
 }
 
 display::TextMetrics DisplayEngine::measure_text(const char *text, uint8_t size) {

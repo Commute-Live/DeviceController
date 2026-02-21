@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "core/config_store.h"
+#include "core/display_calibration.h"
 #include "core/device_controller.h"
 #include "core/display_engine.h"
 #include "core/layout_engine.h"
@@ -24,6 +25,10 @@
 
 #ifndef COMMUTELIVE_WIFI_PASSWORD
 #define COMMUTELIVE_WIFI_PASSWORD COMMUTELIVE_AP_PASSWORD
+#endif
+
+#ifndef COMMUTELIVE_ENABLE_DISPLAY_CALIBRATION
+#define COMMUTELIVE_ENABLE_DISPLAY_CALIBRATION 0
 #endif
 
 namespace {
@@ -71,6 +76,9 @@ void setup() {
   cfg.display.brightness = 32;
   cfg.display.serpentine = false;
   cfg.display.doubleBuffered = false;
+  cfg.display.chainMode = 0;
+  cfg.display.xOffset = 0;
+  cfg.display.yOffset = 0;
 
   copy_str(cfg.network.ssid, COMMUTELIVE_WIFI_SSID);
   copy_str(cfg.network.password, COMMUTELIVE_WIFI_PASSWORD);
@@ -83,6 +91,10 @@ void setup() {
   copy_str(cfg.mqtt.username, COMMUTELIVE_MQTT_USER);
   copy_str(cfg.mqtt.password, COMMUTELIVE_MQTT_PASS);
   copy_str(cfg.mqtt.clientId, cfg.deviceId);
+
+#if COMMUTELIVE_ENABLE_DISPLAY_CALIBRATION
+  core::calibration::maybe_run(gDisplayEngine, gConfigStore, cfg, 5000);
+#endif
 
   gConfigStore.set_bootstrap_config(cfg);
 

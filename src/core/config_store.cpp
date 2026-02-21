@@ -16,6 +16,9 @@ constexpr const char *kKeyPH = "ph";
 constexpr const char *kKeyBr = "br";
 constexpr const char *kKeySerp = "serp";
 constexpr const char *kKeyDb = "db";
+constexpr const char *kKeyChain = "chain";
+constexpr const char *kKeyXOff = "xoff";
+constexpr const char *kKeyYOff = "yoff";
 
 void copy_str(char *dst, size_t dstLen, const char *src) {
   if (dstLen == 0) {
@@ -41,6 +44,9 @@ void apply_defaults(DeviceRuntimeConfig &cfg) {
   cfg.display.brightness = 32;
   cfg.display.serpentine = false;
   cfg.display.doubleBuffered = false;
+  cfg.display.chainMode = 0;
+  cfg.display.xOffset = 0;
+  cfg.display.yOffset = 0;
 }
 
 void sanitize_display(DisplayConfig &cfg) {
@@ -54,6 +60,11 @@ void sanitize_display(DisplayConfig &cfg) {
   if (cfg.panelHeight > 64) cfg.panelHeight = 64;
   if (cfg.brightness < 1) cfg.brightness = 1;
   if (cfg.brightness > 255) cfg.brightness = 255;
+  if (cfg.chainMode > 2) cfg.chainMode = 0;
+  if (cfg.xOffset < -32) cfg.xOffset = -32;
+  if (cfg.xOffset > 32) cfg.xOffset = 32;
+  if (cfg.yOffset < -16) cfg.yOffset = -16;
+  if (cfg.yOffset > 16) cfg.yOffset = 16;
 }
 
 }  // namespace
@@ -86,6 +97,10 @@ bool ConfigStore::load(DeviceRuntimeConfig &outConfig) {
   outConfig.display.brightness = prefs.getUChar(kKeyBr, outConfig.display.brightness);
   outConfig.display.serpentine = prefs.getBool(kKeySerp, outConfig.display.serpentine);
   outConfig.display.doubleBuffered = prefs.getBool(kKeyDb, outConfig.display.doubleBuffered);
+  const uint8_t defaultChain = outConfig.display.serpentine ? 2 : 0;
+  outConfig.display.chainMode = prefs.getUChar(kKeyChain, defaultChain);
+  outConfig.display.xOffset = prefs.getChar(kKeyXOff, outConfig.display.xOffset);
+  outConfig.display.yOffset = prefs.getChar(kKeyYOff, outConfig.display.yOffset);
   prefs.end();
 
   sanitize_display(outConfig.display);
@@ -111,6 +126,9 @@ bool ConfigStore::save(const DeviceRuntimeConfig &config) {
   prefs.putUChar(kKeyBr, next.display.brightness);
   prefs.putBool(kKeySerp, next.display.serpentine);
   prefs.putBool(kKeyDb, next.display.doubleBuffered);
+  prefs.putUChar(kKeyChain, next.display.chainMode);
+  prefs.putChar(kKeyXOff, next.display.xOffset);
+  prefs.putChar(kKeyYOff, next.display.yOffset);
   prefs.end();
   return true;
 }

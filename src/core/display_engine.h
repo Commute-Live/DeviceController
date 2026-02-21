@@ -66,6 +66,8 @@ class DisplayEngine final : public display::DisplayEngine {
   uint16_t color565(uint8_t r, uint8_t g, uint8_t b) const;
 
  private:
+  LogicalPoint with_offset(int16_t x, int16_t y) const;
+
   DisplayConfig config_;
   DisplayGeometry geometry_;
   bool ready_;
