@@ -288,16 +288,22 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
     const TransitRowModel &row = model.rows[i];
     const RowFrame frame = rowFrames[i];
     const bool hasRoute = row.routeId[0] != '\0' && strcmp(row.routeId, "--") != 0;
+    const int16_t rowY = frame.yStart > 0 ? static_cast<int16_t>(frame.yStart - 1) : frame.yStart;
     display::RowFrame rowFrame{
-        frame.yStart,
+        rowY,
         frame.height,
     };
     const display::RowLayout rowGeom =
         rowLayout_.compute_row_layout(static_cast<int16_t>(width_), rowFrame, fixedBadgeSize, rowFont, kEtaChars);
+    const int16_t rowXShift = -1;
+    const int16_t badgeX = rowGeom.badgeX > 0 ? static_cast<int16_t>(rowGeom.badgeX + rowXShift) : rowGeom.badgeX;
+    const int16_t destinationX =
+        rowGeom.destinationX > 0 ? static_cast<int16_t>(rowGeom.destinationX + rowXShift) : rowGeom.destinationX;
+    const int16_t etaX = rowGeom.etaX > 0 ? static_cast<int16_t>(rowGeom.etaX + rowXShift) : rowGeom.etaX;
 
     DrawCommand badge{};
     badge.type = DrawCommandType::kBadge;
-    badge.x = rowGeom.badgeX;
+    badge.x = badgeX;
     badge.y = rowGeom.badgeY;
     badge.w = rowGeom.badgeSize;
     badge.h = rowGeom.badgeSize;
@@ -311,7 +317,7 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
     eta.type = DrawCommandType::kText;
     const uint8_t etaLen = static_cast<uint8_t>(strnlen(row.eta[0] ? row.eta : "--", kMaxEtaLen - 1));
     const int16_t etaDrawW = static_cast<int16_t>(etaLen * charW);
-    eta.x = static_cast<int16_t>(rowGeom.etaX + rowGeom.etaWidth - etaDrawW);
+    eta.x = static_cast<int16_t>(etaX + rowGeom.etaWidth - etaDrawW);
     eta.y = rowGeom.textY;
     eta.color = eta_color(row.eta);
     eta.bg = kColorBlack;
@@ -324,7 +330,7 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
 
     DrawCommand destination{};
     destination.type = DrawCommandType::kText;
-    destination.x = rowGeom.destinationX;
+    destination.x = destinationX;
     destination.y = rowGeom.textY;
     destination.color = kColorWhite;
     destination.bg = kColorBlack;

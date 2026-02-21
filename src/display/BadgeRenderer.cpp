@@ -111,6 +111,7 @@ void BadgeRenderer::draw_badge(DisplayEngine &display,
   const int16_t targetFontHeight = static_cast<int16_t>((badgeSize * 3) / 5);  // 0.6 * badgeSize
   uint8_t textSize = static_cast<uint8_t>((targetFontHeight + 4) / 8);
   if (textSize < 1) textSize = 1;
+  if (textSize < 3) ++textSize;  // Requested: one size bigger by default.
 
   char textBuf[4];
   route_text(routeId, textBuf, sizeof(textBuf));
@@ -124,8 +125,8 @@ void BadgeRenderer::draw_badge(DisplayEngine &display,
   }
 
   // Center using measured glyph bounds relative to cursor origin.
-  const int16_t tx = static_cast<int16_t>(cx - (tm.width / 2) - tm.xOffset);
-  const int16_t ty = static_cast<int16_t>(cy - (tm.height / 2) - tm.yOffset);
+  const int16_t tx = static_cast<int16_t>(cx - (tm.width / 2) - tm.xOffset + 1);
+  const int16_t ty = static_cast<int16_t>(cy - (tm.height / 2) - tm.yOffset + 1);
   display.draw_text_transparent(tx, ty, textBuf, badge_text_color(fill), textSize);
 }
 
