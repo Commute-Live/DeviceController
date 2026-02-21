@@ -245,9 +245,41 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
   if (rowCount < 1) rowCount = 1;
   if (rowCount > kMaxTransitRows) rowCount = kMaxTransitRows;
 
-  const uint8_t layoutRows = (rowCount == 1) ? 3 : rowCount;
-  const VerticalLayoutResult layout = verticalLayout_.compute(height_, layoutRows);
-  const int16_t baseRowHeight = layout.rows[0].height > 0 ? layout.rows[0].height : static_cast<int16_t>(height_);
+  RowFrame rowFrames[kMaxTransitRows]{};
+  bool customFrames = false;
+  constexpr int16_t kTopMargin = 2;
+  constexpr int16_t kBetweenMargin = 2;
+  constexpr int16_t kBottomMargin = 2;
+  const int16_t totalHeight = static_cast<int16_t>(height_);
+
+  // Match the proven logo branch badge row placement for 1 and 2 arrivals.
+  if (rowCount == 1) {
+    const int16_t usable = static_cast<int16_t>(totalHeight - kTopMargin - kBottomMargin);
+    if (usable > 0) {
+      rowFrames[0] = {kTopMargin, usable};
+      customFrames = true;
+    }
+  } else if (rowCount == 2) {
+    const int16_t totalGap = static_cast<int16_t>(kTopMargin + kBetweenMargin + kBottomMargin);
+    const int16_t usable = static_cast<int16_t>(totalHeight - totalGap);
+    if (usable >= 2) {
+      const int16_t h0 = static_cast<int16_t>(usable / 2);
+      const int16_t h1 = static_cast<int16_t>(usable - h0);
+      rowFrames[0] = {kTopMargin, h0};
+      rowFrames[1] = {static_cast<int16_t>(kTopMargin + h0 + kBetweenMargin), h1};
+      customFrames = true;
+    }
+  }
+
+  if (!customFrames) {
+    const uint8_t layoutRows = rowCount;
+    const VerticalLayoutResult layout = verticalLayout_.compute(height_, layoutRows);
+    for (uint8_t i = 0; i < rowCount; ++i) {
+      rowFrames[i] = layout.rows[i];
+    }
+  }
+
+  const int16_t baseRowHeight = rowFrames[0].height > 0 ? rowFrames[0].height : static_cast<int16_t>(height_);
   const int16_t candidateBadgeSize = static_cast<int16_t>((baseRowHeight * 3) / 4);
   const int16_t maxAllowed = static_cast<int16_t>(baseRowHeight - (2 * display::LayoutEngine::kOuterMargin));
   int16_t fixedBadgeSize = candidateBadgeSize < maxAllowed ? candidateBadgeSize : maxAllowed;
@@ -261,7 +293,7 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
 
   for (uint8_t i = 0; i < rowCount; ++i) {
     const TransitRowModel &row = model.rows[i];
-    const RowFrame frame = layout.rows[i];
+    const RowFrame frame = rowFrames[i];
     const bool hasRoute = row.routeId[0] != '\0' && strcmp(row.routeId, "--") != 0;
     display::RowFrame rowFrame{
         frame.yStart,
