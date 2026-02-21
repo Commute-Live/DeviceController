@@ -38,7 +38,7 @@ void apply_defaults(DeviceRuntimeConfig &cfg) {
   cfg.display.panelCols = 2;
   cfg.display.panelWidth = 64;
   cfg.display.panelHeight = 32;
-  cfg.display.brightness = 80;
+  cfg.display.brightness = 32;
   cfg.display.serpentine = false;
   cfg.display.doubleBuffered = false;
 }

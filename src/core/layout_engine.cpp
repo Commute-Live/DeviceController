@@ -245,7 +245,8 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
   if (rowCount < 1) rowCount = 1;
   if (rowCount > kMaxTransitRows) rowCount = kMaxTransitRows;
 
-  const VerticalLayoutResult layout = verticalLayout_.compute(height_, rowCount);
+  const uint8_t layoutRows = (rowCount == 1) ? 3 : rowCount;
+  const VerticalLayoutResult layout = verticalLayout_.compute(height_, layoutRows);
   const int16_t baseRowHeight = layout.rows[0].height > 0 ? layout.rows[0].height : static_cast<int16_t>(height_);
   const int16_t candidateBadgeSize = static_cast<int16_t>((baseRowHeight * 3) / 4);
   const int16_t maxAllowed = static_cast<int16_t>(baseRowHeight - (2 * display::LayoutEngine::kOuterMargin));
