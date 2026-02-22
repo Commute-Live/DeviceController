@@ -414,8 +414,27 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
                                      ? destinationCharW
                                      : (destinationCharW > 2 ? static_cast<int16_t>(destinationCharW - 2) : 1);
 
-    auto draw_compact_line = [&](const char *text, int16_t y, uint16_t color = kColorWhite) {
-      const char *trimmed = trim_for_width(text, renderLabelChars, out);
+    auto draw_compact_line = [&](const char *text,
+                                 int16_t y,
+                                 uint8_t fontSize,
+                                 uint8_t reserveRightChars = 0,
+                                 uint16_t color = kColorWhite) {
+      const int16_t lineCharW =
+          (fontSize == kTextSizeTiny || fontSize == kTextSizeTinyPlus) ? 4 : static_cast<int16_t>(6 * fontSize);
+      const int16_t lineBudgetW =
+          (effectiveDestinationWidth > static_cast<int16_t>(reserveRightChars * lineCharW))
+              ? static_cast<int16_t>(effectiveDestinationWidth - static_cast<int16_t>(reserveRightChars * lineCharW))
+              : 0;
+      const uint8_t lineChars =
+          (lineBudgetW > 0 && lineCharW > 0) ? static_cast<uint8_t>(lineBudgetW / lineCharW) : 0;
+      const uint8_t lineRenderChars =
+          ((normalizedDisplayType == 3 || normalizedDisplayType == 4 || normalizedDisplayType == 5) && lineChars > 2)
+              ? static_cast<uint8_t>(lineChars - 2)
+              : lineChars;
+      const int16_t lineSpaceAdvance =
+          (normalizedDisplayType == 3) ? lineCharW : (lineCharW > 2 ? static_cast<int16_t>(lineCharW - 2) : 1);
+
+      const char *trimmed = trim_for_width(text, lineRenderChars, out);
       char destinationBuf[kMaxDestinationLen];
       const char *src = trimmed ? trimmed : "";
       strncpy(destinationBuf, src, sizeof(destinationBuf) - 1);
@@ -434,17 +453,17 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
         destinationPart.y = y;
         destinationPart.color = color;
         destinationPart.bg = kColorBlack;
-        destinationPart.size = destinationFont;
+        destinationPart.size = fontSize;
         destinationPart.text = out.copy_text(token);
         out.push(destinationPart);
-        cursorX = static_cast<int16_t>(cursorX + static_cast<int16_t>(tokenLen) * destinationCharW);
+        cursorX = static_cast<int16_t>(cursorX + static_cast<int16_t>(tokenLen) * lineCharW);
         tokenLen = 0;
       };
 
       for (size_t c = 0; destinationBuf[c] != '\0'; ++c) {
         if (destinationBuf[c] == ' ') {
           flush_token();
-          cursorX = static_cast<int16_t>(cursorX + spaceAdvance);
+          cursorX = static_cast<int16_t>(cursorX + lineSpaceAdvance);
         } else if (tokenLen + 1 < sizeof(token)) {
           token[tokenLen++] = destinationBuf[c];
         }
@@ -457,21 +476,22 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
       const int16_t preset3Y = static_cast<int16_t>(destinationY + 2);
       const char *line1 = row.direction[0] ? row.direction : (row.destination[0] ? row.destination : "-");
       const char *line2 = row.direction[0] ? (row.destination[0] ? row.destination : "") : "";
-      draw_compact_line(line1, preset3Y);
+      draw_compact_line(line1, preset3Y, destinationFont);
       if (line2[0] != '\0') {
-        draw_compact_line(line2, static_cast<int16_t>(preset3Y + 7));
+        draw_compact_line(line2, static_cast<int16_t>(preset3Y + 7), destinationFont);
       }
     } else if (normalizedDisplayType == 4 || normalizedDisplayType == 5) {
-      const int16_t preset45Y = static_cast<int16_t>(destinationY - 2);
+      const int16_t preset45Y = static_cast<int16_t>(destinationY - 3);
       const char *line1 = (normalizedDisplayType == 5)
                               ? (row.direction[0] ? row.direction : (row.destination[0] ? row.destination : "-"))
                               : (row.destination[0] ? row.destination : "-");
-      draw_compact_line(line1, preset45Y);
+      draw_compact_line(line1, preset45Y, destinationFont);
       if (row.etaExtra[0] != '\0') {
-        draw_compact_line(row.etaExtra, static_cast<int16_t>(preset45Y + 7), kColorAmber);
+        // Reserve extra space on the right so bottom ETAs never overlap the main ETA column.
+        draw_compact_line(row.etaExtra, static_cast<int16_t>(preset45Y + 13), kTextSizeTiny, 3, kColorAmber);
       }
     } else {
-      draw_compact_line(row_label_for_display_type(row, model.displayType), destinationY);
+      draw_compact_line(row_label_for_display_type(row, model.displayType), destinationY, destinationFont);
     }
   }
 }
