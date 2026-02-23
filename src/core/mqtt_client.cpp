@@ -92,9 +92,9 @@ bool MqttClient::ensure_connected(uint32_t nowMs) {
 
   bool ok = false;
   if (hasUser && hasPass) {
-    ok = mqtt_.connect(config_.clientId, config_.username, config_.password, topics_.state, 1, true, "offline");
+    ok = mqtt_.connect(config_.clientId, config_.username, config_.password, topics_.presence, 0, true, "offline");
   } else {
-    ok = mqtt_.connect(config_.clientId, topics_.state, 1, true, "offline");
+    ok = mqtt_.connect(config_.clientId, topics_.presence, 0, true, "offline");
   }
 
   if (ok) {
@@ -108,7 +108,9 @@ bool MqttClient::ensure_connected(uint32_t nowMs) {
       Serial.printf("[MQTT] Subscribed %s\n", topics_.command);
     }
 
-    publish_state("online", true);
+    if (!publish_presence("online", true)) {
+      Serial.printf("[MQTT] Failed to publish presence=online on %s\n", topics_.presence);
+    }
     return true;
   }
 
@@ -117,6 +119,22 @@ bool MqttClient::ensure_connected(uint32_t nowMs) {
   nextRetryAtMs_ = nowMs + waitMs;
   Serial.printf("[MQTT] Connect failed rc=%d, retry in %lu ms\n", mqtt_.state(), static_cast<unsigned long>(waitMs));
   return false;
+}
+
+void MqttClient::disconnect(bool publishOffline) {
+  if (mqtt_.connected()) {
+    if (publishOffline) {
+      const bool sent = mqtt_.publish(topics_.presence, "offline", true);
+      if (sent) {
+        Serial.printf("[MQTT] Published presence=offline -> %s\n", topics_.presence);
+      } else {
+        Serial.printf("[MQTT] Failed to publish presence=offline -> %s\n", topics_.presence);
+      }
+    }
+    mqtt_.disconnect();
+    Serial.println("[MQTT] Disconnected");
+  }
+  connected_ = false;
 }
 
 void MqttClient::set_command_callback(CommandCallback callback, void *ctx) {
@@ -129,6 +147,19 @@ bool MqttClient::publish_state(const char *payload, bool retained) {
     return false;
   }
   return mqtt_.publish(topics_.state, payload, retained);
+}
+
+bool MqttClient::publish_presence(const char *payload, bool retained) {
+  if (!connected()) {
+    return false;
+  }
+  const bool ok = mqtt_.publish(topics_.presence, payload, retained);
+  if (ok) {
+    Serial.printf("[MQTT] Published presence=%s -> %s\n", payload ? payload : "", topics_.presence);
+  } else {
+    Serial.printf("[MQTT] Failed to publish presence=%s -> %s\n", payload ? payload : "", topics_.presence);
+  }
+  return ok;
 }
 
 bool MqttClient::publish_heartbeat(const char *payload) {
@@ -158,13 +189,15 @@ bool MqttClient::build_default_topics(const char *deviceId, MqttTopics &outTopic
   }
 
   const int s = snprintf(outTopics.state, sizeof(outTopics.state), "device/%s/state", deviceId);
+  const int p = snprintf(outTopics.presence, sizeof(outTopics.presence), "device/%s/presence", deviceId);
   const int c = snprintf(outTopics.command, sizeof(outTopics.command), "/device/%s/commands", deviceId);
   const int h = snprintf(outTopics.heartbeat, sizeof(outTopics.heartbeat), "device/%s/heartbeat", deviceId);
   const int e = snprintf(outTopics.event, sizeof(outTopics.event), "device/%s/event", deviceId);
   const int t = snprintf(outTopics.telemetry, sizeof(outTopics.telemetry), "device/%s/telemetry", deviceId);
 
-  return s > 0 && c > 0 && h > 0 && e > 0 && t > 0 &&
+  return s > 0 && p > 0 && c > 0 && h > 0 && e > 0 && t > 0 &&
          s < static_cast<int>(sizeof(outTopics.state)) &&
+         p < static_cast<int>(sizeof(outTopics.presence)) &&
          c < static_cast<int>(sizeof(outTopics.command)) &&
          h < static_cast<int>(sizeof(outTopics.heartbeat)) &&
          e < static_cast<int>(sizeof(outTopics.event)) &&

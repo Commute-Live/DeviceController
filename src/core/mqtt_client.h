@@ -20,6 +20,7 @@ struct MqttConfig {
 
 struct MqttTopics {
   char state[kMaxTopicLen];
+  char presence[kMaxTopicLen];
   char command[kMaxTopicLen];
   char heartbeat[kMaxTopicLen];
   char event[kMaxTopicLen];
@@ -36,9 +37,11 @@ class MqttClient final {
   void tick(uint32_t nowMs);
   bool connected();
   bool ensure_connected(uint32_t nowMs);
+  void disconnect(bool publishOffline = true);
   void set_command_callback(CommandCallback callback, void *ctx);
 
   bool publish_state(const char *payload, bool retained);
+  bool publish_presence(const char *payload, bool retained);
   bool publish_heartbeat(const char *payload);
   bool publish_event(const char *payload);
   bool publish_telemetry(const char *payload);

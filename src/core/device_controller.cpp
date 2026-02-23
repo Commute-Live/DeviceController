@@ -650,6 +650,8 @@ void DeviceController::http_connect_handler() {
     return;
   }
 
+  // Intentional credential switch: explicitly mark device offline before reconnecting Wi-Fi.
+  activeController_->deps_.mqttClient->disconnect(true);
   activeController_->deps_.networkManager->set_credentials(ssid.c_str(), pass.c_str(), user.c_str());
   activeController_->server_.send(200, "application/json", "{\"ok\":true}");
 }
