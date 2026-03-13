@@ -488,6 +488,15 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   Serial.printf("[MQTT] Incoming topic=%s len=%u\n", topic ? topic : "(null)", static_cast<unsigned>(len));
   Serial.printf("[MQTT] Payload=%s\n", message.c_str());
 
+  String cmdType = extract_json_string_field(message, "type");
+  if (cmdType == "ota_update") {
+    String url = extract_json_string_field(message, "url");
+    if (url.length() > 0) {
+      perform_ota_update(url);
+    }
+    return;
+  }
+
   String provider = extract_json_string_field(message, "provider");
   if (provider.length() == 0 || !parsing::is_supported_provider_id(provider)) {
     Serial.printf("[MQTT] Ignored: unsupported provider '%s'\n", provider.c_str());
@@ -798,6 +807,37 @@ void DeviceController::publish_display_state() {
            r3Eta);
 
   deps_.mqttClient->publish_state(payload, false);
+}
+
+bool DeviceController::perform_ota_update(const String& url) {
+  Serial.printf("[OTA] Starting update from %s\n", url.c_str());
+  HTTPClient http;
+  http.begin(url);
+  int code = http.GET();
+  if (code != HTTP_CODE_OK) {
+    Serial.printf("[OTA] HTTP GET failed: %d\n", code);
+    http.end();
+    return false;
+  }
+  int contentLen = http.getSize();
+  bool canBegin = Update.begin(contentLen > 0 ? contentLen : UPDATE_SIZE_UNKNOWN);
+  if (!canBegin) {
+    Serial.println("[OTA] Update.begin() failed — not enough space?");
+    http.end();
+    return false;
+  }
+  WiFiClient *stream = http.getStreamPtr();
+  size_t written = Update.writeStream(*stream);
+  if (!Update.end(true) || Update.hasError()) {
+    Serial.printf("[OTA] Update failed: %s\n", Update.errorString());
+    http.end();
+    return false;
+  }
+  Serial.printf("[OTA] Written %u bytes. Restarting...\n", written);
+  http.end();
+  delay(200);
+  ESP.restart();
+  return true;
 }
 
 }  // namespace core

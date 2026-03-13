@@ -1,6 +1,8 @@
 #pragma once
 
 #include <stdint.h>
+#include <HTTPClient.h>
+#include <Update.h>
 #include <WebServer.h>
 
 #include "core/config_store.h"
@@ -45,6 +47,7 @@ class DeviceController final {
 
   void handle_network_state(NetworkState state);
   void handle_command(const char *topic, const uint8_t *payload, size_t len);
+  bool perform_ota_update(const String& url);
   void setup_http_routes();
   static void http_connect_handler();
   static void http_device_info_handler();
