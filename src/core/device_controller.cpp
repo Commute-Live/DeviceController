@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -488,6 +489,15 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   Serial.printf("[MQTT] Incoming topic=%s len=%u\n", topic ? topic : "(null)", static_cast<unsigned>(len));
   Serial.printf("[MQTT] Payload=%s\n", message.c_str());
 
+  String cmdType = extract_json_string_field(message, "type");
+  if (cmdType == "ota_update") {
+    String url = extract_json_string_field(message, "url");
+    if (url.length() > 0) {
+      perform_ota_update(url);
+    }
+    return;
+  }
+
   String provider = extract_json_string_field(message, "provider");
   if (provider.length() == 0 || !parsing::is_supported_provider_id(provider)) {
     Serial.printf("[MQTT] Ignored: unsupported provider '%s'\n", provider.c_str());
@@ -798,6 +808,69 @@ void DeviceController::publish_display_state() {
            r3Eta);
 
   deps_.mqttClient->publish_state(payload, false);
+}
+
+bool DeviceController::perform_ota_update(const String& url) {
+  Serial.printf("[OTA] Starting update from %s\n", url.c_str());
+  HTTPClient http;
+  WiFiClientSecure secureClient;
+  WiFiClient plainClient;
+  if (url.startsWith("https://")) {
+    secureClient.setInsecure();
+    secureClient.setTimeout(10000);
+    http.begin(secureClient, url);
+  } else {
+    plainClient.setTimeout(10000);
+    http.begin(plainClient, url);
+  }
+  int code = http.GET();
+  if (code != HTTP_CODE_OK) {
+    Serial.printf("[OTA] HTTP GET failed: %d\n", code);
+    http.end();
+    return false;
+  }
+  int contentLen = http.getSize();
+  bool canBegin = Update.begin(contentLen > 0 ? contentLen : UPDATE_SIZE_UNKNOWN);
+  if (!canBegin) {
+    Serial.println("[OTA] Update.begin() failed — not enough space?");
+    http.end();
+    return false;
+  }
+  WiFiClient *stream = http.getStreamPtr();
+  uint8_t buf[512];
+  size_t written = 0;
+  if (contentLen == -1) {
+    // Chunked transfer: manually decode chunk size headers.
+    while (http.connected()) {
+      String sizeLine = stream->readStringUntil('\n');
+      sizeLine.trim();
+      if (sizeLine.length() == 0) continue;
+      int chunkSize = static_cast<int>(strtol(sizeLine.c_str(), nullptr, 16));
+      if (chunkSize == 0) break;
+      int remaining = chunkSize;
+      while (remaining > 0) {
+        int toRead = remaining < static_cast<int>(sizeof(buf)) ? remaining : static_cast<int>(sizeof(buf));
+        int got = stream->readBytes(buf, toRead);
+        if (got <= 0) break;
+        Update.write(buf, got);
+        written += got;
+        remaining -= got;
+      }
+      stream->readStringUntil('\n');  // trailing \r\n after chunk data
+    }
+  } else {
+    written = Update.writeStream(*stream);
+  }
+  if (!Update.end(true) || Update.hasError()) {
+    Serial.printf("[OTA] Update failed: %s\n", Update.errorString());
+    http.end();
+    return false;
+  }
+  Serial.printf("[OTA] Written %u bytes. Restarting...\n", written);
+  http.end();
+  delay(200);
+  ESP.restart();
+  return true;
 }
 
 }  // namespace core
