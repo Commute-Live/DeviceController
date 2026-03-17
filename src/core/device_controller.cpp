@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -812,7 +813,16 @@ void DeviceController::publish_display_state() {
 bool DeviceController::perform_ota_update(const String& url) {
   Serial.printf("[OTA] Starting update from %s\n", url.c_str());
   HTTPClient http;
-  http.begin(url);
+  WiFiClientSecure secureClient;
+  WiFiClient plainClient;
+  if (url.startsWith("https://")) {
+    secureClient.setInsecure();
+    secureClient.setTimeout(10000);
+    http.begin(secureClient, url);
+  } else {
+    plainClient.setTimeout(10000);
+    http.begin(plainClient, url);
+  }
   int code = http.GET();
   if (code != HTTP_CODE_OK) {
     Serial.printf("[OTA] HTTP GET failed: %d\n", code);
@@ -827,7 +837,30 @@ bool DeviceController::perform_ota_update(const String& url) {
     return false;
   }
   WiFiClient *stream = http.getStreamPtr();
-  size_t written = Update.writeStream(*stream);
+  uint8_t buf[512];
+  size_t written = 0;
+  if (contentLen == -1) {
+    // Chunked transfer: manually decode chunk size headers.
+    while (http.connected()) {
+      String sizeLine = stream->readStringUntil('\n');
+      sizeLine.trim();
+      if (sizeLine.length() == 0) continue;
+      int chunkSize = static_cast<int>(strtol(sizeLine.c_str(), nullptr, 16));
+      if (chunkSize == 0) break;
+      int remaining = chunkSize;
+      while (remaining > 0) {
+        int toRead = remaining < static_cast<int>(sizeof(buf)) ? remaining : static_cast<int>(sizeof(buf));
+        int got = stream->readBytes(buf, toRead);
+        if (got <= 0) break;
+        Update.write(buf, got);
+        written += got;
+        remaining -= got;
+      }
+      stream->readStringUntil('\n');  // trailing \r\n after chunk data
+    }
+  } else {
+    written = Update.writeStream(*stream);
+  }
   if (!Update.end(true) || Update.hasError()) {
     Serial.printf("[OTA] Update failed: %s\n", Update.errorString());
     http.end();
