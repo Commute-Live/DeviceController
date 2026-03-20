@@ -501,6 +501,8 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   String provider = extract_json_string_field(message, "provider");
   if (provider.length() == 0 || !parsing::is_supported_provider_id(provider)) {
     Serial.printf("[MQTT] Ignored: unsupported provider '%s'\n", provider.c_str());
+    renderModel_.hasData = false;
+    renderDirty_ = true;
     return;
   }
 
@@ -561,13 +563,6 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
     copy_str(renderModel_.rows[1].etaExtra, sizeof(renderModel_.rows[1].etaExtra),
              compactExtraEtaPreset ? row2EtaExtra : "");
 
-    const int row1Eta = parse_eta_minutes(renderModel_.rows[0].eta);
-    const int row2Eta = parse_eta_minutes(renderModel_.rows[1].eta);
-    if (row2Eta < row1Eta) {
-      TransitRowModel tmp = renderModel_.rows[0];
-      renderModel_.rows[0] = renderModel_.rows[1];
-      renderModel_.rows[1] = tmp;
-    }
     renderModel_.activeRows = 2;
     for (uint8_t i = 2; i < kMaxTransitRows; ++i) {
       clear_row(renderModel_.rows[i]);
@@ -711,8 +706,8 @@ void DeviceController::update_ui_state() {
     copy_str(renderModel_.statusDetail, sizeof(renderModel_.statusDetail), "MQTT offline");
   } else {
     renderModel_.uiState = UiState::kConnectedWaitingData;
-    copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "CONNECTED");
-    copy_str(renderModel_.statusDetail, sizeof(renderModel_.statusDetail), "Waiting transit data");
+    copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "ADD A LINE");
+    copy_str(renderModel_.statusDetail, sizeof(renderModel_.statusDetail), "Open the app to get started");
   }
 
   if (previousState != renderModel_.uiState ||

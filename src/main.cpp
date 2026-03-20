@@ -27,6 +27,10 @@
 #define COMMUTELIVE_WIFI_PASSWORD COMMUTELIVE_AP_PASSWORD
 #endif
 
+#ifndef COMMUTELIVE_WIFI_USERNAME
+#define COMMUTELIVE_WIFI_USERNAME ""
+#endif
+
 #ifndef COMMUTELIVE_ENABLE_DISPLAY_CALIBRATION
 #define COMMUTELIVE_ENABLE_DISPLAY_CALIBRATION 0
 #endif
@@ -82,7 +86,7 @@ void setup() {
 
   copy_str(cfg.network.ssid, COMMUTELIVE_WIFI_SSID);
   copy_str(cfg.network.password, COMMUTELIVE_WIFI_PASSWORD);
-  copy_str(cfg.network.username, "");
+  copy_str(cfg.network.username, COMMUTELIVE_WIFI_USERNAME);
   copy_str(cfg.network.apSsid, COMMUTELIVE_AP_SSID);
   copy_str(cfg.network.apPassword, COMMUTELIVE_AP_PASSWORD);
 

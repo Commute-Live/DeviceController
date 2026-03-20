@@ -29,6 +29,16 @@ uint32_t bounded_backoff(uint8_t attempt) {
   return waitMs + jitter;
 }
 
+bool has_explicit_bootstrap_wifi(const NetworkConfig &config) {
+  if (config.ssid[0] == '\0') {
+    return false;
+  }
+  if (config.username[0] != '\0') {
+    return true;
+  }
+  return strcmp(config.ssid, config.apSsid) != 0 || strcmp(config.password, config.apPassword) != 0;
+}
+
 }  // namespace
 
 NetworkManager::NetworkManager()
@@ -54,21 +64,24 @@ bool NetworkManager::begin(const NetworkConfig &config) {
   WiFi.disconnect();
   delay(100);
 
-  String loadedSsid;
-  String loadedPassword;
-  String loadedUser;
-  hasSavedCredentials_ = wifi_manager::load_credentials(loadedSsid, loadedPassword, loadedUser);
-
-  if (hasSavedCredentials_) {
-    savedSsid_ = loadedSsid;
-    savedPassword_ = loadedPassword;
-    savedUsername_ = loadedUser;
-  } else if (config_.ssid[0] != '\0') {
+  if (has_explicit_bootstrap_wifi(config_)) {
     savedSsid_ = config_.ssid;
     savedPassword_ = config_.password;
     savedUsername_ = config_.username;
     hasSavedCredentials_ = true;
     wifi_manager::save_credentials(savedSsid_, savedPassword_, savedUsername_);
+    Serial.printf("[WIFI] Using configured bootstrap WiFi: %s\n", savedSsid_.c_str());
+  } else {
+    String loadedSsid;
+    String loadedPassword;
+    String loadedUser;
+    hasSavedCredentials_ = wifi_manager::load_credentials(loadedSsid, loadedPassword, loadedUser);
+
+    if (hasSavedCredentials_) {
+      savedSsid_ = loadedSsid;
+      savedPassword_ = loadedPassword;
+      savedUsername_ = loadedUser;
+    }
   }
 
   transition_to(NetworkState::kConnecting);

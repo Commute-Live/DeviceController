@@ -74,6 +74,10 @@ bool connect_station(const char *ssid, const char *password, const char *usernam
   }
 
   if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf(
+        "[WIFI] Connected to %s with IP %s\n",
+        WiFi.SSID().c_str(),
+        WiFi.localIP().toString().c_str());
     return true;
   }
 
