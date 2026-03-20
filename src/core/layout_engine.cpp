@@ -191,109 +191,152 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
       out.push(title);
     }
 
-    // Row 2: supported cities with MTA/CTA style chips.
-    {
-      const RowFrame frame = home.rows[1];
-      const uint8_t chipFont = 1;
-      const int16_t chipH = 8;
-      const int16_t chipY = static_cast<int16_t>(frame.yStart + ((frame.height - chipH) / 2));
+    if (model.uiState == UiState::kSetupMode) {
+      // Row 2: AP SSID in TomThumb font so the full name fits on the display.
+      {
+        const RowFrame frame = home.rows[1];
+        const int16_t tinyCharW = 4;
+        const int16_t tinyH = 6;
+        const int16_t y = static_cast<int16_t>(frame.yStart + ((frame.height - tinyH) / 2));
+        const uint8_t maxChars = static_cast<uint8_t>((static_cast<int16_t>(width_) - 2) / tinyCharW);
 
-      struct Chip {
-        const char *text;
-        uint16_t bg;
-      };
-      const Chip chips[] = {
-          {"MTA", 0x01B4},  // NYC subway blue
-          {"CTA", 0xF800},  // Chicago red accent
-          {"MBTA", 0xFD20},
-          {"SEPTA", 0x1A74},  // #1F4FA3
-      };
-
-      int16_t totalChipW = 0;
-      for (size_t i = 0; i < sizeof(chips) / sizeof(chips[0]); ++i) {
-        const int16_t textW = static_cast<int16_t>(strnlen(chips[i].text, 16) * 6);
-        totalChipW = static_cast<int16_t>(totalChipW + textW + 4);  // 2px pad each side
-        if (i + 1 < sizeof(chips) / sizeof(chips[0])) totalChipW = static_cast<int16_t>(totalChipW + 2);
+        DrawCommand ssidLine{};
+        ssidLine.type = DrawCommandType::kText;
+        ssidLine.x = 2;
+        ssidLine.y = y;
+        ssidLine.color = kColorCyan;
+        ssidLine.bg = kColorBlack;
+        ssidLine.size = kTextSizeTiny;
+        ssidLine.text = trim_for_width(model.apSsid[0] ? model.apSsid : "CommuteLive", maxChars, out);
+        out.push(ssidLine);
       }
 
-      int16_t x = static_cast<int16_t>((static_cast<int16_t>(width_) - totalChipW) / 2);
-      if (x < 2) x = 2;
+      // Row 3: "PIN: XXXXXXXX" in TomThumb font.
+      {
+        const RowFrame frame = home.rows[2];
+        const int16_t tinyCharW = 4;
+        const int16_t tinyH = 6;
+        const int16_t y = static_cast<int16_t>(frame.yStart + ((frame.height - tinyH) / 2));
+        const uint8_t maxChars = static_cast<uint8_t>((static_cast<int16_t>(width_) - 2) / tinyCharW);
 
-      for (size_t i = 0; i < sizeof(chips) / sizeof(chips[0]); ++i) {
-        const int16_t textW = static_cast<int16_t>(strnlen(chips[i].text, 16) * 6);
-        const int16_t chipW = static_cast<int16_t>(textW + 4);
+        char pinBuf[20];
+        snprintf(pinBuf, sizeof(pinBuf), "PIN: %s", model.apPin[0] ? model.apPin : "--------");
 
-        DrawCommand chipBg{};
-        chipBg.type = DrawCommandType::kFillRect;
-        chipBg.x = x;
-        chipBg.y = chipY;
-        chipBg.w = chipW;
-        chipBg.h = chipH;
-        chipBg.color = chips[i].bg;
-        chipBg.bg = kColorBlack;
-        chipBg.size = 1;
-        chipBg.text = nullptr;
-        out.push(chipBg);
-
-        DrawCommand chipText{};
-        chipText.type = DrawCommandType::kText;
-        chipText.x = static_cast<int16_t>(x + 2);
-        chipText.y = chipY;
-        chipText.color = kColorWhite;
-        chipText.bg = chips[i].bg;
-        chipText.size = chipFont;
-        chipText.text = out.copy_text(chips[i].text);
-        out.push(chipText);
-
-        x = static_cast<int16_t>(x + chipW + 2);
+        DrawCommand pinLine{};
+        pinLine.type = DrawCommandType::kText;
+        pinLine.x = 2;
+        pinLine.y = y;
+        pinLine.color = kColorAmber;
+        pinLine.bg = kColorBlack;
+        pinLine.size = kTextSizeTiny;
+        pinLine.text = trim_for_width(pinBuf, maxChars, out);
+        out.push(pinLine);
       }
-    }
+    } else {
+      // Row 2: supported cities with MTA/CTA style chips.
+      {
+        const RowFrame frame = home.rows[1];
+        const uint8_t chipFont = 1;
+        const int16_t chipH = 8;
+        const int16_t chipY = static_cast<int16_t>(frame.yStart + ((frame.height - chipH) / 2));
 
-    // Row 3: status line + detail.
-    {
-      const RowFrame frame = home.rows[2];
-      const uint8_t statusFont = 1;
-      const int16_t statusTextH = 8;
-      const int16_t y = static_cast<int16_t>(frame.yStart + ((frame.height - statusTextH) / 2));
-      const int16_t rightChars = static_cast<int16_t>((static_cast<int16_t>(width_) - 2) / 6);
+        struct Chip {
+          const char *text;
+          uint16_t bg;
+        };
+        const Chip chips[] = {
+            {"MTA", 0x01B4},  // NYC subway blue
+            {"CTA", 0xF800},  // Chicago red accent
+            {"MBTA", 0xFD20},
+            {"SEPTA", 0x1A74},  // #1F4FA3
+        };
 
-      if (frame.height >= 16) {
-        DrawCommand status{};
-        status.type = DrawCommandType::kText;
-        status.x = 2;
-        status.y = frame.yStart;
-        status.color = kColorWhite;
-        status.bg = kColorBlack;
-        status.size = statusFont;
-        status.text = trim_for_width(model.statusLine[0] ? model.statusLine : "BOOTING",
-                                     static_cast<uint8_t>(rightChars), out);
-        out.push(status);
+        int16_t totalChipW = 0;
+        for (size_t i = 0; i < sizeof(chips) / sizeof(chips[0]); ++i) {
+          const int16_t textW = static_cast<int16_t>(strnlen(chips[i].text, 16) * 6);
+          totalChipW = static_cast<int16_t>(totalChipW + textW + 4);  // 2px pad each side
+          if (i + 1 < sizeof(chips) / sizeof(chips[0])) totalChipW = static_cast<int16_t>(totalChipW + 2);
+        }
 
-        DrawCommand detail{};
-        detail.type = DrawCommandType::kText;
-        detail.x = 2;
-        detail.y = static_cast<int16_t>(frame.yStart + 8);
-        detail.color = kColorGray;
-        detail.bg = kColorBlack;
-        detail.size = 1;
-        detail.text = trim_for_width(model.statusDetail[0] ? model.statusDetail : "",
-                                     static_cast<uint8_t>(rightChars), out);
-        out.push(detail);
-      } else {
-        char compact[kMaxDestinationLen];
-        snprintf(compact, sizeof(compact), "%s %s",
-                 model.statusLine[0] ? model.statusLine : "BOOTING",
-                 model.statusDetail[0] ? model.statusDetail : "");
+        int16_t x = static_cast<int16_t>((static_cast<int16_t>(width_) - totalChipW) / 2);
+        if (x < 2) x = 2;
 
-        DrawCommand compactLine{};
-        compactLine.type = DrawCommandType::kText;
-        compactLine.x = 2;
-        compactLine.y = y < frame.yStart ? frame.yStart : y;
-        compactLine.color = kColorWhite;
-        compactLine.bg = kColorBlack;
-        compactLine.size = 1;
-        compactLine.text = trim_for_width(compact, static_cast<uint8_t>(rightChars), out);
-        out.push(compactLine);
+        for (size_t i = 0; i < sizeof(chips) / sizeof(chips[0]); ++i) {
+          const int16_t textW = static_cast<int16_t>(strnlen(chips[i].text, 16) * 6);
+          const int16_t chipW = static_cast<int16_t>(textW + 4);
+
+          DrawCommand chipBg{};
+          chipBg.type = DrawCommandType::kFillRect;
+          chipBg.x = x;
+          chipBg.y = chipY;
+          chipBg.w = chipW;
+          chipBg.h = chipH;
+          chipBg.color = chips[i].bg;
+          chipBg.bg = kColorBlack;
+          chipBg.size = 1;
+          chipBg.text = nullptr;
+          out.push(chipBg);
+
+          DrawCommand chipText{};
+          chipText.type = DrawCommandType::kText;
+          chipText.x = static_cast<int16_t>(x + 2);
+          chipText.y = chipY;
+          chipText.color = kColorWhite;
+          chipText.bg = chips[i].bg;
+          chipText.size = chipFont;
+          chipText.text = out.copy_text(chips[i].text);
+          out.push(chipText);
+
+          x = static_cast<int16_t>(x + chipW + 2);
+        }
+      }
+
+      // Row 3: status line + detail.
+      {
+        const RowFrame frame = home.rows[2];
+        const uint8_t statusFont = 1;
+        const int16_t statusTextH = 8;
+        const int16_t y = static_cast<int16_t>(frame.yStart + ((frame.height - statusTextH) / 2));
+        const int16_t rightChars = static_cast<int16_t>((static_cast<int16_t>(width_) - 2) / 6);
+
+        if (frame.height >= 16) {
+          DrawCommand status{};
+          status.type = DrawCommandType::kText;
+          status.x = 2;
+          status.y = frame.yStart;
+          status.color = kColorWhite;
+          status.bg = kColorBlack;
+          status.size = statusFont;
+          status.text = trim_for_width(model.statusLine[0] ? model.statusLine : "BOOTING",
+                                       static_cast<uint8_t>(rightChars), out);
+          out.push(status);
+
+          DrawCommand detail{};
+          detail.type = DrawCommandType::kText;
+          detail.x = 2;
+          detail.y = static_cast<int16_t>(frame.yStart + 8);
+          detail.color = kColorGray;
+          detail.bg = kColorBlack;
+          detail.size = 1;
+          detail.text = trim_for_width(model.statusDetail[0] ? model.statusDetail : "",
+                                       static_cast<uint8_t>(rightChars), out);
+          out.push(detail);
+        } else {
+          char compact[kMaxDestinationLen];
+          snprintf(compact, sizeof(compact), "%s %s",
+                   model.statusLine[0] ? model.statusLine : "BOOTING",
+                   model.statusDetail[0] ? model.statusDetail : "");
+
+          DrawCommand compactLine{};
+          compactLine.type = DrawCommandType::kText;
+          compactLine.x = 2;
+          compactLine.y = y < frame.yStart ? frame.yStart : y;
+          compactLine.color = kColorWhite;
+          compactLine.bg = kColorBlack;
+          compactLine.size = 1;
+          compactLine.text = trim_for_width(compact, static_cast<uint8_t>(rightChars), out);
+          out.push(compactLine);
+        }
       }
     }
 

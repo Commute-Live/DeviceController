@@ -11,24 +11,13 @@
 #include "core/mqtt_client.h"
 #include "core/network_manager.h"
 #include "core/transit_provider_registry.h"
+#include "network/wifi_manager.h"
 
 #if __has_include("secrets.h")
 #include "secrets.h"
 #else
 #include "secrets.example.h"
 #warning "Using include/secrets.example.h defaults. Create include/secrets.h for real credentials."
-#endif
-
-#ifndef COMMUTELIVE_WIFI_SSID
-#define COMMUTELIVE_WIFI_SSID COMMUTELIVE_AP_SSID
-#endif
-
-#ifndef COMMUTELIVE_WIFI_PASSWORD
-#define COMMUTELIVE_WIFI_PASSWORD COMMUTELIVE_AP_PASSWORD
-#endif
-
-#ifndef COMMUTELIVE_WIFI_USERNAME
-#define COMMUTELIVE_WIFI_USERNAME ""
 #endif
 
 #ifndef COMMUTELIVE_ENABLE_DISPLAY_CALIBRATION
@@ -84,11 +73,18 @@ void setup() {
   cfg.display.xOffset = 0;
   cfg.display.yOffset = 0;
 
-  copy_str(cfg.network.ssid, COMMUTELIVE_WIFI_SSID);
-  copy_str(cfg.network.password, COMMUTELIVE_WIFI_PASSWORD);
-  copy_str(cfg.network.username, COMMUTELIVE_WIFI_USERNAME);
-  copy_str(cfg.network.apSsid, COMMUTELIVE_AP_SSID);
-  copy_str(cfg.network.apPassword, COMMUTELIVE_AP_PASSWORD);
+  // WiFi credentials are not set here — provisioned at runtime via BLE.
+  cfg.network.ssid[0]     = '\0';
+  cfg.network.password[0] = '\0';
+  cfg.network.username[0] = '\0';
+
+  // Per-device unique AP: SSID derived from chip MAC, password generated once at first boot.
+  char generatedApSsid[64];
+  wifi_manager::build_ap_ssid(generatedApSsid, sizeof(generatedApSsid));
+  copy_str(cfg.network.apSsid, generatedApSsid);
+
+  const String generatedApPass = wifi_manager::generate_or_load_ap_password();
+  copy_str(cfg.network.apPassword, generatedApPass.c_str());
 
   copy_str(cfg.mqtt.host, COMMUTELIVE_MQTT_HOST);
   cfg.mqtt.port = static_cast<uint16_t>(COMMUTELIVE_MQTT_PORT);

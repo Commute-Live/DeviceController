@@ -50,6 +50,7 @@ NetworkManager::NetworkManager()
       savedPassword_(),
       savedUsername_(),
       nextRetryAtMs_(0),
+      connectingStartMs_(0),
       retryCount_(0),
       callback_(nullptr),
       callbackCtx_(nullptr) {}
@@ -100,8 +101,29 @@ bool NetworkManager::begin(const NetworkConfig &config) {
 void NetworkManager::tick(uint32_t nowMs) {
   if (WiFi.status() == WL_CONNECTED) {
     retryCount_ = 0;
+    connectingStartMs_ = 0;
     if (state_ != NetworkState::kConnected) {
+      recoveryApEnabled_ = false;
       transition_to(NetworkState::kConnected);
+    }
+    return;
+  }
+
+  // Waiting for an async WiFi.begin() to resolve — check for timeout.
+  if (connectingStartMs_ != 0) {
+    if (nowMs - connectingStartMs_ < kConnectTimeoutMs) {
+      return;
+    }
+    connectingStartMs_ = 0;
+    WiFi.disconnect(false, false);
+    transition_to(NetworkState::kDisconnected);
+    retryCount_++;
+    const uint32_t waitMs = bounded_backoff(retryCount_);
+    nextRetryAtMs_ = nowMs + waitMs;
+    Serial.printf("[WIFI] Connect timed out, retry in %lu ms (attempt %u)\n",
+                  static_cast<unsigned long>(waitMs), retryCount_);
+    if (!recoveryApEnabled_ && retryCount_ >= kRecoveryApAttemptThreshold) {
+      enable_recovery_ap();
     }
     return;
   }
@@ -116,27 +138,15 @@ void NetworkManager::tick(uint32_t nowMs) {
   }
 
   transition_to(NetworkState::kConnecting);
-  if (connect_station_now()) {
-    retryCount_ = 0;
-    nextRetryAtMs_ = nowMs;
-    recoveryApEnabled_ = false;
-    transition_to(NetworkState::kConnected);
-    return;
-  }
-
-  const uint32_t waitMs = bounded_backoff(retryCount_);
-  retryCount_++;
-  nextRetryAtMs_ = nowMs + waitMs;
-  Serial.printf("[WIFI] Retry in %lu ms (attempt %u)\n", static_cast<unsigned long>(waitMs), retryCount_);
-
-  if (!recoveryApEnabled_ && retryCount_ >= kRecoveryApAttemptThreshold) {
-    enable_recovery_ap();
-  }
+  wifi_manager::begin_station(savedSsid_.c_str(), savedPassword_.c_str(), savedUsername_.c_str());
+  connectingStartMs_ = nowMs;
 }
 
 void NetworkManager::request_reconnect() {
+  connectingStartMs_ = 0;
   retryCount_ = 0;
   nextRetryAtMs_ = 0;
+  WiFi.disconnect(false, false);
   transition_to(NetworkState::kConnecting);
 }
 

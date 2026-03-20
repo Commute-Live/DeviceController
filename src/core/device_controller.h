@@ -5,6 +5,7 @@
 #include <Update.h>
 #include <WebServer.h>
 
+#include "ble/ble_provisioner.h"
 #include "core/config_store.h"
 #include "core/display_engine.h"
 #include "core/layout_engine.h"
@@ -36,6 +37,7 @@ class DeviceController final {
   RenderModel renderModel_;
   DrawList drawList_;
   WebServer server_;
+  ble::BleProvisioner bleProvisioner_;
   uint32_t lastHeartbeatAtMs_;
   uint32_t lastTelemetryAtMs_;
   uint32_t lastRenderAtMs_;
@@ -44,6 +46,7 @@ class DeviceController final {
 
   static void on_network_state_change(NetworkState state, void *ctx);
   static void on_mqtt_command(const char *topic, const uint8_t *payload, size_t len, void *ctx);
+  static void on_ble_credentials(const ble::BleCredentials &creds, void *ctx);
 
   void handle_network_state(NetworkState state);
   void handle_command(const char *topic, const uint8_t *payload, size_t len);
@@ -52,6 +55,7 @@ class DeviceController final {
   static void http_connect_handler();
   static void http_device_info_handler();
   static void http_heartbeat_handler();
+  static void http_status_handler();
   void update_ui_state();
   void render_frame(uint32_t nowMs);
   void publish_display_state();

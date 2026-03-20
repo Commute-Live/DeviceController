@@ -1,13 +1,7 @@
 #pragma once
 
-// Copy this file to include/secrets.h and replace values for your environment.
-
-#define COMMUTELIVE_AP_SSID "replace-ap-ssid"
-#define COMMUTELIVE_AP_PASSWORD "replace-ap-password"
-
-#define COMMUTELIVE_WIFI_SSID COMMUTELIVE_AP_SSID
-#define COMMUTELIVE_WIFI_PASSWORD COMMUTELIVE_AP_PASSWORD
-#define COMMUTELIVE_WIFI_USERNAME ""
+// Copy this file to include/secrets.h and fill in your MQTT server details.
+// WiFi credentials are NOT stored here — they are provisioned at runtime via BLE.
 
 #define COMMUTELIVE_MQTT_HOST "replace-mqtt-host"
 #define COMMUTELIVE_MQTT_PORT 1883

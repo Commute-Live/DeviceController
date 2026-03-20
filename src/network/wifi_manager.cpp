@@ -47,6 +47,61 @@ bool load_credentials(String &ssid, String &password, String &user) {
   return false;
 }
 
+void begin_station(const char *ssid, const char *password, const char *username) {
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.disconnect(false, false);
+  delay(100);
+
+  if (username && strlen(username) > 0) {
+    Serial.println("[ESP] Using WPA2-Enterprise (async)");
+    esp_wifi_sta_wpa2_ent_disable();
+    esp_wifi_sta_wpa2_ent_set_identity((uint8_t *)username, strlen(username));
+    esp_wifi_sta_wpa2_ent_set_username((uint8_t *)username, strlen(username));
+    if (password && strlen(password) > 0) {
+      esp_wifi_sta_wpa2_ent_set_password((uint8_t *)password, strlen(password));
+    }
+    esp_wifi_sta_wpa2_ent_enable();
+    WiFi.begin(ssid);
+  } else {
+    esp_wifi_sta_wpa2_ent_disable();
+    WiFi.begin(ssid, password);
+  }
+  Serial.printf("[ESP] WiFi begin (async): %s\n", ssid);
+}
+
+void clear_credentials() {
+  prefs.begin("wifi", false);
+  prefs.remove("ssid");
+  prefs.remove("pass");
+  prefs.remove("user");
+  prefs.end();
+  Serial.println("[ESP] WiFi credentials cleared");
+}
+
+void build_ap_ssid(char *out, size_t outLen) {
+  const uint64_t chipid = ESP.getEfuseMac();
+  snprintf(out, outLen, "CommuteLive-%04X", static_cast<uint16_t>(chipid));
+}
+
+String generate_or_load_ap_password() {
+  prefs.begin("wifi", false);
+  String pass = prefs.getString("ap_pass", "");
+  if (pass.length() == 0) {
+    // Unambiguous charset — excludes 0/O/1/I/l to avoid transcription errors.
+    const char charset[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    char buf[9];
+    for (int i = 0; i < 8; ++i) {
+      buf[i] = charset[esp_random() % (sizeof(charset) - 1)];
+    }
+    buf[8] = '\0';
+    pass = String(buf);
+    prefs.putString("ap_pass", pass);
+    Serial.println("[ESP] Generated new AP password");
+  }
+  prefs.end();
+  return pass;
+}
+
 bool connect_station(const char *ssid, const char *password, const char *username) {
   WiFi.mode(WIFI_AP_STA);
   WiFi.disconnect(true, true);

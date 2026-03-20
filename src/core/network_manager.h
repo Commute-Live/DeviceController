@@ -48,9 +48,12 @@ class NetworkManager final {
   String savedUsername_;
 
   uint32_t nextRetryAtMs_;
+  uint32_t connectingStartMs_;
   uint8_t retryCount_;
   StateCallback callback_;
   void *callbackCtx_;
+
+  static constexpr uint32_t kConnectTimeoutMs = 15000;
 
   void transition_to(NetworkState next);
   bool connect_station_now();

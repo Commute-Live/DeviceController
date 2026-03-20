@@ -36,30 +36,6 @@ void copy_str(char *dst, size_t dstLen, const char *src) {
   dst[dstLen - 1] = '\0';
 }
 
-int parse_eta_minutes(const char *etaRaw) {
-  if (!etaRaw || etaRaw[0] == '\0') {
-    return 100000;
-  }
-
-  if (strcmp(etaRaw, "DUE") == 0 || strcmp(etaRaw, "NOW") == 0) {
-    return 0;
-  }
-
-  int minutes = 0;
-  bool foundDigit = false;
-  for (const char *p = etaRaw; *p != '\0'; ++p) {
-    const char c = *p;
-    if (c >= '0' && c <= '9') {
-      foundDigit = true;
-      minutes = (minutes * 10) + (c - '0');
-    } else if (foundDigit) {
-      break;
-    }
-  }
-
-  return foundDigit ? minutes : 100000;
-}
-
 void normalize_eta(const String &input, char *out, size_t outLen) {
   String eta = input;
   eta.trim();
@@ -405,6 +381,12 @@ bool DeviceController::begin() {
   deps_.mqttClient->set_command_callback(&DeviceController::on_mqtt_command, this);
   activeController_ = this;
   setup_http_routes();
+  // Always start BLE so the user can re-provision even if stale credentials exist.
+  // Advertising stops automatically once WiFi connects successfully.
+  // Use deviceId as the BLE name so the app can get the ID directly from the scan
+  // without needing to read the STATUS characteristic (which is unreliable on iOS).
+  bleProvisioner_.begin(runtimeConfig_.deviceId, runtimeConfig_.deviceId);
+  bleProvisioner_.set_credentials_callback(&DeviceController::on_ble_credentials, this);
   deps_.networkManager->begin(runtimeConfig_.network);
   server_.begin();
   Serial.println("[HTTP] Core API ready");
@@ -423,6 +405,14 @@ bool DeviceController::begin() {
 }
 
 void DeviceController::tick(uint32_t nowMs) {
+  if (bleProvisioner_.credentials_pending()) {
+    const ble::BleCredentials creds = bleProvisioner_.take_credentials();
+    bleProvisioner_.notify_status("{\"status\":\"connecting\"}");
+    deps_.mqttClient->disconnect(true);
+    deps_.networkManager->set_credentials(creds.ssid, creds.password, creds.username);
+    // BLE provisioner is no longer needed after credentials arrive.
+    bleProvisioner_.stop();
+  }
   deps_.networkManager->tick(nowMs);
   deps_.mqttClient->tick(nowMs);
   server_.handleClient();
@@ -470,8 +460,22 @@ void DeviceController::on_mqtt_command(const char *topic, const uint8_t *payload
   static_cast<DeviceController *>(ctx)->handle_command(topic, payload, len);
 }
 
+void DeviceController::on_ble_credentials(const ble::BleCredentials &, void *) {
+  // Credentials are consumed directly in tick() — this callback is unused but satisfies the API.
+}
+
 void DeviceController::handle_network_state(NetworkState state) {
-  (void)state;
+  // Only interact with BLE provisioner when it is active (no prior credentials).
+  // Once credentials arrive, tick() stops the provisioner so these are no-ops.
+  if (state == NetworkState::kConnected) {
+    char buf[128];
+    snprintf(buf, sizeof(buf),
+             "{\"status\":\"connected\",\"deviceId\":\"%s\"}",
+             runtimeConfig_.deviceId);
+    bleProvisioner_.notify_status(buf);
+  } else if (state == NetworkState::kDisconnected) {
+    bleProvisioner_.notify_status("{\"status\":\"failed\"}");
+  }
   update_ui_state();
 }
 
@@ -495,6 +499,15 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
     if (url.length() > 0) {
       perform_ota_update(url);
     }
+    return;
+  }
+
+  if (cmdType == "factory_reset") {
+    Serial.println("[CMD] Factory reset requested — clearing credentials and restarting");
+    deps_.mqttClient->disconnect(true);
+    wifi_manager::clear_credentials();
+    delay(500);
+    ESP.restart();
     return;
   }
 
@@ -641,6 +654,7 @@ void DeviceController::setup_http_routes() {
   server_.on("/connect", HTTP_POST, &DeviceController::http_connect_handler);
   server_.on("/device-info", HTTP_GET, &DeviceController::http_device_info_handler);
   server_.on("/heartbeat", HTTP_GET, &DeviceController::http_heartbeat_handler);
+  server_.on("/status", HTTP_GET, &DeviceController::http_status_handler);
 }
 
 void DeviceController::http_connect_handler() {
@@ -678,6 +692,19 @@ void DeviceController::http_heartbeat_handler() {
   activeController_->server_.send(200, "application/json", "{\"ok\":true}");
 }
 
+void DeviceController::http_status_handler() {
+  if (!activeController_) {
+    return;
+  }
+  const bool wifiConnected = activeController_->deps_.networkManager->is_connected();
+  char response[192];
+  snprintf(response, sizeof(response),
+           "{\"deviceId\":\"%s\",\"wifiConnected\":%s,\"firmwareVersion\":\"1.0.0\"}",
+           activeController_->runtimeConfig_.deviceId,
+           wifiConnected ? "true" : "false");
+  activeController_->server_.send(200, "application/json", response);
+}
+
 void DeviceController::update_ui_state() {
   const UiState previousState = renderModel_.uiState;
   char prevStatus[kMaxStatusLen];
@@ -696,6 +723,8 @@ void DeviceController::update_ui_state() {
     renderModel_.uiState = UiState::kSetupMode;
     copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "SETUP MODE");
     copy_str(renderModel_.statusDetail, sizeof(renderModel_.statusDetail), "Connect to device Wi-Fi");
+    copy_str(renderModel_.apSsid, sizeof(renderModel_.apSsid), runtimeConfig_.network.apSsid);
+    copy_str(renderModel_.apPin, sizeof(renderModel_.apPin), runtimeConfig_.network.apPassword);
   } else if (!wifiUp) {
     renderModel_.uiState = UiState::kNoWifi;
     copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "NO WIFI");

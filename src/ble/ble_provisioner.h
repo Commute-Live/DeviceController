@@ -1,0 +1,51 @@
+#pragma once
+
+#include <stddef.h>
+#include <stdint.h>
+
+namespace ble {
+
+struct BleCredentials {
+  char ssid[64];
+  char password[64];
+  char username[64];
+};
+
+// GATT-based WiFi provisioning over BLE.
+//
+// UUIDs (custom CommuteLive service):
+//   Service:   a1b2c3d4-0000-4a5b-8c7d-9e0f1a2b3c4d
+//   PROVISION: a1b2c3d4-0001-4a5b-8c7d-9e0f1a2b3c4d  (WRITE)
+//   STATUS:    a1b2c3d4-0002-4a5b-8c7d-9e0f1a2b3c4d  (READ | NOTIFY)
+//
+// App writes JSON to PROVISION: {"ssid":"...","password":"...","username":"..."}
+// Device notifies STATUS when WiFi result is known:
+//   {"status":"connecting"}
+//   {"status":"connected","deviceId":"esp32-XXXX"}
+//   {"status":"failed"}
+class BleProvisioner {
+ public:
+  using OnCredentials = void (*)(const BleCredentials &, void *);
+
+  // bleName   — advertised BLE device name (e.g. "CommuteLive-6E20", used for scanning)
+  // deviceId  — real device ID put in STATUS char (e.g. "esp32-ABCD1234", used for registration)
+  void begin(const char *bleName, const char *deviceId);
+  void stop();
+  void notify_status(const char *statusJson);
+  void set_credentials_callback(OnCredentials cb, void *ctx);
+  bool credentials_pending();
+  BleCredentials take_credentials();
+
+  // Called from the NimBLE GATT write callback (static context).
+  static void handle_write(const uint8_t *data, size_t len);
+
+ private:
+  static BleProvisioner *sInstance_;
+  void *statusChar_;  // NimBLECharacteristic* — opaque to avoid header pollution
+  OnCredentials credCb_;
+  void *credCbCtx_;
+  volatile bool credPending_;
+  BleCredentials pendingCreds_;
+};
+
+}  // namespace ble

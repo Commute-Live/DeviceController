@@ -76,6 +76,8 @@ struct RenderModel {
   uint32_t updatedAtMs;
   char statusLine[kMaxStatusLen];
   char statusDetail[kMaxDestinationLen];
+  char apSsid[64];
+  char apPin[12];
   TransitRowModel rows[kMaxTransitRows];
 };
 
