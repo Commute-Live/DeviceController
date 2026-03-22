@@ -5,7 +5,7 @@
 
 #include "core/models.h"
 #include "core/vertical_layout_engine.h"
-#include "display/LayoutEngine.h"
+#include "display/layout_engine.h"
 
 namespace core {
 

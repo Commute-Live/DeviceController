@@ -2,7 +2,7 @@
 
 #include <stdint.h>
 
-#include "display/DisplayEngine.h"
+#include "display/display_engine.h"
 
 namespace display {
 

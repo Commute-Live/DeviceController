@@ -1,8 +1,11 @@
 #pragma once
 
-#include <Arduino.h>
 #include <stddef.h>
 #include <stdint.h>
+
+#if __has_include(<Arduino.h>)
+#include <Arduino.h>
+#endif
 
 namespace core {
 

@@ -1,9 +1,9 @@
-#include "display/BadgeRenderer.h"
+#include "display/badge_renderer.h"
 
 #include <ctype.h>
 #include <string.h>
 
-#include "transit/MtaColorMap.h"
+#include "transit/mta_color_map.h"
 
 namespace display {
 

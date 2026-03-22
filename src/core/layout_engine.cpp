@@ -385,7 +385,6 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
   if (rowFont < 1) rowFont = 1;
   if (rowFont > 2) rowFont = 2;
   constexpr uint8_t kEtaChars = 3;
-  const int16_t charW = static_cast<int16_t>(6 * rowFont);
 
   for (uint8_t i = 0; i < rowCount; ++i) {
     const TransitRowModel &row = model.rows[i];
@@ -438,24 +437,8 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
     const uint8_t destinationFont = (normalizedDisplayType == 3)
                                         ? kTextSizeTiny
                                         : (rowFont > 1 ? static_cast<uint8_t>(rowFont - 1) : 1);
-    const int16_t destinationCharW =
-        (destinationFont == kTextSizeTiny || destinationFont == kTextSizeTinyPlus)
-            ? 4
-            : static_cast<int16_t>(6 * destinationFont);
     const int16_t effectiveDestinationWidth = static_cast<int16_t>(rowGeom.destinationWidth + preset.etaRightNudgePx);
-    const uint8_t labelChars =
-        (effectiveDestinationWidth > 0 && destinationCharW > 0)
-            ? static_cast<uint8_t>(effectiveDestinationWidth / destinationCharW)
-            : 0;
-    const uint8_t renderLabelChars =
-        ((normalizedDisplayType == 3 || normalizedDisplayType == 4 || normalizedDisplayType == 5) && labelChars > 2)
-            ? static_cast<uint8_t>(labelChars - 2)
-            : labelChars;
-
     const int16_t destinationY = static_cast<int16_t>(rowGeom.textY + preset.destinationYNudge);
-    const int16_t spaceAdvance = (normalizedDisplayType == 3)
-                                     ? destinationCharW
-                                     : (destinationCharW > 2 ? static_cast<int16_t>(destinationCharW - 2) : 1);
 
     auto draw_compact_line = [&](const char *text,
                                  int16_t y,
@@ -531,7 +514,14 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
       draw_compact_line(line1, preset45Y, destinationFont);
       if (row.etaExtra[0] != '\0') {
         // Reserve extra space on the right so bottom ETAs never overlap the main ETA column.
-        draw_compact_line(row.etaExtra, static_cast<int16_t>(preset45Y + 13), kTextSizeTiny, 3, kColorAmber);
+        // Only draw etaExtra if there is enough vertical room (skips when rows are too short,
+        // e.g. 2-row layout where each row is ~13px and etaExtra would extend past the display).
+        const int16_t extraY = static_cast<int16_t>(preset45Y + 13);
+        const int16_t rowBottom = static_cast<int16_t>(frame.yStart + frame.height);
+        constexpr int16_t kTinyFontHeight = 6;  // TomThumb 5px glyphs + 1px spacing
+        if (extraY + kTinyFontHeight <= rowBottom) {
+          draw_compact_line(row.etaExtra, extraY, kTextSizeTiny, 3, kColorAmber);
+        }
       }
     } else {
       draw_compact_line(row_label_for_display_type(row, model.displayType), destinationY, destinationFont);

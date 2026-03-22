@@ -8,7 +8,7 @@
 
 #include "parsing/payload_parser.h"
 #include "parsing/provider_parser_router.h"
-#include "display/BadgeRenderer.h"
+#include "display/badge_renderer.h"
 #include "network/wifi_manager.h"
 
 namespace core {
@@ -360,7 +360,7 @@ DeviceController::DeviceController(const Dependencies &deps)
 
 bool DeviceController::begin() {
   if (!deps_.configStore || !deps_.networkManager || !deps_.mqttClient || !deps_.displayEngine ||
-      !deps_.layoutEngine || !deps_.providerRegistry) {
+      !deps_.layoutEngine) {
     return false;
   }
 
@@ -386,7 +386,6 @@ bool DeviceController::begin() {
   // Use deviceId as the BLE name so the app can get the ID directly from the scan
   // without needing to read the STATUS characteristic (which is unreliable on iOS).
   bleProvisioner_.begin(runtimeConfig_.deviceId, runtimeConfig_.deviceId);
-  bleProvisioner_.set_credentials_callback(&DeviceController::on_ble_credentials, this);
   deps_.networkManager->begin(runtimeConfig_.network);
   server_.begin();
   Serial.println("[HTTP] Core API ready");
@@ -458,10 +457,6 @@ void DeviceController::on_mqtt_command(const char *topic, const uint8_t *payload
     return;
   }
   static_cast<DeviceController *>(ctx)->handle_command(topic, payload, len);
-}
-
-void DeviceController::on_ble_credentials(const ble::BleCredentials &, void *) {
-  // Credentials are consumed directly in tick() — this callback is unused but satisfies the API.
 }
 
 void DeviceController::handle_network_state(NetworkState state) {

@@ -6,3 +6,6 @@
 .DS_STORE
 .vscode
 include/secrets.h
+tools/.env.simulator
+tools/led_simulator
+tools/led_preview

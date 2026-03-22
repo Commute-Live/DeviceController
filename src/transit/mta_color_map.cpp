@@ -1,4 +1,4 @@
-#include "transit/MtaColorMap.h"
+#include "transit/mta_color_map.h"
 
 #include <ctype.h>
 #include <string.h>

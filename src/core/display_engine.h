@@ -4,7 +4,7 @@
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 
 #include "core/models.h"
-#include "display/DisplayEngine.h"
+#include "display/display_engine.h"
 
 class VirtualMatrixPanel;
 class Adafruit_GFX;

@@ -11,8 +11,6 @@
 #include "core/layout_engine.h"
 #include "core/mqtt_client.h"
 #include "core/network_manager.h"
-#include "core/transit_provider_registry.h"
-
 namespace core {
 
 class DeviceController final {
@@ -23,7 +21,6 @@ class DeviceController final {
     MqttClient *mqttClient;
     DisplayEngine *displayEngine;
     LayoutEngine *layoutEngine;
-    TransitProviderRegistry *providerRegistry;
   };
 
   explicit DeviceController(const Dependencies &deps);
@@ -46,7 +43,6 @@ class DeviceController final {
 
   static void on_network_state_change(NetworkState state, void *ctx);
   static void on_mqtt_command(const char *topic, const uint8_t *payload, size_t len, void *ctx);
-  static void on_ble_credentials(const ble::BleCredentials &creds, void *ctx);
 
   void handle_network_state(NetworkState state);
   void handle_command(const char *topic, const uint8_t *payload, size_t len);

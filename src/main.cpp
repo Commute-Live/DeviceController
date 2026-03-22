@@ -10,7 +10,6 @@
 #include "core/layout_engine.h"
 #include "core/mqtt_client.h"
 #include "core/network_manager.h"
-#include "core/transit_provider_registry.h"
 #include "network/wifi_manager.h"
 
 #if __has_include("secrets.h")
@@ -46,9 +45,8 @@ core::NetworkManager gNetworkManager;
 core::MqttClient gMqttClient;
 core::DisplayEngine gDisplayEngine;
 core::LayoutEngine gLayoutEngine;
-core::TransitProviderRegistry gProviderRegistry;
 core::DeviceController::Dependencies gDeps{
-    &gConfigStore, &gNetworkManager, &gMqttClient, &gDisplayEngine, &gLayoutEngine, &gProviderRegistry};
+    &gConfigStore, &gNetworkManager, &gMqttClient, &gDisplayEngine, &gLayoutEngine};
 core::DeviceController gController(gDeps);
 
 }  // namespace
