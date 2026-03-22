@@ -517,9 +517,8 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
         // Only draw etaExtra if there is enough vertical room (skips when rows are too short,
         // e.g. 2-row layout where each row is ~13px and etaExtra would extend past the display).
         const int16_t extraY = static_cast<int16_t>(preset45Y + 13);
-        const int16_t rowBottom = static_cast<int16_t>(frame.yStart + frame.height);
         constexpr int16_t kTinyFontHeight = 6;  // TomThumb 5px glyphs + 1px spacing
-        if (extraY + kTinyFontHeight <= rowBottom) {
+        if (extraY + kTinyFontHeight <= static_cast<int16_t>(height_)) {
           draw_compact_line(row.etaExtra, extraY, kTextSizeTiny, 3, kColorAmber);
         }
       }

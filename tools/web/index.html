@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CommuteLive LED Simulator</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #111;
+    color: #ccc;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 20px;
+  }
+  h1 { color: #fff; font-size: 18px; margin-bottom: 16px; letter-spacing: 1px; }
+  .matrix-wrap {
+    background: #0c0e0c;
+    border-radius: 8px;
+    padding: 12px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.6);
+    margin-bottom: 20px;
+  }
+  canvas { display: block; image-rendering: pixelated; }
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+    justify-content: center;
+    max-width: 800px;
+    margin-bottom: 16px;
+  }
+  .control-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .control-group label {
+    font-size: 11px;
+    text-transform: uppercase;
+    color: #666;
+    letter-spacing: 0.5px;
+  }
+  input[type="text"], input[type="number"] {
+    background: #222;
+    border: 1px solid #333;
+    color: #eee;
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 13px;
+    width: 180px;
+  }
+  input[type="number"] { width: 70px; }
+  .btn {
+    background: #2a2a2a;
+    border: 1px solid #444;
+    color: #ddd;
+    padding: 6px 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    font-family: monospace;
+    transition: background 0.15s;
+  }
+  .btn:hover { background: #3a3a3a; }
+  .btn.active { background: #1a6b1a; border-color: #2a8a2a; color: #fff; }
+  .btn.connect { background: #1a4a6b; border-color: #2a6a8a; }
+  .btn.connect:hover { background: #2a5a7b; }
+  .btn.disconnect { background: #6b1a1a; border-color: #8a2a2a; }
+  .presets { display: flex; gap: 4px; }
+  .presets .btn { min-width: 32px; text-align: center; }
+  .status-bar {
+    font-size: 12px;
+    color: #666;
+    display: flex;
+    gap: 16px;
+    align-items: center;
+  }
+  .status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 4px;
+  }
+  .status-dot.off { background: #444; }
+  .status-dot.connecting { background: #b58900; }
+  .status-dot.on { background: #2aa198; }
+  .json-input {
+    width: 100%;
+    max-width: 800px;
+    margin-top: 12px;
+  }
+  .json-input textarea {
+    width: 100%;
+    height: 80px;
+    background: #1a1a1a;
+    border: 1px solid #333;
+    color: #8ec07c;
+    padding: 8px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 12px;
+    resize: vertical;
+  }
+  .json-input .btn { margin-top: 6px; }
+</style>
+</head>
+<body>
+
+<h1>COMMUTE LIVE — LED SIMULATOR</h1>
+
+<div class="matrix-wrap">
+  <canvas id="matrix"></canvas>
+</div>
+
+<div class="controls">
+  <div class="control-group">
+    <label>MQTT Broker (WebSocket)</label>
+    <input type="text" id="broker" value="ws://localhost:9001" placeholder="ws://host:port">
+  </div>
+  <div class="control-group">
+    <label>Username</label>
+    <input type="text" id="username" placeholder="optional">
+  </div>
+  <div class="control-group">
+    <label>Password</label>
+    <input type="text" id="password" placeholder="optional">
+  </div>
+  <div class="control-group">
+    <label>Device ID</label>
+    <input type="text" id="deviceId" placeholder="esp32-XXXXXXXXXXXX">
+  </div>
+  <div class="control-group">
+    <label>&nbsp;</label>
+    <button class="btn connect" id="connectBtn" onclick="toggleConnect()">Connect</button>
+  </div>
+</div>
+
+<div class="controls">
+  <div class="control-group">
+    <label>Preset</label>
+    <div class="presets" id="presetBtns">
+      <button class="btn active" onclick="setPreset(1)">1</button>
+      <button class="btn" onclick="setPreset(2)">2</button>
+      <button class="btn" onclick="setPreset(3)">3</button>
+      <button class="btn" onclick="setPreset(4)">4</button>
+      <button class="btn" onclick="setPreset(5)">5</button>
+    </div>
+  </div>
+  <div class="control-group">
+    <label>Scale</label>
+    <input type="number" id="scaleInput" value="10" min="4" max="20" onchange="updateScale()">
+  </div>
+</div>
+
+<div class="status-bar">
+  <span><span class="status-dot off" id="statusDot"></span><span id="statusText">Disconnected</span></span>
+  <span id="lastUpdate"></span>
+</div>
+
+<div class="json-input">
+  <label style="font-size:11px;text-transform:uppercase;color:#666;letter-spacing:0.5px;">Test JSON Payload</label>
+  <textarea id="jsonPayload" placeholder='{"displayType":1,"arrivalsToDisplay":2,"provider":"mta-subway","lines":[{"line":"A","destination":"Inwood","nextArrivals":[{"eta":"3"},{"eta":"8"}]}]}'></textarea>
+  <button class="btn" onclick="sendTestPayload()">Apply</button>
+</div>
+
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<script src="config.js" onerror="window.SIM_CONFIG={}"></script>
+<script src="bridge.js"></script>
+<script>
+let sim = null;
+let mqttClient = null;
+let W = 128, H = 32;
+let scale = 10;
+let currentPreset = 1;
+let connected = false;
+
+const canvas = document.getElementById('matrix');
+const ctx = canvas.getContext('2d');
+
+function initCanvas() {
+  canvas.width = W * scale;
+  canvas.height = H * scale;
+}
+
+function drawMatrix(rgbaPtr) {
+  const pixels = new Uint8ClampedArray(sim.HEAPU8.buffer, rgbaPtr, W * H * 4);
+
+  // PCB background
+  ctx.fillStyle = 'rgb(12,14,12)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const dotRadius = scale * 0.42;
+
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 4;
+      const r = pixels[i], g = pixels[i+1], b = pixels[i+2];
+
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.beginPath();
+      ctx.arc(x * scale + scale / 2, y * scale + scale / 2, dotRadius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // Panel seam at x=64
+  ctx.fillStyle = 'rgb(6,7,6)';
+  ctx.fillRect(64 * scale - 1, 0, 2, H * scale);
+}
+
+function render() {
+  const ptr = sim._wasm_get_pixels();
+  drawMatrix(ptr);
+}
+
+function applyPayload(jsonStr) {
+  const len = sim.lengthBytesUTF8(jsonStr) + 1;
+  const buf = sim._malloc(len);
+  sim.stringToUTF8(jsonStr, buf, len);
+  sim._wasm_apply_payload(buf, jsonStr.length);
+  sim._free(buf);
+  render();
+  document.getElementById('lastUpdate').textContent =
+    'Last update: ' + new Date().toLocaleTimeString();
+}
+
+function setPreset(n) {
+  currentPreset = n;
+  sim._wasm_set_display_type(n);
+  render();
+  const btns = document.querySelectorAll('#presetBtns .btn');
+  btns.forEach((b, i) => b.classList.toggle('active', i === n - 1));
+}
+
+function updateScale() {
+  scale = parseInt(document.getElementById('scaleInput').value) || 10;
+  if (scale < 4) scale = 4;
+  if (scale > 20) scale = 20;
+  initCanvas();
+  render();
+}
+
+function setStatus(state, text) {
+  const dot = document.getElementById('statusDot');
+  dot.className = 'status-dot ' + state;
+  document.getElementById('statusText').textContent = text;
+}
+
+function toggleConnect() {
+  if (connected) {
+    if (mqttClient) { mqttClient.end(); mqttClient = null; }
+    connected = false;
+    setStatus('off', 'Disconnected');
+    const btn = document.getElementById('connectBtn');
+    btn.textContent = 'Connect';
+    btn.className = 'btn connect';
+    return;
+  }
+
+  const broker = document.getElementById('broker').value;
+  const username = document.getElementById('username').value;
+  const password = document.getElementById('password').value;
+  const deviceId = document.getElementById('deviceId').value;
+
+  if (!deviceId) { alert('Enter a Device ID'); return; }
+
+  setStatus('connecting', 'Connecting...');
+
+  const opts = { clientId: 'web-simulator-' + Math.random().toString(36).substr(2, 8) };
+  if (username) opts.username = username;
+  if (password) opts.password = password;
+
+  mqttClient = mqtt.connect(broker, opts);
+
+  mqttClient.on('connect', () => {
+    connected = true;
+    const topic = '/device/' + deviceId + '/commands';
+    mqttClient.subscribe(topic);
+    setStatus('on', 'Connected — ' + topic);
+    const btn = document.getElementById('connectBtn');
+    btn.textContent = 'Disconnect';
+    btn.className = 'btn disconnect';
+  });
+
+  mqttClient.on('message', (topic, message) => {
+    const payload = message.toString();
+    applyPayload(payload);
+  });
+
+  mqttClient.on('error', (err) => {
+    setStatus('off', 'Error: ' + err.message);
+    connected = false;
+    const btn = document.getElementById('connectBtn');
+    btn.textContent = 'Connect';
+    btn.className = 'btn connect';
+  });
+
+  mqttClient.on('close', () => {
+    if (connected) {
+      connected = false;
+      setStatus('off', 'Disconnected');
+      const btn = document.getElementById('connectBtn');
+      btn.textContent = 'Connect';
+      btn.className = 'btn connect';
+    }
+  });
+}
+
+function sendTestPayload() {
+  const json = document.getElementById('jsonPayload').value.trim();
+  if (!json) return;
+  applyPayload(json);
+}
+
+// Boot
+SimModule().then(module => {
+  sim = module;
+  W = sim._wasm_get_width();
+  H = sim._wasm_get_height();
+  sim._wasm_init();
+  initCanvas();
+  render();
+
+  // Apply config from .env.simulator (loaded via serve.sh -> config.js)
+  const cfg = window.SIM_CONFIG || {};
+  if (cfg.broker)   document.getElementById('broker').value = cfg.broker;
+  if (cfg.username) document.getElementById('username').value = cfg.username;
+  if (cfg.password) document.getElementById('password').value = cfg.password;
+  if (cfg.deviceId) document.getElementById('deviceId').value = cfg.deviceId;
+});
+</script>
+</body>
+</html>
