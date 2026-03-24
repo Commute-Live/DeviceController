@@ -36,6 +36,20 @@ void copy_str(char *dst, size_t dstLen, const char *src) {
   dst[dstLen - 1] = '\0';
 }
 
+bool extract_json_bool_field(const String &json, const char *field, bool fallbackValue) {
+  String value = extract_json_string_field(json, field);
+  value.trim();
+  value.toLowerCase();
+
+  if (value == "true" || value == "1") {
+    return true;
+  }
+  if (value == "false" || value == "0") {
+    return false;
+  }
+  return fallbackValue;
+}
+
 void normalize_eta(const String &input, char *out, size_t outLen) {
   String eta = input;
   eta.trim();
@@ -506,6 +520,11 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
     return;
   }
 
+  if (cmdType == "disconnect_wifi") {
+    handle_disconnect_wifi_command(message);
+    return;
+  }
+
   String provider = extract_json_string_field(message, "provider");
   if (provider.length() == 0 || !parsing::is_supported_provider_id(provider)) {
     Serial.printf("[MQTT] Ignored: unsupported provider '%s'\n", provider.c_str());
@@ -643,6 +662,31 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   renderModel_.updatedAtMs = millis();
   renderDirty_ = true;
   publish_display_state();
+}
+
+void DeviceController::handle_disconnect_wifi_command(const String &message) {
+  const String reason = extract_json_string_field(message, "reason");
+  const bool clearCredentials = extract_json_bool_field(message, "clearCredentials", false);
+  const bool restartProvisioning = extract_json_bool_field(message, "restartProvisioning", false);
+
+  Serial.printf("[CMD] Disconnect WiFi requested reason=%s clearCredentials=%s restartProvisioning=%s\n",
+                reason.length() ? reason.c_str() : "(none)",
+                clearCredentials ? "true" : "false",
+                restartProvisioning ? "true" : "false");
+
+  deps_.mqttClient->disconnect(true);
+  deps_.networkManager->disconnect(clearCredentials, restartProvisioning);
+
+  if (restartProvisioning) {
+    bleProvisioner_.begin(runtimeConfig_.deviceId, runtimeConfig_.deviceId);
+  } else {
+    bleProvisioner_.stop();
+  }
+
+  renderModel_.hasData = false;
+  set_default_rows(renderModel_);
+  update_ui_state();
+  renderDirty_ = true;
 }
 
 void DeviceController::setup_http_routes() {

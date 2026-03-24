@@ -41,11 +41,13 @@ class BleProvisioner {
 
  private:
   static BleProvisioner *sInstance_;
-  void *statusChar_;  // NimBLECharacteristic* — opaque to avoid header pollution
-  OnCredentials credCb_;
-  void *credCbCtx_;
-  volatile bool credPending_;
-  BleCredentials pendingCreds_;
+  void *statusChar_ = nullptr;  // NimBLECharacteristic* — opaque to avoid header pollution
+  OnCredentials credCb_ = nullptr;
+  void *credCbCtx_ = nullptr;
+  bool initialized_ = false;
+  bool advertising_ = false;
+  volatile bool credPending_ = false;
+  BleCredentials pendingCreds_{};
 };
 
 }  // namespace ble

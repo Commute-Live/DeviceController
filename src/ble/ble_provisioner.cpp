@@ -12,6 +12,21 @@ static const char *kStatusUuid    = "a1b2c3d4-0002-4a5b-8c7d-9e0f1a2b3c4d";
 
 BleProvisioner *BleProvisioner::sInstance_ = nullptr;
 
+namespace {
+
+void set_ready_status(void *statusChar, const char *deviceId) {
+  if (!statusChar || !deviceId) {
+    return;
+  }
+
+  auto *chr = reinterpret_cast<NimBLECharacteristic *>(statusChar);
+  char readyJson[128];
+  snprintf(readyJson, sizeof(readyJson), "{\"status\":\"ready\",\"deviceId\":\"%s\"}", deviceId);
+  chr->setValue(readyJson);
+}
+
+}  // namespace
+
 // GATT write callback — forwards to static handler.
 class ProvisionWriteCallback : public NimBLECharacteristicCallbacks {
  public:
@@ -24,39 +39,50 @@ class ProvisionWriteCallback : public NimBLECharacteristicCallbacks {
 static ProvisionWriteCallback sWriteCallback;
 
 void BleProvisioner::begin(const char *bleName, const char *deviceId) {
-  sInstance_    = this;
-  credCb_       = nullptr;
-  credCbCtx_    = nullptr;
-  credPending_  = false;
-  statusChar_   = nullptr;
+  sInstance_ = this;
+  credPending_ = false;
   memset(&pendingCreds_, 0, sizeof(pendingCreds_));
 
-  NimBLEDevice::init(bleName);   // BLE advertised name — what the app scans for
-  NimBLEDevice::setPower(ESP_PWR_LVL_P9);
+  if (!initialized_) {
+    credCb_ = nullptr;
+    credCbCtx_ = nullptr;
+    statusChar_ = nullptr;
 
-  NimBLEServer  *server  = NimBLEDevice::createServer();
-  NimBLEService *service = server->createService(kServiceUuid);
+    NimBLEDevice::init(bleName);   // BLE advertised name — what the app scans for
+    NimBLEDevice::setPower(ESP_PWR_LVL_P9);
 
-  // PROVISION characteristic: app writes WiFi credentials as JSON.
-  service->createCharacteristic(kProvisionUuid, NIMBLE_PROPERTY::WRITE)
-         ->setCallbacks(&sWriteCallback);
+    NimBLEServer  *server  = NimBLEDevice::createServer();
+    NimBLEService *service = server->createService(kServiceUuid);
 
-  // STATUS characteristic: device notifies connection outcome.
-  NimBLECharacteristic *statusChr =
-      service->createCharacteristic(kStatusUuid, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
-  char readyJson[128];
-  snprintf(readyJson, sizeof(readyJson), "{\"status\":\"ready\",\"deviceId\":\"%s\"}", deviceId);
-  statusChr->setValue(readyJson);
-  statusChar_ = statusChr;
+    // PROVISION characteristic: app writes WiFi credentials as JSON.
+    service->createCharacteristic(kProvisionUuid, NIMBLE_PROPERTY::WRITE)
+           ->setCallbacks(&sWriteCallback);
 
-  service->start();
+    // STATUS characteristic: device notifies connection outcome.
+    NimBLECharacteristic *statusChr =
+        service->createCharacteristic(kStatusUuid, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+    statusChar_ = statusChr;
+    set_ready_status(statusChar_, deviceId);
 
+    service->start();
+
+    NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
+    adv->addServiceUUID(kServiceUuid);
+    adv->setScanResponse(true);
+    adv->start();
+    initialized_ = true;
+    advertising_ = true;
+    Serial.printf("[BLE] Advertising as '%s' (deviceId=%s)\n", bleName, deviceId);
+    return;
+  }
+
+  set_ready_status(statusChar_, deviceId);
   NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
-  adv->addServiceUUID(kServiceUuid);
-  adv->setScanResponse(true);
-  adv->start();
-
-  Serial.printf("[BLE] Advertising as '%s' (deviceId=%s)\n", bleName, deviceId);
+  if (adv) {
+    adv->start();
+    advertising_ = true;
+  }
+  Serial.printf("[BLE] Advertising resumed as '%s' (deviceId=%s)\n", bleName, deviceId);
 }
 
 void BleProvisioner::stop() {
@@ -64,6 +90,7 @@ void BleProvisioner::stop() {
   if (adv) {
     adv->stop();
   }
+  advertising_ = false;
   Serial.println("[BLE] Advertising stopped");
 }
 

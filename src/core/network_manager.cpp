@@ -44,6 +44,7 @@ bool has_explicit_bootstrap_wifi(const NetworkConfig &config) {
 NetworkManager::NetworkManager()
     : config_{},
       state_(NetworkState::kDisconnected),
+      autoReconnectEnabled_(true),
       hasSavedCredentials_(false),
       recoveryApEnabled_(false),
       savedSsid_(),
@@ -57,11 +58,13 @@ NetworkManager::NetworkManager()
 
 bool NetworkManager::begin(const NetworkConfig &config) {
   config_ = config;
+  autoReconnectEnabled_ = true;
   retryCount_ = 0;
   nextRetryAtMs_ = 0;
   recoveryApEnabled_ = false;
 
   WiFi.mode(WIFI_AP_STA);
+  WiFi.setAutoReconnect(false);
   WiFi.disconnect();
   delay(100);
 
@@ -128,6 +131,15 @@ void NetworkManager::tick(uint32_t nowMs) {
     return;
   }
 
+  if (!autoReconnectEnabled_) {
+    if (recoveryApEnabled_) {
+      transition_to(NetworkState::kApMode);
+    } else {
+      transition_to(NetworkState::kDisconnected);
+    }
+    return;
+  }
+
   if (!hasSavedCredentials_) {
     enable_recovery_ap();
     return;
@@ -142,10 +154,37 @@ void NetworkManager::tick(uint32_t nowMs) {
   connectingStartMs_ = nowMs;
 }
 
-void NetworkManager::request_reconnect() {
+void NetworkManager::disconnect(bool clearCredentials, bool restartProvisioning) {
+  autoReconnectEnabled_ = false;
   connectingStartMs_ = 0;
   retryCount_ = 0;
   nextRetryAtMs_ = 0;
+
+  if (clearCredentials) {
+    savedSsid_ = "";
+    savedPassword_ = "";
+    savedUsername_ = "";
+    hasSavedCredentials_ = false;
+    wifi_manager::clear_credentials();
+  }
+
+  WiFi.setAutoReconnect(false);
+  WiFi.disconnect(false, clearCredentials);
+
+  if (restartProvisioning) {
+    enable_recovery_ap();
+    return;
+  }
+
+  transition_to(NetworkState::kDisconnected);
+}
+
+void NetworkManager::request_reconnect() {
+  autoReconnectEnabled_ = true;
+  connectingStartMs_ = 0;
+  retryCount_ = 0;
+  nextRetryAtMs_ = 0;
+  WiFi.setAutoReconnect(false);
   WiFi.disconnect(false, false);
   transition_to(NetworkState::kConnecting);
 }
@@ -154,6 +193,7 @@ void NetworkManager::set_credentials(const char *ssid, const char *password, con
   savedSsid_ = ssid ? ssid : "";
   savedPassword_ = password ? password : "";
   savedUsername_ = username ? username : "";
+  autoReconnectEnabled_ = true;
   hasSavedCredentials_ = savedSsid_.length() > 0;
   if (hasSavedCredentials_) {
     wifi_manager::save_credentials(savedSsid_, savedPassword_, savedUsername_);
