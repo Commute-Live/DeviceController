@@ -381,8 +381,7 @@ bool DeviceController::begin() {
   deps_.mqttClient->set_command_callback(&DeviceController::on_mqtt_command, this);
   activeController_ = this;
   setup_http_routes();
-  // Always start BLE so the user can re-provision even if stale credentials exist.
-  // Advertising stops automatically once WiFi connects successfully.
+  // Always start BLE so the user can provision or re-provision the device.
   // Use deviceId as the BLE name so the app can get the ID directly from the scan
   // without needing to read the STATUS characteristic (which is unreliable on iOS).
   bleProvisioner_.begin(runtimeConfig_.deviceId, runtimeConfig_.deviceId);
@@ -409,7 +408,7 @@ void DeviceController::tick(uint32_t nowMs) {
     bleProvisioner_.notify_status("{\"status\":\"connecting\"}");
     deps_.mqttClient->disconnect(true);
     deps_.networkManager->set_credentials(creds.ssid, creds.password, creds.username);
-    // BLE provisioner is no longer needed after credentials arrive.
+    // Stop BLE advertising while the device switches to its provisioned network.
     bleProvisioner_.stop();
   }
   deps_.networkManager->tick(nowMs);
@@ -474,6 +473,33 @@ void DeviceController::handle_network_state(NetworkState state) {
   update_ui_state();
 }
 
+void DeviceController::handle_disconnect_wifi_command(const String &message) {
+  const String reason = extract_json_string_field(message, "reason");
+  if (reason.length() > 0) {
+    Serial.printf("[CMD] Disconnect WiFi requested: %s\n", reason.c_str());
+  } else {
+    Serial.println("[CMD] Disconnect WiFi requested");
+  }
+
+  deps_.mqttClient->disconnect(true);
+  deps_.networkManager->clear_credentials_and_enter_setup_mode();
+
+  set_default_rows(renderModel_);
+  renderModel_.hasData = false;
+  renderDirty_ = true;
+
+  char readyJson[128];
+  snprintf(readyJson, sizeof(readyJson),
+           "{\"status\":\"ready\",\"deviceId\":\"%s\"}",
+           runtimeConfig_.deviceId);
+  bleProvisioner_.notify_status(readyJson);
+  if (!bleProvisioner_.restart_advertising()) {
+    Serial.println("[BLE] Failed to restart advertising after WiFi disconnect");
+  }
+
+  update_ui_state();
+}
+
 void DeviceController::handle_command(const char *topic, const uint8_t *payload, size_t len) {
   if (!payload || len == 0 || len >= kMaxPayloadLen) {
     return;
@@ -494,6 +520,11 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
     if (url.length() > 0) {
       perform_ota_update(url);
     }
+    return;
+  }
+
+  if (cmdType == "disconnect_wifi") {
+    handle_disconnect_wifi_command(message);
     return;
   }
 

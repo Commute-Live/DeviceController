@@ -531,6 +531,7 @@ struct LiveState {
   core::RenderModel model{};
   bool hasUpdate = false;
   bool connected = false;
+  std::string deviceId;
 };
 
 static LiveState *gLiveState = nullptr;
@@ -679,6 +680,13 @@ void apply_mqtt_payload(const std::string &payload, LiveState &live) {
 void mqtt_on_message(struct mosquitto *, void *userdata, const struct mosquitto_message *msg) {
   if (!msg || !msg->payload || msg->payloadlen <= 0) return;
   auto *live = static_cast<LiveState *>(userdata);
+
+  // Only process messages for the configured device
+  if (msg->topic && !live->deviceId.empty()) {
+    std::string expected = "/device/" + live->deviceId + "/commands";
+    if (expected != msg->topic) return;
+  }
+
   std::string payload(static_cast<const char *>(msg->payload), static_cast<size_t>(msg->payloadlen));
   fprintf(stderr, "[MQTT] Received %d bytes on %s\n", msg->payloadlen, msg->topic ? msg->topic : "?");
   apply_mqtt_payload(payload, *live);
@@ -692,8 +700,13 @@ void mqtt_on_connect(struct mosquitto *mosq, void *userdata, int rc) {
       std::lock_guard<std::mutex> lock(live->mu);
       live->connected = true;
     }
-    // Subscribe to all device command topics (wildcard)
-    mosquitto_subscribe(mosq, nullptr, "/device/+/commands", 0);
+    // Subscribe only to the configured device's topic
+    if (!live->deviceId.empty()) {
+      std::string topic = "/device/" + live->deviceId + "/commands";
+      mosquitto_subscribe(mosq, nullptr, topic.c_str(), 0);
+    } else {
+      mosquitto_subscribe(mosq, nullptr, "/device/+/commands", 0);
+    }
   } else {
     fprintf(stderr, "[MQTT] Connect failed rc=%d\n", rc);
   }
@@ -733,10 +746,10 @@ struct mosquitto *start_mqtt(const SimOptions &opts, LiveState &live) {
   // Start the network loop in a background thread
   mosquitto_loop_start(mosq);
 
-  // If a specific device ID was given, also subscribe to its topic directly
+  // Store device ID in live state for message filtering
+  live.deviceId = opts.deviceId;
   if (!opts.deviceId.empty()) {
-    std::string topic = "/device/" + opts.deviceId + "/commands";
-    fprintf(stderr, "[MQTT] Will subscribe to: %s\n", topic.c_str());
+    fprintf(stderr, "[MQTT] Will subscribe to: /device/%s/commands\n", opts.deviceId.c_str());
   }
 
   return mosq;

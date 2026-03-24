@@ -59,6 +59,18 @@ void BleProvisioner::begin(const char *bleName, const char *deviceId) {
   Serial.printf("[BLE] Advertising as '%s' (deviceId=%s)\n", bleName, deviceId);
 }
 
+bool BleProvisioner::restart_advertising() {
+  NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
+  if (!adv || !statusChar_) {
+    return false;
+  }
+
+  adv->stop();
+  adv->start();
+  Serial.println("[BLE] Advertising restarted");
+  return true;
+}
+
 void BleProvisioner::stop() {
   NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
   if (adv) {

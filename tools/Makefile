@@ -19,7 +19,14 @@ SHARED_SRCS := \
 	$(SRCDIR)/display/badge_renderer.cpp \
 	$(SRCDIR)/transit/mta_color_map.cpp
 
-.PHONY: all simulator simulator-mqtt preview clean
+# Emscripten (WebAssembly build)
+EMCXX    ?= em++
+EM_FLAGS := -std=c++17 -O2 -s WASM=1 \
+            -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap","lengthBytesUTF8","stringToUTF8"]' \
+            -s EXPORTED_FUNCTIONS='["_malloc","_free","_wasm_init","_wasm_get_width","_wasm_get_height","_wasm_get_pixels","_wasm_apply_payload","_wasm_set_display_type"]' \
+            -s ALLOW_MEMORY_GROWTH=1 -s MODULARIZE=1 -s EXPORT_NAME="SimModule"
+
+.PHONY: all simulator simulator-mqtt preview web clean
 
 all: simulator-mqtt preview
 
@@ -37,5 +44,11 @@ preview: led_preview
 led_preview: led_preview.cpp $(SHARED_SRCS)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $^
 
+# WebAssembly simulator (requires Emscripten SDK)
+web: web/bridge.js
+
+web/bridge.js: web/bridge.cpp $(SHARED_SRCS)
+	$(EMCXX) $(EM_FLAGS) $(INCLUDES) -o $@ $^
+
 clean:
-	rm -f led_simulator led_simulator_mqtt led_preview
+	rm -f led_simulator led_simulator_mqtt led_preview web/bridge.js web/bridge.wasm

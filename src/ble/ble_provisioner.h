@@ -30,6 +30,7 @@ class BleProvisioner {
   // bleName   — advertised BLE device name (e.g. "CommuteLive-6E20", used for scanning)
   // deviceId  — real device ID put in STATUS char (e.g. "esp32-ABCD1234", used for registration)
   void begin(const char *bleName, const char *deviceId);
+  bool restart_advertising();
   void stop();
   void notify_status(const char *statusJson);
   void set_credentials_callback(OnCredentials cb, void *ctx);

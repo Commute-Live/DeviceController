@@ -58,6 +58,7 @@ class MqttClient final {
   PubSubClient mqtt_;
 
   bool connected_;
+  bool wifiOfflineLogged_;
   uint32_t nextRetryAtMs_;
   uint8_t retryCount_;
 

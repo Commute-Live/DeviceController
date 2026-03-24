@@ -9,3 +9,6 @@ include/secrets.h
 tools/.env.simulator
 tools/led_simulator
 tools/led_preview
+tools/web/bridge.js
+tools/web/bridge.wasm
+tools/web/config.js

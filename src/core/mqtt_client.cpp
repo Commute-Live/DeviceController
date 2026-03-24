@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "core/debug_log.h"
+
 namespace core {
 
 MqttClient *MqttClient::activeInstance_ = nullptr;
@@ -38,6 +40,7 @@ MqttClient::MqttClient()
       wifiClient_(),
       mqtt_(wifiClient_),
       connected_(false),
+      wifiOfflineLogged_(false),
       nextRetryAtMs_(0),
       retryCount_(0),
       commandCallback_(nullptr),
@@ -47,6 +50,7 @@ bool MqttClient::begin(const MqttConfig &config, const MqttTopics &topics) {
   config_ = config;
   topics_ = topics;
   connected_ = false;
+  wifiOfflineLogged_ = false;
   nextRetryAtMs_ = 0;
   retryCount_ = 0;
 
@@ -56,6 +60,10 @@ bool MqttClient::begin(const MqttConfig &config, const MqttTopics &topics) {
 
   activeInstance_ = this;
   mqtt_.setCallback(&MqttClient::global_on_message);
+  debug::logf("MQTT", "Configured broker host='%s' port=%u clientId='%s'",
+              config_.host,
+              static_cast<unsigned>(config_.port),
+              config_.clientId);
   return true;
 }
 
@@ -72,14 +80,28 @@ bool MqttClient::connected() {
 
 bool MqttClient::ensure_connected(uint32_t nowMs) {
   if (WiFi.status() != WL_CONNECTED) {
+    if (connected_) {
+      debug::logf("MQTT", "Connection lost: Wi-Fi went offline; broker reconnect paused");
+    } else if (!wifiOfflineLogged_) {
+      debug::logf("MQTT", "Reconnect paused because Wi-Fi is offline");
+    }
     connected_ = false;
+    wifiOfflineLogged_ = true;
     return false;
   }
+  wifiOfflineLogged_ = false;
 
   if (mqtt_.connected()) {
     connected_ = true;
     retryCount_ = 0;
     return true;
+  }
+
+  if (connected_) {
+    const int stateCode = mqtt_.state();
+    debug::logf("MQTT", "Connection lost: state=%d (%s)",
+                stateCode,
+                debug::mqtt_state_name(stateCode));
   }
 
   connected_ = false;
@@ -89,6 +111,11 @@ bool MqttClient::ensure_connected(uint32_t nowMs) {
 
   const bool hasUser = config_.username[0] != '\0';
   const bool hasPass = config_.password[0] != '\0';
+  debug::logf("MQTT", "Connect attempt: host='%s' port=%u clientId='%s'%s",
+              config_.host,
+              static_cast<unsigned>(config_.port),
+              config_.clientId,
+              hasUser && hasPass ? " auth=username/password" : "");
 
   bool ok = false;
   if (hasUser && hasPass) {
@@ -101,23 +128,27 @@ bool MqttClient::ensure_connected(uint32_t nowMs) {
     connected_ = true;
     retryCount_ = 0;
     nextRetryAtMs_ = nowMs;
+    debug::logf("MQTT", "Connected: broker session established");
 
     if (!mqtt_.subscribe(topics_.command)) {
-      Serial.printf("[MQTT] Failed to subscribe command topic %s\n", topics_.command);
+      debug::logf("MQTT", "Subscribe failed: topic='%s'", topics_.command);
     } else {
-      Serial.printf("[MQTT] Subscribed %s\n", topics_.command);
+      debug::logf("MQTT", "Subscribed: topic='%s'", topics_.command);
     }
 
-    if (!publish_presence("online", true)) {
-      Serial.printf("[MQTT] Failed to publish presence=online on %s\n", topics_.presence);
-    }
+    publish_presence("online", true);
     return true;
   }
 
+  const int failureState = mqtt_.state();
   const uint32_t waitMs = bounded_backoff(retryCount_);
   retryCount_++;
   nextRetryAtMs_ = nowMs + waitMs;
-  Serial.printf("[MQTT] Connect failed rc=%d, retry in %lu ms\n", mqtt_.state(), static_cast<unsigned long>(waitMs));
+  debug::logf("MQTT", "Connect failed: state=%d (%s), retry in %lu ms (attempt %u)",
+              failureState,
+              debug::mqtt_state_name(failureState),
+              static_cast<unsigned long>(waitMs),
+              static_cast<unsigned>(retryCount_));
   return false;
 }
 
@@ -126,15 +157,16 @@ void MqttClient::disconnect(bool publishOffline) {
     if (publishOffline) {
       const bool sent = mqtt_.publish(topics_.presence, "offline", true);
       if (sent) {
-        Serial.printf("[MQTT] Published presence=offline -> %s\n", topics_.presence);
+        debug::logf("MQTT", "Published presence=offline -> %s", topics_.presence);
       } else {
-        Serial.printf("[MQTT] Failed to publish presence=offline -> %s\n", topics_.presence);
+        debug::logf("MQTT", "Failed to publish presence=offline -> %s", topics_.presence);
       }
     }
     mqtt_.disconnect();
-    Serial.println("[MQTT] Disconnected");
+    debug::logf("MQTT", "Disconnected broker session");
   }
   connected_ = false;
+  wifiOfflineLogged_ = false;
 }
 
 void MqttClient::set_command_callback(CommandCallback callback, void *ctx) {
@@ -155,9 +187,9 @@ bool MqttClient::publish_presence(const char *payload, bool retained) {
   }
   const bool ok = mqtt_.publish(topics_.presence, payload, retained);
   if (ok) {
-    Serial.printf("[MQTT] Published presence=%s -> %s\n", payload ? payload : "", topics_.presence);
+    debug::logf("MQTT", "Published presence=%s -> %s", payload ? payload : "", topics_.presence);
   } else {
-    Serial.printf("[MQTT] Failed to publish presence=%s -> %s\n", payload ? payload : "", topics_.presence);
+    debug::logf("MQTT", "Failed to publish presence=%s -> %s", payload ? payload : "", topics_.presence);
   }
   return ok;
 }
