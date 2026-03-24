@@ -18,6 +18,8 @@ constexpr uint8_t kMinDisplayType = 1;
 constexpr uint8_t kMaxDisplayType = 5;
 constexpr uint8_t kTextSizeTiny = 0;
 constexpr uint8_t kTextSizeTinyPlus = 255;
+constexpr int16_t kAppQrSizePx = 31;
+constexpr int16_t kAppQrGapPx = 2;
 
 struct TransitPresetConfig {
   int16_t topMarginTwoRow;
@@ -165,6 +167,83 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
 
   const bool transitView = model.hasData && model.uiState == UiState::kTransit;
   if (!transitView) {
+    const bool showAppQr =
+        model.uiState == UiState::kSetupMode &&
+        static_cast<int16_t>(width_) >= (kAppQrSizePx + 48) &&
+        static_cast<int16_t>(height_) >= kAppQrSizePx;
+    const int16_t leftPaneWidth =
+        showAppQr ? static_cast<int16_t>(width_) - kAppQrSizePx - kAppQrGapPx : static_cast<int16_t>(width_);
+
+    if (showAppQr) {
+      const VerticalLayoutResult home = verticalLayout_.compute(height_, 3);
+
+      {
+        const RowFrame frame = home.rows[0];
+        const int16_t tinyCharW = 4;
+        const int16_t tinyH = 6;
+        const char *title = "PAIR IN APP";
+        const uint8_t maxChars =
+            static_cast<uint8_t>((leftPaneWidth > 2) ? ((leftPaneWidth - 2) / tinyCharW) : 0);
+        const char *trimmed = trim_for_width(title, maxChars, out);
+        int16_t titleY = static_cast<int16_t>(frame.yStart + ((frame.height - tinyH) / 2));
+        if (titleY < frame.yStart) titleY = frame.yStart;
+
+        DrawCommand title{};
+        title.type = DrawCommandType::kText;
+        title.x = 2;
+        title.y = titleY;
+        title.color = kColorWhite;
+        title.bg = kColorBlack;
+        title.size = kTextSizeTiny;
+        title.text = trimmed;
+        out.push(title);
+      }
+
+      {
+        const RowFrame frame = home.rows[1];
+        const int16_t tinyCharW = 4;
+        const int16_t tinyH = 6;
+        const uint8_t maxChars =
+            static_cast<uint8_t>((leftPaneWidth > 2) ? ((leftPaneWidth - 2) / tinyCharW) : 0);
+        int16_t ssidY = static_cast<int16_t>(frame.yStart + ((frame.height - tinyH) / 2));
+        if (ssidY < frame.yStart) ssidY = frame.yStart;
+
+        DrawCommand ssidLine{};
+        ssidLine.type = DrawCommandType::kText;
+        ssidLine.x = 2;
+        ssidLine.y = ssidY;
+        ssidLine.color = kColorCyan;
+        ssidLine.bg = kColorBlack;
+        ssidLine.size = kTextSizeTiny;
+        ssidLine.text = trim_for_width(model.apSsid[0] ? model.apSsid : "CommuteLive", maxChars, out);
+        out.push(ssidLine);
+      }
+
+      {
+        const RowFrame frame = home.rows[2];
+        const int16_t tinyCharW = 4;
+        const int16_t tinyH = 6;
+        const uint8_t maxChars =
+            static_cast<uint8_t>((leftPaneWidth > 2) ? ((leftPaneWidth - 2) / tinyCharW) : 0);
+        char pinBuf[20];
+        snprintf(pinBuf, sizeof(pinBuf), "PIN: %s", model.apPin[0] ? model.apPin : "--------");
+        int16_t pinY = static_cast<int16_t>(frame.yStart + ((frame.height - tinyH) / 2));
+        if (pinY < frame.yStart) pinY = frame.yStart;
+
+        DrawCommand pinLine{};
+        pinLine.type = DrawCommandType::kText;
+        pinLine.x = 2;
+        pinLine.y = pinY;
+        pinLine.color = kColorAmber;
+        pinLine.bg = kColorBlack;
+        pinLine.size = kTextSizeTiny;
+        pinLine.text = trim_for_width(pinBuf, maxChars, out);
+        out.push(pinLine);
+      }
+
+      return;
+    }
+
     const VerticalLayoutResult home = verticalLayout_.compute(height_, 3);
     const uint8_t homeFont = height_ >= 64 ? 2 : 1;
     const int16_t charW = static_cast<int16_t>(6 * homeFont);

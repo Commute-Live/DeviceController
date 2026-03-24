@@ -23,7 +23,43 @@ constexpr uint32_t kTelemetryEveryMs = 30000;
 constexpr uint32_t kMinRenderGapMs = 40;
 constexpr uint8_t kMinDisplayType = 1;
 constexpr uint8_t kMaxDisplayType = 5;
+constexpr int16_t kAppQrSizePx = 31;
+constexpr int16_t kAppQrInsetPx = 1;
 display::BadgeRenderer gBadgeRenderer;
+
+constexpr const char *kAppQrModules[kAppQrSizePx] = {
+    "0000000000000000000000000000000",
+    "0111111100000000111111011111110",
+    "0100000100111100000001010000010",
+    "0101110101100001010011010111010",
+    "0101110101100000011110010111010",
+    "0101110101101111101111010111010",
+    "0100000101011111111001010000010",
+    "0111111101010101010101011111110",
+    "0000000001010110100010000000000",
+    "0101111100010001101000011111000",
+    "0111101000010100110111011100010",
+    "0111011101100000000100001100000",
+    "0001101010010101010011001010100",
+    "0111101111111100011010000011000",
+    "0110001000010111100010011100010",
+    "0001011110000011110101001111000",
+    "0001101001111010100101101000100",
+    "0101011111001001101000000011000",
+    "0111101010101100110011111101010",
+    "0100000110000000000100001001000",
+    "0101011001111101010111001000100",
+    "0101100101110000010101111101110",
+    "0000000001010011101111000111110",
+    "0111111100100111111011010111000",
+    "0100000101110110101111000100010",
+    "0101110101110101100001111101110",
+    "0101110101010010110110000011000",
+    "0101110101110010000101111111100",
+    "0100000100001000010001011010100",
+    "0111111101001101010110100101000",
+    "0000000000000000000000000000000",
+};
 
 void copy_str(char *dst, size_t dstLen, const char *src) {
   if (dstLen == 0) {
@@ -385,6 +421,26 @@ const char *network_state_name(NetworkState state) {
       return "kApMode";
     default:
       return "kUnknown";
+  }
+}
+
+void draw_app_qr(DisplayEngine &display, const DisplayGeometry &geometry) {
+  if (geometry.totalWidth < static_cast<uint16_t>(kAppQrSizePx + 32) ||
+      geometry.totalHeight < static_cast<uint16_t>(kAppQrSizePx)) {
+    return;
+  }
+
+  const int16_t qrX = static_cast<int16_t>(geometry.totalWidth - kAppQrSizePx - kAppQrInsetPx);
+  const int16_t qrY = static_cast<int16_t>((geometry.totalHeight - kAppQrSizePx) / 2);
+  display.fill_rect(qrX, qrY, kAppQrSizePx, kAppQrSizePx, 0xFFFF);
+
+  for (int16_t row = 0; row < kAppQrSizePx; ++row) {
+    const char *modules = kAppQrModules[row];
+    for (int16_t col = 0; col < kAppQrSizePx; ++col) {
+      if (modules[col] == '1') {
+        display.draw_pixel(static_cast<int16_t>(qrX + col), static_cast<int16_t>(qrY + row), 0x0000);
+      }
+    }
   }
 }
 
@@ -924,6 +980,10 @@ void DeviceController::render_frame(uint32_t nowMs) {
       default:
         break;
     }
+  }
+
+  if (renderModel_.uiState == UiState::kSetupMode && !renderModel_.hasData) {
+    draw_app_qr(*deps_.displayEngine, deps_.displayEngine->geometry());
   }
 
   deps_.displayEngine->present();
