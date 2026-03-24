@@ -6,19 +6,23 @@
 #include <esp_wpa2.h>
 #include <string.h>
 
+#include "core/logging.h"
+
 namespace wifi_manager {
 
 static Preferences prefs;
 
 bool start_ap(const char *apSsid, const char *apPassword) {
-  Serial.println("[ESP] Starting ESP32 WIFI");
+  DCTRL_LOGI("WIFI", "Starting soft AP ssid=%s password=%s", core::logging::safe_str(apSsid),
+             core::logging::safe_str(apPassword));
   WiFi.mode(WIFI_AP_STA);
 
   bool success = WiFi.softAP(apSsid, apPassword);
   if (success) {
-    Serial.println("[ESP] ESP WiFi started!");
+    DCTRL_LOGI("WIFI", "Soft AP started ssid=%s apIp=%s", core::logging::safe_str(apSsid),
+               WiFi.softAPIP().toString().c_str());
   } else {
-    Serial.println("[ESP] Failed to connect to ESP WiFi");
+    DCTRL_LOGE("WIFI", "Soft AP start failed ssid=%s", core::logging::safe_str(apSsid));
   }
 
   return success;
@@ -30,7 +34,10 @@ void save_credentials(const String &ssid, const String &password, const String &
   prefs.putString("pass", password);
   prefs.putString("user", user);
   prefs.end();
-  Serial.println("[ESP] WiFi credentials saved");
+  DCTRL_LOGI("WIFI", "Saved credentials ssid=%s password=%s enterprise=%s",
+             ssid.c_str(),
+             password.c_str(),
+             core::logging::bool_str(user.length() > 0));
 }
 
 bool load_credentials(String &ssid, String &password, String &user) {
@@ -41,19 +48,27 @@ bool load_credentials(String &ssid, String &password, String &user) {
   prefs.end();
 
   if (ssid.length() > 0) {
-    Serial.println("[ESP] Found saved WiFi credentials");
+    DCTRL_LOGI("WIFI", "Loaded saved credentials ssid=%s password=%s enterprise=%s",
+               ssid.c_str(),
+               password.c_str(),
+               core::logging::bool_str(user.length() > 0));
     return true;
   }
+  DCTRL_LOGW("WIFI", "No saved WiFi credentials found in NVS");
   return false;
 }
 
 void begin_station(const char *ssid, const char *password, const char *username) {
+  DCTRL_LOGI("WIFI", "begin_station ssid=%s password=%s enterprise=%s",
+             core::logging::safe_str(ssid),
+             core::logging::safe_str(password),
+             core::logging::bool_str(username && strlen(username) > 0));
   WiFi.mode(WIFI_AP_STA);
   WiFi.disconnect(false, false);
   delay(100);
 
   if (username && strlen(username) > 0) {
-    Serial.println("[ESP] Using WPA2-Enterprise (async)");
+    DCTRL_LOGI("WIFI", "Configuring WPA2-Enterprise for async connect user=%s", username);
     esp_wifi_sta_wpa2_ent_disable();
     esp_wifi_sta_wpa2_ent_set_identity((uint8_t *)username, strlen(username));
     esp_wifi_sta_wpa2_ent_set_username((uint8_t *)username, strlen(username));
@@ -66,7 +81,9 @@ void begin_station(const char *ssid, const char *password, const char *username)
     esp_wifi_sta_wpa2_ent_disable();
     WiFi.begin(ssid, password);
   }
-  Serial.printf("[ESP] WiFi begin (async): %s\n", ssid);
+  DCTRL_LOGI("WIFI", "Async WiFi.begin issued ssid=%s mode=%s",
+             core::logging::safe_str(ssid),
+             username && strlen(username) > 0 ? "enterprise" : "personal");
 }
 
 void clear_credentials() {
@@ -75,7 +92,7 @@ void clear_credentials() {
   prefs.remove("pass");
   prefs.remove("user");
   prefs.end();
-  Serial.println("[ESP] WiFi credentials cleared");
+  DCTRL_LOGI("WIFI", "Cleared saved WiFi credentials");
 }
 
 void build_ap_ssid(char *out, size_t outLen) {
@@ -96,19 +113,23 @@ String generate_or_load_ap_password() {
     buf[8] = '\0';
     pass = String(buf);
     prefs.putString("ap_pass", pass);
-    Serial.println("[ESP] Generated new AP password");
+    DCTRL_LOGI("WIFI", "Generated new AP password password=%s", pass.c_str());
   }
   prefs.end();
   return pass;
 }
 
 bool connect_station(const char *ssid, const char *password, const char *username) {
+  DCTRL_LOGI("WIFI", "connect_station ssid=%s password=%s enterprise=%s",
+             core::logging::safe_str(ssid),
+             core::logging::safe_str(password),
+             core::logging::bool_str(username && strlen(username) > 0));
   WiFi.mode(WIFI_AP_STA);
   WiFi.disconnect(true, true);
   delay(100);
 
   if (username && strlen(username) > 0) {
-    Serial.println("[ESP] Using WPA2-Enterprise");
+    DCTRL_LOGI("WIFI", "Configuring WPA2-Enterprise for blocking connect user=%s", username);
     esp_wifi_sta_wpa2_ent_disable();
     esp_wifi_sta_wpa2_ent_set_identity((uint8_t *)username, strlen(username));
     esp_wifi_sta_wpa2_ent_set_username((uint8_t *)username, strlen(username));
@@ -124,24 +145,33 @@ bool connect_station(const char *ssid, const char *password, const char *usernam
 
   int timeout = 15;
   while (WiFi.status() != WL_CONNECTED && timeout--) {
-    Serial.print("trying...");
+    DCTRL_LOGD("WIFI", "Blocking connect poll remaining=%d status=%s (%d)",
+               timeout,
+               core::logging::wifi_status_name(WiFi.status()),
+               WiFi.status());
     delay(500);
   }
 
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf(
-        "[WIFI] Connected to %s with IP %s\n",
-        WiFi.SSID().c_str(),
-        WiFi.localIP().toString().c_str());
+    DCTRL_LOGI("WIFI", "Blocking connect success ssid=%s ip=%s gateway=%s rssi=%d",
+               WiFi.SSID().c_str(),
+               WiFi.localIP().toString().c_str(),
+               WiFi.gatewayIP().toString().c_str(),
+               WiFi.RSSI());
     return true;
   }
 
+  DCTRL_LOGW("WIFI", "Blocking connect failed ssid=%s finalStatus=%s (%d)",
+             core::logging::safe_str(ssid),
+             core::logging::wifi_status_name(WiFi.status()),
+             WiFi.status());
   WiFi.disconnect(true, true);
   delay(200);
   return false;
 }
 
 static int fresh_scan_networks() {
+  DCTRL_LOGI("WIFI", "Starting fresh network scan");
   WiFi.setAutoReconnect(false);
   WiFi.disconnect(true, true);
   delay(200);
@@ -152,11 +182,13 @@ static int fresh_scan_networks() {
   int n = WiFi.scanNetworks(false, true);
 
   WiFi.setAutoReconnect(true);
+  DCTRL_LOGI("WIFI", "Finished network scan count=%d", n);
   return n;
 }
 
 bool handle_connect_request(WebServer &server, String &connectedSsid, String &connectedPassword, String &connectedUser) {
   if (!server.hasArg("ssid") || !server.hasArg("password")) {
+    DCTRL_LOGW("WIFI", "Rejecting /connect request because ssid or password was missing");
     server.send(400, "application/json", "{\"error\":\"Missing ssid or password\"}");
     return false;
   }
@@ -164,18 +196,21 @@ bool handle_connect_request(WebServer &server, String &connectedSsid, String &co
   String homeSsid = server.arg("ssid");
   String homePassword = server.arg("password");
   String homeUser = server.hasArg("user") ? server.arg("user") : "";
+  DCTRL_LOGI("WIFI", "Handling /connect request targetSsid=%s password=%s enterprise=%s",
+             homeSsid.c_str(),
+             homePassword.c_str(),
+             core::logging::bool_str(homeUser.length() > 0));
 
   WiFi.mode(WIFI_AP_STA);
   int networkCount = fresh_scan_networks();
 
   if (networkCount == 0) {
-    Serial.println("no networks found");
+    DCTRL_LOGW("WIFI", "No networks found while processing /connect request");
     server.send(400, "application/json", "{\"error\":\"No Eligible WiFi networks found\"}");
     return false;
   }
 
-  Serial.print(networkCount);
-  Serial.println(" networks found");
+  DCTRL_LOGI("WIFI", "Evaluating %d scanned network(s) for target ssid=%s", networkCount, homeSsid.c_str());
 
   for (int i = 0; i < networkCount; ++i) {
     if (strcmp(WiFi.SSID(i).c_str(), homeSsid.c_str()) != 0) {
@@ -183,14 +218,18 @@ bool handle_connect_request(WebServer &server, String &connectedSsid, String &co
       continue;
     }
 
-    Serial.println("[ESP] Found target WiFi network!");
+    DCTRL_LOGI("WIFI", "Found target network ssid=%s rssi=%d secure=%s channel=%d",
+               homeSsid.c_str(),
+               WiFi.RSSI(i),
+               core::logging::bool_str(WiFi.encryptionType(i) != WIFI_AUTH_OPEN),
+               WiFi.channel(i));
     if (!connect_station(homeSsid.c_str(), homePassword.c_str(), homeUser.c_str())) {
-      Serial.println("[ESP] Failed to connect to WiFi.");
+      DCTRL_LOGW("WIFI", "Target network connect failed ssid=%s", homeSsid.c_str());
       server.send(400, "application/json", "{\"error\":\"WiFi credentials wrong\"}");
       return false;
     }
 
-    Serial.println("[ESP] Successfully connected to WiFi!");
+    DCTRL_LOGI("WIFI", "Target network connect succeeded ssid=%s", homeSsid.c_str());
     save_credentials(homeSsid, homePassword, homeUser);
 
     connectedSsid = homeSsid;
@@ -199,6 +238,7 @@ bool handle_connect_request(WebServer &server, String &connectedSsid, String &co
     return true;
   }
 
+  DCTRL_LOGW("WIFI", "Target network ssid=%s not found in scan results", homeSsid.c_str());
   server.send(400, "application/json", "{\"error\":\"Target WiFi network not found\"}");
   return false;
 }

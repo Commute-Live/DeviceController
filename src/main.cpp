@@ -8,6 +8,7 @@
 #include "core/device_controller.h"
 #include "core/display_engine.h"
 #include "core/layout_engine.h"
+#include "core/logging.h"
 #include "core/mqtt_client.h"
 #include "core/network_manager.h"
 #include "network/wifi_manager.h"
@@ -55,6 +56,9 @@ void setup() {
   Serial.begin(115200);
   delay(200);
   randomSeed(esp_random());
+  DCTRL_LOGI("BOOT", "Serial ready baud=115200 freeHeap=%lu sdk=%s",
+             static_cast<unsigned long>(ESP.getFreeHeap()),
+             ESP.getSdkVersion());
 
   core::DeviceRuntimeConfig cfg{};
   cfg.schemaVersion = 1;
@@ -89,6 +93,12 @@ void setup() {
   copy_str(cfg.mqtt.username, COMMUTELIVE_MQTT_USER);
   copy_str(cfg.mqtt.password, COMMUTELIVE_MQTT_PASS);
   copy_str(cfg.mqtt.clientId, cfg.deviceId);
+  DCTRL_LOGI("BOOT", "Bootstrap config deviceId=%s apSsid=%s apPassword=%s mqttHost=%s mqttPort=%u",
+             cfg.deviceId,
+             cfg.network.apSsid,
+             cfg.network.apPassword,
+             cfg.mqtt.host,
+             static_cast<unsigned>(cfg.mqtt.port));
 
 #if COMMUTELIVE_ENABLE_DISPLAY_CALIBRATION
   core::calibration::maybe_run(gDisplayEngine, gConfigStore, cfg, 5000);
@@ -97,11 +107,11 @@ void setup() {
   gConfigStore.set_bootstrap_config(cfg);
 
   if (!gController.begin()) {
-    Serial.println("[CORE] Controller init failed");
+    DCTRL_LOGE("BOOT", "Controller init failed deviceId=%s", cfg.deviceId);
     return;
   }
 
-  Serial.printf("[CORE] Controller init ok: %s\n", cfg.deviceId);
+  DCTRL_LOGI("BOOT", "Controller init ok deviceId=%s", cfg.deviceId);
 }
 
 void loop() {
