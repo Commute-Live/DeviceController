@@ -5,6 +5,8 @@
 #include <ctype.h>
 #include <esp_system.h>
 
+#include "core/logging.h"
+
 namespace core {
 namespace calibration {
 
@@ -21,7 +23,7 @@ constexpr const char *kKeyXOff = "xoff";
 constexpr const char *kKeyYOff = "yoff";
 
 void print_help() {
-  Serial.println("[CAL] Commands: n/p map, l/r/t/b edge-fix, i/j/k/m fine XY, u/d up/down, z reset XY, s save, x cancel, h help");
+  DCTRL_LOGI("CAL", "Commands: n/p map, l/r/t/b edge-fix, i/j/k/m fine XY, u/d up/down, z reset XY, s save, x cancel, h help");
 }
 
 void draw_test_pattern(DisplayEngine &display, const DisplayConfig &cfg) {
@@ -49,7 +51,10 @@ void draw_test_pattern(DisplayEngine &display, const DisplayConfig &cfg) {
   display.draw_text_transparent(10, 2, top, kWhite, 1);
   display.draw_text_transparent(10, static_cast<int16_t>(h - 9), "n p lrtb s", kWhite, 1);
 
-  Serial.printf("[CAL] mode=%s xOff=%d yOff=%d\n", mode, static_cast<int>(cfg.xOffset), static_cast<int>(cfg.yOffset));
+  DCTRL_LOGI("CAL", "Pattern redrawn mode=%s xOff=%d yOff=%d",
+             mode,
+             static_cast<int>(cfg.xOffset),
+             static_cast<int>(cfg.yOffset));
 }
 
 void cycle_mode(DisplayConfig &cfg, int8_t step) {
@@ -75,8 +80,8 @@ bool maybe_run(DisplayEngine &display,
     }
   }
 
-  Serial.printf("[CAL] Send 'c' in %lu ms to calibrate display mapping\n",
-                static_cast<unsigned long>(enterWindowMs));
+  DCTRL_LOGI("CAL", "Send 'c' in %lu ms to calibrate display mapping",
+             static_cast<unsigned long>(enterWindowMs));
 
   const uint32_t start = millis();
   bool startCalibration = false;
@@ -98,7 +103,7 @@ bool maybe_run(DisplayEngine &display,
   DisplayConfig work = runtimeConfig.display;
   print_help();
   if (!display.begin(work)) {
-    Serial.println("[CAL] Display init failed");
+    DCTRL_LOGE("CAL", "Display init failed");
     return true;
   }
   display.set_offsets(work.xOffset, work.yOffset);
@@ -142,16 +147,16 @@ bool maybe_run(DisplayEngine &display,
     } else if (ch == 'h') {
       print_help();
     } else if (ch == 'x') {
-      Serial.println("[CAL] Exit without saving");
+      DCTRL_LOGI("CAL", "Exit without saving");
       display.end();
       return true;
     } else if (ch == 's') {
       runtimeConfig.display = work;
       if (!configStore.begin() || !configStore.save(runtimeConfig)) {
-        Serial.println("[CAL] Save failed");
+        DCTRL_LOGE("CAL", "Save failed");
       } else {
-        Serial.println("[CAL] Saved display calibration");
-        Serial.println("[CAL] Restarting to apply mapping cleanly...");
+        DCTRL_LOGI("CAL", "Saved display calibration");
+        DCTRL_LOGI("CAL", "Restarting to apply mapping cleanly");
         delay(200);
         ESP.restart();
       }
@@ -167,7 +172,7 @@ bool maybe_run(DisplayEngine &display,
     if (remap) {
       display.end();
       if (!display.begin(work)) {
-        Serial.println("[CAL] Display remap failed");
+        DCTRL_LOGE("CAL", "Display remap failed");
         return true;
       }
     }

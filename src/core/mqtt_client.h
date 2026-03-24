@@ -51,6 +51,7 @@ class MqttClient final {
  private:
   static void global_on_message(char *topic, uint8_t *payload, unsigned int len);
   void on_message(char *topic, uint8_t *payload, unsigned int len);
+  bool publish_with_trace(const char *topic, const char *payload, bool retained, const char *label);
 
   MqttConfig config_;
   MqttTopics topics_;
@@ -60,6 +61,9 @@ class MqttClient final {
   bool connected_;
   uint32_t nextRetryAtMs_;
   uint8_t retryCount_;
+  int lastWifiStatus_;
+  int lastMqttState_;
+  bool lastTransportConnected_;
 
   CommandCallback commandCallback_;
   void *commandCtx_;

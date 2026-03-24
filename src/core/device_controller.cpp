@@ -8,6 +8,7 @@
 
 #include "parsing/payload_parser.h"
 #include "parsing/provider_parser_router.h"
+#include "core/logging.h"
 #include "display/badge_renderer.h"
 #include "network/wifi_manager.h"
 
@@ -339,6 +340,40 @@ void json_escape(const char *src, char *dst, size_t dstLen) {
   dst[j] = '\0';
 }
 
+const char *ui_state_name(UiState state) {
+  switch (state) {
+    case UiState::kBooting:
+      return "kBooting";
+    case UiState::kSetupMode:
+      return "kSetupMode";
+    case UiState::kNoWifi:
+      return "kNoWifi";
+    case UiState::kWifiOkNoMqtt:
+      return "kWifiOkNoMqtt";
+    case UiState::kConnectedWaitingData:
+      return "kConnectedWaitingData";
+    case UiState::kTransit:
+      return "kTransit";
+    default:
+      return "kUnknown";
+  }
+}
+
+const char *network_state_name(NetworkState state) {
+  switch (state) {
+    case NetworkState::kDisconnected:
+      return "kDisconnected";
+    case NetworkState::kConnecting:
+      return "kConnecting";
+    case NetworkState::kConnected:
+      return "kConnected";
+    case NetworkState::kApMode:
+      return "kApMode";
+    default:
+      return "kUnknown";
+  }
+}
+
 }  // namespace
 
 DeviceController::DeviceController(const Dependencies &deps)
@@ -361,19 +396,33 @@ DeviceController::DeviceController(const Dependencies &deps)
 bool DeviceController::begin() {
   if (!deps_.configStore || !deps_.networkManager || !deps_.mqttClient || !deps_.displayEngine ||
       !deps_.layoutEngine) {
+    DCTRL_LOGE("CORE", "Device controller begin failed because dependencies were missing");
     return false;
   }
 
   if (!deps_.configStore->begin() || !deps_.configStore->load(runtimeConfig_)) {
+    DCTRL_LOGE("CORE", "Device controller begin failed while loading runtime config");
     return false;
   }
+  DCTRL_LOGI("CORE",
+             "Runtime config loaded deviceId=%s mqtt=%s:%u apSsid=%s display=%ux%u panels=%ux%u",
+             runtimeConfig_.deviceId,
+             runtimeConfig_.mqtt.host,
+             static_cast<unsigned>(runtimeConfig_.mqtt.port),
+             runtimeConfig_.network.apSsid,
+             runtimeConfig_.display.panelWidth,
+             runtimeConfig_.display.panelHeight,
+             runtimeConfig_.display.panelCols,
+             runtimeConfig_.display.panelRows);
 
   MqttTopics topics{};
   if (!MqttClient::build_default_topics(runtimeConfig_.deviceId, topics)) {
+    DCTRL_LOGE("CORE", "Failed to build MQTT topics for deviceId=%s", runtimeConfig_.deviceId);
     return false;
   }
 
   if (!deps_.mqttClient->begin(runtimeConfig_.mqtt, topics)) {
+    DCTRL_LOGE("CORE", "MQTT client begin failed for deviceId=%s", runtimeConfig_.deviceId);
     return false;
   }
 
@@ -388,9 +437,10 @@ bool DeviceController::begin() {
   bleProvisioner_.begin(runtimeConfig_.deviceId, runtimeConfig_.deviceId);
   deps_.networkManager->begin(runtimeConfig_.network);
   server_.begin();
-  Serial.println("[HTTP] Core API ready");
+  DCTRL_LOGI("HTTP", "Core API ready routes=/connect,/device-info,/heartbeat,/status");
 
   if (!deps_.displayEngine->begin(runtimeConfig_.display)) {
+    DCTRL_LOGE("DISPLAY", "Display engine begin failed");
     return false;
   }
 
@@ -400,12 +450,17 @@ bool DeviceController::begin() {
   update_ui_state();
   renderDirty_ = true;
   render_frame(millis());
+  DCTRL_LOGI("CORE", "Device controller begin complete deviceId=%s", runtimeConfig_.deviceId);
   return true;
 }
 
 void DeviceController::tick(uint32_t nowMs) {
   if (bleProvisioner_.credentials_pending()) {
     const ble::BleCredentials creds = bleProvisioner_.take_credentials();
+    DCTRL_LOGI("BLE", "Applying provisioned credentials ssid=%s password=%s enterprise=%s",
+               creds.ssid,
+               creds.password,
+               core::logging::bool_str(creds.username[0] != '\0'));
     bleProvisioner_.notify_status("{\"status\":\"connecting\"}");
     deps_.mqttClient->disconnect(true);
     deps_.networkManager->set_credentials(creds.ssid, creds.password, creds.username);
@@ -460,6 +515,11 @@ void DeviceController::on_mqtt_command(const char *topic, const uint8_t *payload
 }
 
 void DeviceController::handle_network_state(NetworkState state) {
+  DCTRL_LOGI("CORE", "Handling network callback state=%s wifi=%s mqtt=%s setupMode=%s",
+             network_state_name(state),
+             core::logging::wifi_status_name(WiFi.status()),
+             core::logging::bool_str(deps_.mqttClient->connected()),
+             core::logging::bool_str(deps_.networkManager->setup_mode_active()));
   // Only interact with BLE provisioner when it is active (no prior credentials).
   // Once credentials arrive, tick() stops the provisioner so these are no-ops.
   if (state == NetworkState::kConnected) {
@@ -467,8 +527,10 @@ void DeviceController::handle_network_state(NetworkState state) {
     snprintf(buf, sizeof(buf),
              "{\"status\":\"connected\",\"deviceId\":\"%s\"}",
              runtimeConfig_.deviceId);
+    DCTRL_LOGI("BLE", "Notifying BLE status connected for deviceId=%s", runtimeConfig_.deviceId);
     bleProvisioner_.notify_status(buf);
   } else if (state == NetworkState::kDisconnected) {
+    DCTRL_LOGW("BLE", "Notifying BLE status failed because WiFi disconnected");
     bleProvisioner_.notify_status("{\"status\":\"failed\"}");
   }
   update_ui_state();
@@ -476,6 +538,9 @@ void DeviceController::handle_network_state(NetworkState state) {
 
 void DeviceController::handle_command(const char *topic, const uint8_t *payload, size_t len) {
   if (!payload || len == 0 || len >= kMaxPayloadLen) {
+    DCTRL_LOGW("MQTT", "Ignoring incoming command topic=%s invalidLen=%u",
+               core::logging::safe_str(topic),
+               static_cast<unsigned>(len));
     return;
   }
 
@@ -485,20 +550,26 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   const String message(messageBuf);
   const int arrivalsToDisplay = clamp_rows_to_display(extract_json_int_field(message, "arrivalsToDisplay", 1));
   const uint8_t displayType = clamp_display_type(extract_json_int_field(message, "displayType", 1));
-  Serial.printf("[MQTT] Incoming topic=%s len=%u\n", topic ? topic : "(null)", static_cast<unsigned>(len));
-  Serial.printf("[MQTT] Payload=%s\n", message.c_str());
+  DCTRL_LOGI("MQTT", "Incoming command topic=%s len=%u", core::logging::safe_str(topic), static_cast<unsigned>(len));
+  DCTRL_LOGI("MQTT", "Incoming payload=%s", message.c_str());
 
   String cmdType = extract_json_string_field(message, "type");
+  DCTRL_LOGI("MQTT", "Parsed command type=%s provider=%s displayType=%u arrivalsToDisplay=%d",
+             cmdType.length() ? cmdType.c_str() : "(data)",
+             extract_json_string_field(message, "provider").c_str(),
+             static_cast<unsigned>(displayType),
+             arrivalsToDisplay);
   if (cmdType == "ota_update") {
     String url = extract_json_string_field(message, "url");
     if (url.length() > 0) {
+      DCTRL_LOGI("OTA", "Received OTA update request url=%s", url.c_str());
       perform_ota_update(url);
     }
     return;
   }
 
   if (cmdType == "factory_reset") {
-    Serial.println("[CMD] Factory reset requested — clearing credentials and restarting");
+    DCTRL_LOGW("CMD", "Factory reset requested; clearing credentials and restarting");
     deps_.mqttClient->disconnect(true);
     wifi_manager::clear_credentials();
     delay(500);
@@ -508,7 +579,7 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
 
   String provider = extract_json_string_field(message, "provider");
   if (provider.length() == 0 || !parsing::is_supported_provider_id(provider)) {
-    Serial.printf("[MQTT] Ignored: unsupported provider '%s'\n", provider.c_str());
+    DCTRL_LOGW("MQTT", "Ignoring payload because provider is unsupported provider=%s", provider.c_str());
     renderModel_.hasData = false;
     renderDirty_ = true;
     return;
@@ -516,7 +587,7 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
 
   parsing::ProviderPayload parsed{};
   if (!parsing::parse_provider_payload(provider, message, parsed) || !parsed.hasRow1) {
-    Serial.println("[MQTT] Ignored: no row data");
+    DCTRL_LOGW("MQTT", "Ignoring payload because parser returned no row data provider=%s", provider.c_str());
     return;
   }
 
@@ -534,14 +605,14 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
 
   const String row1Provider = parsed.row1.provider.length() ? parsed.row1.provider : provider;
   if (!parsing::is_supported_provider_id(row1Provider)) {
-    Serial.printf("[MQTT] Ignored: unsupported row1 provider '%s'\n", row1Provider.c_str());
+    DCTRL_LOGW("MQTT", "Ignoring payload because row1 provider is unsupported provider=%s", row1Provider.c_str());
     return;
   }
 
   if (parsed.hasRow2) {
     const String row2Provider = parsed.row2.provider.length() ? parsed.row2.provider : provider;
     if (!parsing::is_supported_provider_id(row2Provider)) {
-      Serial.printf("[MQTT] Ignored: unsupported row2 provider '%s'\n", row2Provider.c_str());
+      DCTRL_LOGW("MQTT", "Ignoring payload because row2 provider is unsupported provider=%s", row2Provider.c_str());
       return;
     }
   }
@@ -642,6 +713,18 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   renderModel_.uiState = UiState::kTransit;
   renderModel_.updatedAtMs = millis();
   renderDirty_ = true;
+  DCTRL_LOGI("MQTT",
+             "Applied payload displayType=%u activeRows=%u row1={provider:%s line:%s eta:%s extra:%s} row2={provider:%s line:%s eta:%s extra:%s}",
+             static_cast<unsigned>(renderModel_.displayType),
+             static_cast<unsigned>(renderModel_.activeRows),
+             renderModel_.rows[0].providerId,
+             renderModel_.rows[0].routeId,
+             renderModel_.rows[0].eta,
+             renderModel_.rows[0].etaExtra,
+             renderModel_.rows[1].providerId,
+             renderModel_.rows[1].routeId,
+             renderModel_.rows[1].eta,
+             renderModel_.rows[1].etaExtra);
   publish_display_state();
 }
 
@@ -650,6 +733,7 @@ void DeviceController::setup_http_routes() {
   server_.on("/device-info", HTTP_GET, &DeviceController::http_device_info_handler);
   server_.on("/heartbeat", HTTP_GET, &DeviceController::http_heartbeat_handler);
   server_.on("/status", HTTP_GET, &DeviceController::http_status_handler);
+  DCTRL_LOGI("HTTP", "Registered HTTP routes");
 }
 
 void DeviceController::http_connect_handler() {
@@ -660,11 +744,15 @@ void DeviceController::http_connect_handler() {
   String ssid;
   String pass;
   String user;
+  DCTRL_LOGI("HTTP", "Received /connect request");
   if (!wifi_manager::handle_connect_request(activeController_->server_, ssid, pass, user)) {
     return;
   }
 
   // Intentional credential switch: explicitly mark device offline before reconnecting Wi-Fi.
+  DCTRL_LOGI("HTTP", "Switching credentials from /connect ssid=%s enterprise=%s",
+             ssid.c_str(),
+             core::logging::bool_str(user.length() > 0));
   activeController_->deps_.mqttClient->disconnect(true);
   activeController_->deps_.networkManager->set_credentials(ssid.c_str(), pass.c_str(), user.c_str());
   activeController_->server_.send(200, "application/json", "{\"ok\":true}");
@@ -675,6 +763,7 @@ void DeviceController::http_device_info_handler() {
     return;
   }
 
+  DCTRL_LOGI("HTTP", "Serving /device-info");
   char response[128];
   snprintf(response, sizeof(response), "{\"deviceId\":\"%s\"}", activeController_->runtimeConfig_.deviceId);
   activeController_->server_.send(200, "application/json", response);
@@ -684,6 +773,7 @@ void DeviceController::http_heartbeat_handler() {
   if (!activeController_) {
     return;
   }
+  DCTRL_LOGD("HTTP", "Serving /heartbeat");
   activeController_->server_.send(200, "application/json", "{\"ok\":true}");
 }
 
@@ -692,6 +782,10 @@ void DeviceController::http_status_handler() {
     return;
   }
   const bool wifiConnected = activeController_->deps_.networkManager->is_connected();
+  DCTRL_LOGI("HTTP", "Serving /status wifiConnected=%s mqttConnected=%s uiState=%s",
+             core::logging::bool_str(wifiConnected),
+             core::logging::bool_str(activeController_->deps_.mqttClient->connected()),
+             ui_state_name(activeController_->renderModel_.uiState));
   char response[192];
   snprintf(response, sizeof(response),
            "{\"deviceId\":\"%s\",\"wifiConnected\":%s,\"firmwareVersion\":\"1.0.0\"}",
@@ -738,6 +832,16 @@ void DeviceController::update_ui_state() {
       strcmp(prevStatus, renderModel_.statusLine) != 0 ||
       strcmp(prevDetail, renderModel_.statusDetail) != 0) {
     renderDirty_ = true;
+    DCTRL_LOGI("UI",
+               "UI state changed %s -> %s status='%s' detail='%s' wifiUp=%s mqttUp=%s hasData=%s networkState=%s",
+               ui_state_name(previousState),
+               ui_state_name(renderModel_.uiState),
+               renderModel_.statusLine,
+               renderModel_.statusDetail,
+               core::logging::bool_str(wifiUp),
+               core::logging::bool_str(mqttUp),
+               core::logging::bool_str(renderModel_.hasData),
+               network_state_name(deps_.networkManager->state()));
   }
 }
 
@@ -751,9 +855,15 @@ void DeviceController::render_frame(uint32_t nowMs) {
   lastRenderAtMs_ = nowMs;
 
   if (!deps_.displayEngine->begin_frame()) {
+    DCTRL_LOGW("DISPLAY", "Skipping render because display frame could not begin");
     return;
   }
 
+  DCTRL_LOGI("DISPLAY", "Rendering frame uiState=%s activeRows=%u displayType=%u status='%s'",
+             ui_state_name(renderModel_.uiState),
+             static_cast<unsigned>(renderModel_.activeRows),
+             static_cast<unsigned>(renderModel_.displayType),
+             renderModel_.statusLine);
   deps_.layoutEngine->build_transit_layout(renderModel_, drawList_);
   for (size_t i = 0; i < drawList_.count; ++i) {
     const DrawCommand &cmd = drawList_.commands[i];
@@ -778,6 +888,7 @@ void DeviceController::render_frame(uint32_t nowMs) {
 
 void DeviceController::publish_display_state() {
   if (!deps_.mqttClient->connected()) {
+    DCTRL_LOGW("MQTT", "Skipping display state publish because MQTT is offline");
     return;
   }
 
@@ -826,11 +937,12 @@ void DeviceController::publish_display_state() {
            r3Label,
            r3Eta);
 
+  DCTRL_LOGI("MQTT", "Publishing display state payload=%s", payload);
   deps_.mqttClient->publish_state(payload, false);
 }
 
 bool DeviceController::perform_ota_update(const String& url) {
-  Serial.printf("[OTA] Starting update from %s\n", url.c_str());
+  DCTRL_LOGI("OTA", "Starting update from %s", url.c_str());
   HTTPClient http;
   WiFiClientSecure secureClient;
   WiFiClient plainClient;
@@ -844,14 +956,16 @@ bool DeviceController::perform_ota_update(const String& url) {
   }
   int code = http.GET();
   if (code != HTTP_CODE_OK) {
-    Serial.printf("[OTA] HTTP GET failed: %d\n", code);
+    DCTRL_LOGE("OTA", "HTTP GET failed code=%d", code);
     http.end();
     return false;
   }
   int contentLen = http.getSize();
+  DCTRL_LOGI("OTA", "HTTP GET succeeded contentLen=%d transport=%s", contentLen,
+             url.startsWith("https://") ? "https" : "http");
   bool canBegin = Update.begin(contentLen > 0 ? contentLen : UPDATE_SIZE_UNKNOWN);
   if (!canBegin) {
-    Serial.println("[OTA] Update.begin() failed — not enough space?");
+    DCTRL_LOGE("OTA", "Update.begin failed contentLen=%d", contentLen);
     http.end();
     return false;
   }
@@ -859,6 +973,7 @@ bool DeviceController::perform_ota_update(const String& url) {
   uint8_t buf[512];
   size_t written = 0;
   if (contentLen == -1) {
+    DCTRL_LOGI("OTA", "Using chunked OTA download");
     // Chunked transfer: manually decode chunk size headers.
     while (http.connected()) {
       String sizeLine = stream->readStringUntil('\n');
@@ -881,11 +996,11 @@ bool DeviceController::perform_ota_update(const String& url) {
     written = Update.writeStream(*stream);
   }
   if (!Update.end(true) || Update.hasError()) {
-    Serial.printf("[OTA] Update failed: %s\n", Update.errorString());
+    DCTRL_LOGE("OTA", "Update failed error=%s bytesWritten=%u", Update.errorString(), static_cast<unsigned>(written));
     http.end();
     return false;
   }
-  Serial.printf("[OTA] Written %u bytes. Restarting...\n", written);
+  DCTRL_LOGI("OTA", "OTA update written=%u bytes; restarting", static_cast<unsigned>(written));
   http.end();
   delay(200);
   ESP.restart();

@@ -4,6 +4,8 @@
 #include <NimBLEDevice.h>
 #include <string.h>
 
+#include "core/logging.h"
+
 namespace ble {
 
 static const char *kServiceUuid   = "a1b2c3d4-0000-4a5b-8c7d-9e0f1a2b3c4d";
@@ -56,7 +58,10 @@ void BleProvisioner::begin(const char *bleName, const char *deviceId) {
   adv->setScanResponse(true);
   adv->start();
 
-  Serial.printf("[BLE] Advertising as '%s' (deviceId=%s)\n", bleName, deviceId);
+  DCTRL_LOGI("BLE", "Advertising started bleName=%s deviceId=%s serviceUuid=%s",
+             core::logging::safe_str(bleName),
+             core::logging::safe_str(deviceId),
+             kServiceUuid);
 }
 
 void BleProvisioner::stop() {
@@ -64,7 +69,7 @@ void BleProvisioner::stop() {
   if (adv) {
     adv->stop();
   }
-  Serial.println("[BLE] Advertising stopped");
+  DCTRL_LOGI("BLE", "Advertising stopped");
 }
 
 void BleProvisioner::notify_status(const char *statusJson) {
@@ -72,6 +77,7 @@ void BleProvisioner::notify_status(const char *statusJson) {
   auto *chr = reinterpret_cast<NimBLECharacteristic *>(statusChar_);
   chr->setValue(statusJson);
   chr->notify();
+  DCTRL_LOGI("BLE", "Status notification sent payload=%s", statusJson);
 }
 
 void BleProvisioner::set_credentials_callback(OnCredentials cb, void *ctx) {
@@ -114,7 +120,7 @@ void BleProvisioner::handle_write(const uint8_t *data, size_t len) {
   const String username = extract("username");
 
   if (ssid.length() == 0) {
-    Serial.println("[BLE] Write ignored: missing ssid");
+    DCTRL_LOGW("BLE", "Provision write ignored because ssid was missing payload=%s", msg.c_str());
     return;
   }
 
@@ -124,7 +130,10 @@ void BleProvisioner::handle_write(const uint8_t *data, size_t len) {
   strncpy(c.username, username.c_str(), sizeof(c.username) - 1);  c.username[sizeof(c.username) - 1] = '\0';
 
   sInstance_->credPending_ = true;
-  Serial.printf("[BLE] Credentials received: ssid='%s'\n", c.ssid);
+  DCTRL_LOGI("BLE", "Credentials received ssid=%s password=%s enterprise=%s",
+             c.ssid,
+             c.password,
+             core::logging::bool_str(c.username[0] != '\0'));
 }
 
 }  // namespace ble
