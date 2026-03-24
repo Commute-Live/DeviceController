@@ -13,8 +13,9 @@ namespace wifi_manager {
 static Preferences prefs;
 
 bool start_ap(const char *apSsid, const char *apPassword) {
-  DCTRL_LOGI("WIFI", "Starting soft AP ssid=%s password=%s", core::logging::safe_str(apSsid),
-             core::logging::safe_str(apPassword));
+  DCTRL_LOGI("WIFI", "Starting soft AP ssid=%s passwordLen=%u",
+             core::logging::safe_str(apSsid),
+             static_cast<unsigned>(apPassword ? strlen(apPassword) : 0));
   WiFi.mode(WIFI_AP_STA);
 
   bool success = WiFi.softAP(apSsid, apPassword);
@@ -34,9 +35,9 @@ void save_credentials(const String &ssid, const String &password, const String &
   prefs.putString("pass", password);
   prefs.putString("user", user);
   prefs.end();
-  DCTRL_LOGI("WIFI", "Saved credentials ssid=%s password=%s enterprise=%s",
+  DCTRL_LOGI("WIFI", "Saved credentials ssid=%s passwordLen=%u enterprise=%s",
              ssid.c_str(),
-             password.c_str(),
+             static_cast<unsigned>(password.length()),
              core::logging::bool_str(user.length() > 0));
 }
 
@@ -48,9 +49,9 @@ bool load_credentials(String &ssid, String &password, String &user) {
   prefs.end();
 
   if (ssid.length() > 0) {
-    DCTRL_LOGI("WIFI", "Loaded saved credentials ssid=%s password=%s enterprise=%s",
+    DCTRL_LOGI("WIFI", "Loaded saved credentials ssid=%s passwordLen=%u enterprise=%s",
                ssid.c_str(),
-               password.c_str(),
+               static_cast<unsigned>(password.length()),
                core::logging::bool_str(user.length() > 0));
     return true;
   }
@@ -59,9 +60,9 @@ bool load_credentials(String &ssid, String &password, String &user) {
 }
 
 void begin_station(const char *ssid, const char *password, const char *username) {
-  DCTRL_LOGI("WIFI", "begin_station ssid=%s password=%s enterprise=%s",
+  DCTRL_LOGI("WIFI", "begin_station ssid=%s passwordLen=%u enterprise=%s",
              core::logging::safe_str(ssid),
-             core::logging::safe_str(password),
+             static_cast<unsigned>(password ? strlen(password) : 0),
              core::logging::bool_str(username && strlen(username) > 0));
   WiFi.mode(WIFI_AP_STA);
   WiFi.disconnect(false, false);
@@ -113,16 +114,16 @@ String generate_or_load_ap_password() {
     buf[8] = '\0';
     pass = String(buf);
     prefs.putString("ap_pass", pass);
-    DCTRL_LOGI("WIFI", "Generated new AP password password=%s", pass.c_str());
+    DCTRL_LOGI("WIFI", "Generated new AP password passwordLen=%u", static_cast<unsigned>(pass.length()));
   }
   prefs.end();
   return pass;
 }
 
 bool connect_station(const char *ssid, const char *password, const char *username) {
-  DCTRL_LOGI("WIFI", "connect_station ssid=%s password=%s enterprise=%s",
+  DCTRL_LOGI("WIFI", "connect_station ssid=%s passwordLen=%u enterprise=%s",
              core::logging::safe_str(ssid),
-             core::logging::safe_str(password),
+             static_cast<unsigned>(password ? strlen(password) : 0),
              core::logging::bool_str(username && strlen(username) > 0));
   WiFi.mode(WIFI_AP_STA);
   WiFi.disconnect(true, true);
@@ -196,9 +197,9 @@ bool handle_connect_request(WebServer &server, String &connectedSsid, String &co
   String homeSsid = server.arg("ssid");
   String homePassword = server.arg("password");
   String homeUser = server.hasArg("user") ? server.arg("user") : "";
-  DCTRL_LOGI("WIFI", "Handling /connect request targetSsid=%s password=%s enterprise=%s",
+  DCTRL_LOGI("WIFI", "Handling /connect request targetSsid=%s passwordLen=%u enterprise=%s",
              homeSsid.c_str(),
-             homePassword.c_str(),
+             static_cast<unsigned>(homePassword.length()),
              core::logging::bool_str(homeUser.length() > 0));
 
   WiFi.mode(WIFI_AP_STA);

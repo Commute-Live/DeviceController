@@ -93,10 +93,10 @@ void setup() {
   copy_str(cfg.mqtt.username, COMMUTELIVE_MQTT_USER);
   copy_str(cfg.mqtt.password, COMMUTELIVE_MQTT_PASS);
   copy_str(cfg.mqtt.clientId, cfg.deviceId);
-  DCTRL_LOGI("BOOT", "Bootstrap config deviceId=%s apSsid=%s apPassword=%s mqttHost=%s mqttPort=%u",
+  DCTRL_LOGI("BOOT", "Bootstrap config deviceId=%s apSsid=%s apPasswordLen=%u mqttHost=%s mqttPort=%u",
              cfg.deviceId,
              cfg.network.apSsid,
-             cfg.network.apPassword,
+             static_cast<unsigned>(strlen(cfg.network.apPassword)),
              cfg.mqtt.host,
              static_cast<unsigned>(cfg.mqtt.port));
 

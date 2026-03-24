@@ -14,6 +14,21 @@ static const char *kStatusUuid    = "a1b2c3d4-0002-4a5b-8c7d-9e0f1a2b3c4d";
 
 BleProvisioner *BleProvisioner::sInstance_ = nullptr;
 
+namespace {
+
+void set_ready_status(void *statusChar, const char *deviceId) {
+  if (!statusChar || !deviceId) {
+    return;
+  }
+
+  auto *chr = reinterpret_cast<NimBLECharacteristic *>(statusChar);
+  char readyJson[128];
+  snprintf(readyJson, sizeof(readyJson), "{\"status\":\"ready\",\"deviceId\":\"%s\"}", deviceId);
+  chr->setValue(readyJson);
+}
+
+}  // namespace
+
 // GATT write callback — forwards to static handler.
 class ProvisionWriteCallback : public NimBLECharacteristicCallbacks {
  public:
@@ -26,39 +41,54 @@ class ProvisionWriteCallback : public NimBLECharacteristicCallbacks {
 static ProvisionWriteCallback sWriteCallback;
 
 void BleProvisioner::begin(const char *bleName, const char *deviceId) {
-  sInstance_    = this;
-  credCb_       = nullptr;
-  credCbCtx_    = nullptr;
-  credPending_  = false;
-  statusChar_   = nullptr;
+  sInstance_ = this;
+  credPending_ = false;
   memset(&pendingCreds_, 0, sizeof(pendingCreds_));
 
-  NimBLEDevice::init(bleName);   // BLE advertised name — what the app scans for
-  NimBLEDevice::setPower(ESP_PWR_LVL_P9);
+  if (!initialized_) {
+    credCb_ = nullptr;
+    credCbCtx_ = nullptr;
+    statusChar_ = nullptr;
 
-  NimBLEServer  *server  = NimBLEDevice::createServer();
-  NimBLEService *service = server->createService(kServiceUuid);
+    NimBLEDevice::init(bleName);   // BLE advertised name — what the app scans for
+    NimBLEDevice::setPower(ESP_PWR_LVL_P9);
 
-  // PROVISION characteristic: app writes WiFi credentials as JSON.
-  service->createCharacteristic(kProvisionUuid, NIMBLE_PROPERTY::WRITE)
-         ->setCallbacks(&sWriteCallback);
+    NimBLEServer  *server  = NimBLEDevice::createServer();
+    NimBLEService *service = server->createService(kServiceUuid);
 
-  // STATUS characteristic: device notifies connection outcome.
-  NimBLECharacteristic *statusChr =
-      service->createCharacteristic(kStatusUuid, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
-  char readyJson[128];
-  snprintf(readyJson, sizeof(readyJson), "{\"status\":\"ready\",\"deviceId\":\"%s\"}", deviceId);
-  statusChr->setValue(readyJson);
-  statusChar_ = statusChr;
+    // PROVISION characteristic: app writes WiFi credentials as JSON.
+    service->createCharacteristic(kProvisionUuid, NIMBLE_PROPERTY::WRITE)
+           ->setCallbacks(&sWriteCallback);
 
-  service->start();
+    // STATUS characteristic: device notifies connection outcome.
+    NimBLECharacteristic *statusChr =
+        service->createCharacteristic(kStatusUuid, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+    statusChar_ = statusChr;
+    set_ready_status(statusChar_, deviceId);
 
+    service->start();
+    NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
+    if (adv) {
+      adv->addServiceUUID(kServiceUuid);
+      adv->setScanResponse(true);
+      adv->start();
+      advertising_ = true;
+    }
+    initialized_ = true;
+    DCTRL_LOGI("BLE", "Advertising started bleName=%s deviceId=%s serviceUuid=%s",
+               core::logging::safe_str(bleName),
+               core::logging::safe_str(deviceId),
+               kServiceUuid);
+    return;
+  }
+
+  set_ready_status(statusChar_, deviceId);
   NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
-  adv->addServiceUUID(kServiceUuid);
-  adv->setScanResponse(true);
-  adv->start();
-
-  DCTRL_LOGI("BLE", "Advertising started bleName=%s deviceId=%s serviceUuid=%s",
+  if (adv) {
+    adv->start();
+    advertising_ = true;
+  }
+  DCTRL_LOGI("BLE", "Advertising resumed bleName=%s deviceId=%s serviceUuid=%s",
              core::logging::safe_str(bleName),
              core::logging::safe_str(deviceId),
              kServiceUuid);
@@ -69,6 +99,7 @@ void BleProvisioner::stop() {
   if (adv) {
     adv->stop();
   }
+  advertising_ = false;
   DCTRL_LOGI("BLE", "Advertising stopped");
 }
 
@@ -130,9 +161,9 @@ void BleProvisioner::handle_write(const uint8_t *data, size_t len) {
   strncpy(c.username, username.c_str(), sizeof(c.username) - 1);  c.username[sizeof(c.username) - 1] = '\0';
 
   sInstance_->credPending_ = true;
-  DCTRL_LOGI("BLE", "Credentials received ssid=%s password=%s enterprise=%s",
+  DCTRL_LOGI("BLE", "Credentials received ssid=%s passwordLen=%u enterprise=%s",
              c.ssid,
-             c.password,
+             static_cast<unsigned>(strlen(c.password)),
              core::logging::bool_str(c.username[0] != '\0'));
 }
 
