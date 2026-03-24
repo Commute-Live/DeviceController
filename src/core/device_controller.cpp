@@ -471,9 +471,9 @@ bool DeviceController::begin() {
 void DeviceController::tick(uint32_t nowMs) {
   if (bleProvisioner_.credentials_pending()) {
     const ble::BleCredentials creds = bleProvisioner_.take_credentials();
-    DCTRL_LOGI("BLE", "Applying provisioned credentials ssid=%s password=%s enterprise=%s",
+    DCTRL_LOGI("BLE", "Applying provisioned credentials ssid=%s passwordLen=%u enterprise=%s",
                creds.ssid,
-               creds.password,
+               static_cast<unsigned>(strlen(creds.password)),
                core::logging::bool_str(creds.username[0] != '\0'));
     bleProvisioner_.notify_status("{\"status\":\"connecting\"}");
     deps_.mqttClient->disconnect(true);

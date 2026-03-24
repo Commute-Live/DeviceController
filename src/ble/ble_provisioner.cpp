@@ -161,9 +161,9 @@ void BleProvisioner::handle_write(const uint8_t *data, size_t len) {
   strncpy(c.username, username.c_str(), sizeof(c.username) - 1);  c.username[sizeof(c.username) - 1] = '\0';
 
   sInstance_->credPending_ = true;
-  DCTRL_LOGI("BLE", "Credentials received ssid=%s password=%s enterprise=%s",
+  DCTRL_LOGI("BLE", "Credentials received ssid=%s passwordLen=%u enterprise=%s",
              c.ssid,
-             c.password,
+             static_cast<unsigned>(strlen(c.password)),
              core::logging::bool_str(c.username[0] != '\0'));
 }
 

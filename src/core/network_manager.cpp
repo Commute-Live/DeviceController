@@ -84,12 +84,12 @@ bool NetworkManager::begin(const NetworkConfig &config) {
   lastWifiStatus_ = kUnknownWifiStatus;
 
   DCTRL_LOGI("WIFI",
-             "Network manager begin bootstrapSsid=%s bootstrapPassword=%s bootstrapUser=%s apSsid=%s apPassword=%s",
+             "Network manager begin bootstrapSsid=%s bootstrapPasswordLen=%u bootstrapUser=%s apSsid=%s apPasswordLen=%u",
              config_.ssid[0] ? config_.ssid : "(none)",
-             config_.password[0] ? config_.password : "(empty)",
+             static_cast<unsigned>(strlen(config_.password)),
              config_.username[0] ? config_.username : "(none)",
              config_.apSsid[0] ? config_.apSsid : "(none)",
-             config_.apPassword[0] ? config_.apPassword : "(empty)");
+             static_cast<unsigned>(strlen(config_.apPassword)));
 
   WiFi.mode(WIFI_AP_STA);
   WiFi.setAutoReconnect(false);
@@ -102,9 +102,9 @@ bool NetworkManager::begin(const NetworkConfig &config) {
     savedUsername_ = config_.username;
     hasSavedCredentials_ = true;
     wifi_manager::save_credentials(savedSsid_, savedPassword_, savedUsername_);
-    DCTRL_LOGI("WIFI", "Using configured bootstrap credentials ssid=%s password=%s enterprise=%s",
+    DCTRL_LOGI("WIFI", "Using configured bootstrap credentials ssid=%s passwordLen=%u enterprise=%s",
                savedSsid_.c_str(),
-               savedPassword_.c_str(),
+               static_cast<unsigned>(savedPassword_.length()),
                core::logging::bool_str(savedUsername_.length() > 0));
   } else {
     String loadedSsid;
@@ -116,9 +116,9 @@ bool NetworkManager::begin(const NetworkConfig &config) {
       savedSsid_ = loadedSsid;
       savedPassword_ = loadedPassword;
       savedUsername_ = loadedUser;
-      DCTRL_LOGI("WIFI", "Loaded saved credentials ssid=%s password=%s enterprise=%s",
+      DCTRL_LOGI("WIFI", "Loaded saved credentials ssid=%s passwordLen=%u enterprise=%s",
                  savedSsid_.c_str(),
-                 savedPassword_.c_str(),
+                 static_cast<unsigned>(savedPassword_.length()),
                  core::logging::bool_str(savedUsername_.length() > 0));
     } else {
       DCTRL_LOGW("WIFI", "No saved WiFi credentials found at boot");
@@ -213,9 +213,9 @@ void NetworkManager::tick(uint32_t nowMs) {
   }
 
   transition_to(NetworkState::kConnecting);
-  DCTRL_LOGI("WIFI", "Starting async station connect ssid=%s password=%s enterprise=%s attempt=%u",
+  DCTRL_LOGI("WIFI", "Starting async station connect ssid=%s passwordLen=%u enterprise=%s attempt=%u",
              savedSsid_.c_str(),
-             savedPassword_.c_str(),
+             static_cast<unsigned>(savedPassword_.length()),
              core::logging::bool_str(savedUsername_.length() > 0),
              static_cast<unsigned>(retryCount_ + 1));
   wifi_manager::begin_station(savedSsid_.c_str(), savedPassword_.c_str(), savedUsername_.c_str());
@@ -272,9 +272,9 @@ void NetworkManager::set_credentials(const char *ssid, const char *password, con
   savedUsername_ = username ? username : "";
   autoReconnectEnabled_ = true;
   hasSavedCredentials_ = savedSsid_.length() > 0;
-  DCTRL_LOGI("WIFI", "Updating credentials ssid=%s password=%s enterprise=%s",
+  DCTRL_LOGI("WIFI", "Updating credentials ssid=%s passwordLen=%u enterprise=%s",
              savedSsid_.c_str(),
-             savedPassword_.c_str(),
+             static_cast<unsigned>(savedPassword_.length()),
              core::logging::bool_str(savedUsername_.length() > 0));
   if (hasSavedCredentials_) {
     wifi_manager::save_credentials(savedSsid_, savedPassword_, savedUsername_);
@@ -317,9 +317,9 @@ bool NetworkManager::connect_station_now() {
     return false;
   }
 
-  DCTRL_LOGI("WIFI", "Starting blocking station connect ssid=%s password=%s enterprise=%s",
+  DCTRL_LOGI("WIFI", "Starting blocking station connect ssid=%s passwordLen=%u enterprise=%s",
              savedSsid_.c_str(),
-             savedPassword_.c_str(),
+             static_cast<unsigned>(savedPassword_.length()),
              core::logging::bool_str(savedUsername_.length() > 0));
   const bool connected = wifi_manager::connect_station(savedSsid_.c_str(), savedPassword_.c_str(), savedUsername_.c_str());
   if (!connected) {
@@ -338,9 +338,9 @@ void NetworkManager::enable_recovery_ap() {
   const char *apSsid = config_.apSsid[0] ? config_.apSsid : "commutelive-setup";
   const char *apPassword = config_.apPassword[0] ? config_.apPassword : "commutelive-setup";
 
-  DCTRL_LOGI("WIFI", "Enabling recovery AP ssid=%s password=%s",
+  DCTRL_LOGI("WIFI", "Enabling recovery AP ssid=%s passwordLen=%u",
              apSsid,
-             apPassword);
+             static_cast<unsigned>(strlen(apPassword)));
   if (wifi_manager::start_ap(apSsid, apPassword)) {
     recoveryApEnabled_ = true;
     transition_to(NetworkState::kApMode);
