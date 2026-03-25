@@ -13,6 +13,7 @@ enum class DrawCommandType : uint8_t {
   kFillRect,
   kText,
   kBadge,
+  kMonoBitmap,
 };
 
 struct DrawCommand {
@@ -25,6 +26,7 @@ struct DrawCommand {
   uint16_t bg;
   uint8_t size;
   const char *text;
+  const uint8_t *bitmap;
 };
 
 struct DrawList {

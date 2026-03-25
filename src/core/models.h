@@ -81,6 +81,7 @@ struct RenderModel {
   char statusDetail[kMaxDestinationLen];
   char apSsid[64];
   char apPin[12];
+  char bleName[64];
   TransitRowModel rows[kMaxTransitRows];
 };
 

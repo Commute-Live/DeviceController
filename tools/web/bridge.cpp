@@ -481,8 +481,22 @@ static void render_and_export() {
         gDisplay.draw_text(cmd.x, cmd.y, cmd.text, cmd.color, cmd.size, cmd.bg); break;
       case core::DrawCommandType::kBadge:
         badgeRenderer.draw_badge(gDisplay, cmd.x, cmd.y, cmd.w, cmd.text); break;
+      case core::DrawCommandType::kMonoBitmap:
+        if (!cmd.bitmap || cmd.w <= 0 || cmd.h <= 0) {
+          break;
+        }
+        for (int16_t y = 0; y < cmd.h; ++y) {
+          for (int16_t x = 0; x < cmd.w; ++x) {
+            const uint8_t pixel =
+                cmd.bitmap[static_cast<size_t>(y) * static_cast<size_t>(cmd.w) + static_cast<size_t>(x)];
+            gDisplay.draw_pixel(static_cast<int16_t>(cmd.x + x),
+                                static_cast<int16_t>(cmd.y + y),
+                                pixel ? cmd.color : cmd.bg);
+          }
+        }
+        break;
       default: break;
-    }
+      }
   }
   // Convert RGB565 pixel buffer to RGBA for JS Canvas
   const auto &pixels = gDisplay.pixels();

@@ -14,10 +14,12 @@ constexpr uint16_t kColorGray = 0x7BEF;
 constexpr uint16_t kColorAmber = 0xFD20;
 constexpr uint16_t kColorRed = 0xF800;
 constexpr uint16_t kColorGreen = 0x07E0;
+constexpr uint16_t kColorBlue = 0x2C9F;
 constexpr uint8_t kMinDisplayType = 1;
 constexpr uint8_t kMaxDisplayType = 5;
 constexpr uint8_t kTextSizeTiny = 0;
 constexpr uint8_t kTextSizeTinyPlus = 255;
+
 
 struct TransitPresetConfig {
   int16_t topMarginTwoRow;
@@ -161,6 +163,7 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
   bg.bg = kColorBlack;
   bg.size = 1;
   bg.text = nullptr;
+  bg.bitmap = nullptr;
   out.push(bg);
 
   const bool transitView = model.hasData && model.uiState == UiState::kTransit;
@@ -170,69 +173,103 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
     const int16_t charW = static_cast<int16_t>(6 * homeFont);
     const int16_t textH = static_cast<int16_t>(8 * homeFont);
 
-    // Row 1: brand.
-    {
-      const RowFrame frame = home.rows[0];
-      const char *brand = "COMMUTE LIVE";
-      const int16_t brandW = static_cast<int16_t>(strnlen(brand, 32) * charW);
-      int16_t brandX = static_cast<int16_t>((static_cast<int16_t>(width_) - brandW) / 2);
-      if (brandX < 2) brandX = 2;
-      int16_t brandY = static_cast<int16_t>(frame.yStart + ((frame.height - textH) / 2));
-      if (brandY < frame.yStart) brandY = frame.yStart;
+    if (model.uiState == UiState::kSetupMode) {
+      const uint8_t titleFont = 1;
+      const uint8_t tinyFont = kTextSizeTiny;
+      const uint8_t titleChars = static_cast<uint8_t>((static_cast<int16_t>(width_) - 4) / 6);
+      const uint8_t tinyChars = static_cast<uint8_t>((static_cast<int16_t>(width_) - 4) / 4);
+      constexpr int16_t kTitleHeight = 8;
+      constexpr int16_t kTinyHeight = 6;
+      constexpr int16_t kLineGap = 2;
+      constexpr int16_t kTitleY = 1;
+      constexpr int16_t kUrlY = kTitleY + kTitleHeight + kLineGap + 4;
+      constexpr int16_t kActionY = kUrlY + kTinyHeight + (kLineGap - 1);
+      constexpr int16_t kBleY = kActionY + kTinyHeight + kLineGap;
+
+      auto centered_x = [&](const char *text, uint8_t fontSize) -> int16_t {
+        if (!text) return 2;
+        const int16_t charW =
+            (fontSize == kTextSizeTiny || fontSize == kTextSizeTinyPlus) ? 4 : static_cast<int16_t>(6 * fontSize);
+        const int16_t textW = static_cast<int16_t>(strnlen(text, kMaxDestinationLen) * charW);
+        int16_t x = static_cast<int16_t>((static_cast<int16_t>(width_) - textW) / 2);
+        if (x < 2) x = 2;
+        return x;
+      };
+
+      const char *titleText = trim_for_width("GET THE APP", titleChars, out);
 
       DrawCommand title{};
       title.type = DrawCommandType::kText;
-      title.x = brandX;
-      title.y = brandY;
+      title.x = centered_x(titleText, titleFont);
+      title.y = kTitleY;
       title.color = kColorWhite;
       title.bg = kColorBlack;
-      title.size = homeFont;
-      title.text = out.copy_text(brand);
+      title.size = titleFont;
+      title.text = titleText;
+      title.bitmap = nullptr;
       out.push(title);
-    }
 
-    if (model.uiState == UiState::kSetupMode) {
-      // Row 2: AP SSID in TomThumb font so the full name fits on the display.
-      {
-        const RowFrame frame = home.rows[1];
-        const int16_t tinyCharW = 4;
-        const int16_t tinyH = 6;
-        const int16_t y = static_cast<int16_t>(frame.yStart + ((frame.height - tinyH) / 2));
-        const uint8_t maxChars = static_cast<uint8_t>((static_cast<int16_t>(width_) - 2) / tinyCharW);
+      const char *urlText = trim_for_width("Go to commutelive.com/app", tinyChars, out);
+      DrawCommand url{};
+      url.type = DrawCommandType::kText;
+      url.x = centered_x(urlText, tinyFont);
+      url.y = kUrlY;
+      url.color = kColorCyan;
+      url.bg = kColorBlack;
+      url.size = tinyFont;
+      url.text = urlText;
+      url.bitmap = nullptr;
+      out.push(url);
 
-        DrawCommand ssidLine{};
-        ssidLine.type = DrawCommandType::kText;
-        ssidLine.x = 2;
-        ssidLine.y = y;
-        ssidLine.color = kColorCyan;
-        ssidLine.bg = kColorBlack;
-        ssidLine.size = kTextSizeTiny;
-        ssidLine.text = trim_for_width(model.apSsid[0] ? model.apSsid : "CommuteLive", maxChars, out);
-        out.push(ssidLine);
-      }
+      const char *actionText = trim_for_width("Open app, then connect", tinyChars, out);
+      DrawCommand action{};
+      action.type = DrawCommandType::kText;
+      action.x = centered_x(actionText, tinyFont);
+      action.y = kActionY;
+      action.color = kColorWhite;
+      action.bg = kColorBlack;
+      action.size = tinyFont;
+      action.text = actionText;
+      action.bitmap = nullptr;
+      out.push(action);
 
-      // Row 3: "PIN: XXXXXXXX" in TomThumb font.
-      {
-        const RowFrame frame = home.rows[2];
-        const int16_t tinyCharW = 4;
-        const int16_t tinyH = 6;
-        const int16_t y = static_cast<int16_t>(frame.yStart + ((frame.height - tinyH) / 2));
-        const uint8_t maxChars = static_cast<uint8_t>((static_cast<int16_t>(width_) - 2) / tinyCharW);
+      char bleBuf[80];
+      snprintf(bleBuf, sizeof(bleBuf), "BT: %s", model.bleName[0] ? model.bleName : "CommuteLive");
+      const char *bleText = trim_for_width(bleBuf, tinyChars, out);
 
-        char pinBuf[20];
-        snprintf(pinBuf, sizeof(pinBuf), "PIN: %s", model.apPin[0] ? model.apPin : "--------");
-
-        DrawCommand pinLine{};
-        pinLine.type = DrawCommandType::kText;
-        pinLine.x = 2;
-        pinLine.y = y;
-        pinLine.color = kColorAmber;
-        pinLine.bg = kColorBlack;
-        pinLine.size = kTextSizeTiny;
-        pinLine.text = trim_for_width(pinBuf, maxChars, out);
-        out.push(pinLine);
-      }
+      DrawCommand bleLine{};
+      bleLine.type = DrawCommandType::kText;
+      bleLine.x = centered_x(bleText, tinyFont);
+      bleLine.y = kBleY;
+      bleLine.color = kColorBlue;
+      bleLine.bg = kColorBlack;
+      bleLine.size = tinyFont;
+      bleLine.text = bleText;
+      bleLine.bitmap = nullptr;
+      out.push(bleLine);
     } else {
+      // Row 1: brand.
+      {
+        const RowFrame frame = home.rows[0];
+        const char *brand = "COMMUTE LIVE";
+        const int16_t brandW = static_cast<int16_t>(strnlen(brand, 32) * charW);
+        int16_t brandX = static_cast<int16_t>((static_cast<int16_t>(width_) - brandW) / 2);
+        if (brandX < 2) brandX = 2;
+        int16_t brandY = static_cast<int16_t>(frame.yStart + ((frame.height - textH) / 2));
+        if (brandY < frame.yStart) brandY = frame.yStart;
+
+        DrawCommand title{};
+        title.type = DrawCommandType::kText;
+        title.x = brandX;
+        title.y = brandY;
+        title.color = kColorWhite;
+        title.bg = kColorBlack;
+        title.size = homeFont;
+        title.text = out.copy_text(brand);
+        title.bitmap = nullptr;
+        out.push(title);
+      }
+
       // Row 2: supported cities with MTA/CTA style chips.
       {
         const RowFrame frame = home.rows[1];
@@ -275,6 +312,7 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
           chipBg.bg = kColorBlack;
           chipBg.size = 1;
           chipBg.text = nullptr;
+          chipBg.bitmap = nullptr;
           out.push(chipBg);
 
           DrawCommand chipText{};
@@ -285,6 +323,7 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
           chipText.bg = chips[i].bg;
           chipText.size = chipFont;
           chipText.text = out.copy_text(chips[i].text);
+          chipText.bitmap = nullptr;
           out.push(chipText);
 
           x = static_cast<int16_t>(x + chipW + 2);
@@ -309,6 +348,7 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
           status.size = statusFont;
           status.text = trim_for_width(model.statusLine[0] ? model.statusLine : "BOOTING",
                                        static_cast<uint8_t>(rightChars), out);
+          status.bitmap = nullptr;
           out.push(status);
 
           DrawCommand detail{};
@@ -320,6 +360,7 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
           detail.size = 1;
           detail.text = trim_for_width(model.statusDetail[0] ? model.statusDetail : "",
                                        static_cast<uint8_t>(rightChars), out);
+          detail.bitmap = nullptr;
           out.push(detail);
         } else {
           char compact[kMaxDestinationLen];
@@ -335,6 +376,7 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
           compactLine.bg = kColorBlack;
           compactLine.size = 1;
           compactLine.text = trim_for_width(compact, static_cast<uint8_t>(rightChars), out);
+          compactLine.bitmap = nullptr;
           out.push(compactLine);
         }
       }
@@ -415,6 +457,7 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
     badge.bg = kColorBlack;
     badge.size = rowFont;
     badge.text = trim_for_width(hasRoute ? row.routeId : "--", 2, out);
+    badge.bitmap = nullptr;
     out.push(badge);
 
     DrawCommand eta{};
@@ -432,6 +475,7 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
     eta.bg = kColorBlack;
     eta.size = etaFont;
     eta.text = trim_for_width(row.eta[0] ? row.eta : "--", kEtaChars, out);
+    eta.bitmap = nullptr;
     out.push(eta);
 
     const uint8_t destinationFont = (normalizedDisplayType == 3)
@@ -481,6 +525,7 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
         destinationPart.bg = kColorBlack;
         destinationPart.size = fontSize;
         destinationPart.text = out.copy_text(token);
+        destinationPart.bitmap = nullptr;
         out.push(destinationPart);
         cursorX = static_cast<int16_t>(cursorX + static_cast<int16_t>(tokenLen) * lineCharW);
         tokenLen = 0;

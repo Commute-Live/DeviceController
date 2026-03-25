@@ -1023,9 +1023,23 @@ void render_frame(SimDisplayEngine &display, const ScenarioDef &scen, const SimO
       case core::DrawCommandType::kBadge:
         badgeRenderer.draw_badge(display, cmd.x, cmd.y, cmd.w, cmd.text);
         break;
+      case core::DrawCommandType::kMonoBitmap:
+        if (!cmd.bitmap || cmd.w <= 0 || cmd.h <= 0) {
+          break;
+        }
+        for (int16_t y = 0; y < cmd.h; ++y) {
+          for (int16_t x = 0; x < cmd.w; ++x) {
+            const uint8_t pixel =
+                cmd.bitmap[static_cast<size_t>(y) * static_cast<size_t>(cmd.w) + static_cast<size_t>(x)];
+            display.draw_pixel(static_cast<int16_t>(cmd.x + x),
+                               static_cast<int16_t>(cmd.y + y),
+                               pixel ? cmd.color : cmd.bg);
+          }
+        }
+        break;
       default:
         break;
-    }
+      }
   }
 }
 
@@ -1177,9 +1191,23 @@ void render_model_frame(SimDisplayEngine &display, const core::RenderModel &mode
       case core::DrawCommandType::kBadge:
         badgeRenderer.draw_badge(display, cmd.x, cmd.y, cmd.w, cmd.text);
         break;
+      case core::DrawCommandType::kMonoBitmap:
+        if (!cmd.bitmap || cmd.w <= 0 || cmd.h <= 0) {
+          break;
+        }
+        for (int16_t y = 0; y < cmd.h; ++y) {
+          for (int16_t x = 0; x < cmd.w; ++x) {
+            const uint8_t pixel =
+                cmd.bitmap[static_cast<size_t>(y) * static_cast<size_t>(cmd.w) + static_cast<size_t>(x)];
+            display.draw_pixel(static_cast<int16_t>(cmd.x + x),
+                               static_cast<int16_t>(cmd.y + y),
+                               pixel ? cmd.color : cmd.bg);
+          }
+        }
+        break;
       default:
         break;
-    }
+      }
   }
 }
 

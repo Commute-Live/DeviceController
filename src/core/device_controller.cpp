@@ -424,6 +424,7 @@ DeviceController::DeviceController(const Dependencies &deps)
   copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "BOOTING");
   copy_str(renderModel_.statusDetail, sizeof(renderModel_.statusDetail), "Starting device");
   set_default_rows(renderModel_);
+  copy_str(renderModel_.bleName, sizeof(renderModel_.bleName), "");
 }
 
 bool DeviceController::begin() {
@@ -940,10 +941,11 @@ void DeviceController::update_ui_state() {
     copy_str(renderModel_.statusDetail, sizeof(renderModel_.statusDetail), "Live arrivals");
   } else if (deps_.networkManager->setup_mode_active() && !wifiUp) {
     renderModel_.uiState = UiState::kSetupMode;
-    copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "SETUP MODE");
-    copy_str(renderModel_.statusDetail, sizeof(renderModel_.statusDetail), "Connect to device Wi-Fi");
+    copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "SET UP");
+    copy_str(renderModel_.statusDetail, sizeof(renderModel_.statusDetail), "Scan QR and use the app");
     copy_str(renderModel_.apSsid, sizeof(renderModel_.apSsid), runtimeConfig_.network.apSsid);
     copy_str(renderModel_.apPin, sizeof(renderModel_.apPin), runtimeConfig_.network.apPassword);
+    copy_str(renderModel_.bleName, sizeof(renderModel_.bleName), runtimeConfig_.deviceId);
   } else if (!wifiUp) {
     renderModel_.uiState = UiState::kNoWifi;
     copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "NO WIFI");
@@ -1006,6 +1008,19 @@ void DeviceController::render_frame(uint32_t nowMs) {
         break;
       case DrawCommandType::kBadge:
         gBadgeRenderer.draw_badge(*deps_.displayEngine, cmd.x, cmd.y, cmd.w, cmd.text);
+        break;
+      case DrawCommandType::kMonoBitmap:
+        if (!cmd.bitmap || cmd.w <= 0 || cmd.h <= 0) {
+          break;
+        }
+        for (int16_t y = 0; y < cmd.h; ++y) {
+          for (int16_t x = 0; x < cmd.w; ++x) {
+            const uint8_t pixel = cmd.bitmap[static_cast<size_t>(y) * static_cast<size_t>(cmd.w) + static_cast<size_t>(x)];
+            deps_.displayEngine->draw_pixel(static_cast<int16_t>(cmd.x + x),
+                                            static_cast<int16_t>(cmd.y + y),
+                                            pixel ? cmd.color : cmd.bg);
+          }
+        }
         break;
       default:
         break;

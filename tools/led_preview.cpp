@@ -26,8 +26,7 @@ struct PreviewOptions {
   int scale = 8;
   int displayType = 1;
   int rows = 2;
-  std::string apSsid = "CommuteLive-AB12";
-  std::string apPin = "12345678";
+  std::string bleName = "CommuteLive-AB12";
   std::string route1 = "A";
   std::string destination1 = "Inwood-207 St";
   std::string eta1 = "3";
@@ -85,8 +84,7 @@ void print_usage(const char *program) {
           "  --scale <n>              Pixel upscale factor (default: 8)\n"
           "  --display-type <1-5>     Layout preset (default: 1)\n"
           "  --rows <1-3>             Active rows for transit scenarios\n"
-          "  --ssid <value>           Setup mode SSID\n"
-          "  --pin <value>            Setup mode PIN\n"
+          "  --ble-name <value>       Setup mode Bluetooth name\n"
           "  --route<N> <value>       Row route id, N=1..3\n"
           "  --destination<N> <value> Row destination, N=1..3\n"
           "  --eta<N> <value>         Row ETA, N=1..3\n"
@@ -150,16 +148,10 @@ bool parse_args(int argc, char **argv, PreviewOptions &options) {
       if (!value || !parse_int_arg(value, options.rows)) return false;
       continue;
     }
-    if (strcmp(arg, "--ssid") == 0) {
+    if (strcmp(arg, "--ble-name") == 0) {
       const char *value = require_value(arg);
       if (!value) return false;
-      options.apSsid = value;
-      continue;
-    }
-    if (strcmp(arg, "--pin") == 0) {
-      const char *value = require_value(arg);
-      if (!value) return false;
-      options.apPin = value;
+      options.bleName = value;
       continue;
     }
     if (strcmp(arg, "--route1") == 0) {
@@ -664,10 +656,9 @@ core::RenderModel build_model(const PreviewOptions &options) {
   if (options.scenario == "setup") {
     model.uiState = core::UiState::kSetupMode;
     model.hasData = false;
-    copy_cstr(model.statusLine, "SETUP MODE");
-    copy_cstr(model.statusDetail, "Connect to device Wi-Fi");
-    copy_cstr(model.apSsid, options.apSsid);
-    copy_cstr(model.apPin, options.apPin);
+    copy_cstr(model.statusLine, "SET UP");
+    copy_cstr(model.statusDetail, "Scan QR and use the app");
+    copy_cstr(model.bleName, options.bleName);
     return model;
   }
 
@@ -742,6 +733,20 @@ int run_preview(const PreviewOptions &options) {
         break;
       case core::DrawCommandType::kBadge:
         badgeRenderer.draw_badge(display, cmd.x, cmd.y, cmd.w, cmd.text);
+        break;
+      case core::DrawCommandType::kMonoBitmap:
+        if (!cmd.bitmap || cmd.w <= 0 || cmd.h <= 0) {
+          break;
+        }
+        for (int16_t y = 0; y < cmd.h; ++y) {
+          for (int16_t x = 0; x < cmd.w; ++x) {
+            const uint8_t pixel =
+                cmd.bitmap[static_cast<size_t>(y) * static_cast<size_t>(cmd.w) + static_cast<size_t>(x)];
+            display.draw_pixel(static_cast<int16_t>(cmd.x + x),
+                               static_cast<int16_t>(cmd.y + y),
+                               pixel ? cmd.color : cmd.bg);
+          }
+        }
         break;
       default:
         break;
