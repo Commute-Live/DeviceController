@@ -25,6 +25,8 @@ struct BleCredentials {
 //   {"status":"connecting"}
 //   {"status":"connected","deviceId":"esp32-XXXX"}
 //   {"status":"failed"}
+class ProvisionServerCallbacks;
+
 class BleProvisioner {
  public:
   using OnCredentials = void (*)(const BleCredentials &, void *);
@@ -43,6 +45,7 @@ class BleProvisioner {
   static void handle_write(const uint8_t *data, size_t len);
 
  private:
+  friend class ProvisionServerCallbacks;
   static BleProvisioner *sInstance_;
   void *statusChar_ = nullptr;  // NimBLECharacteristic* — opaque to avoid header pollution
   OnCredentials credCb_ = nullptr;

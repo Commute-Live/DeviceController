@@ -43,7 +43,7 @@ class ProvisionWriteCallback : public NimBLECharacteristicCallbacks {
 class ProvisionServerCallbacks : public NimBLEServerCallbacks {
  public:
   void onDisconnect(NimBLEServer *) override {
-    if (BleProvisioner::sInstance_ && !BleProvisioner::sInstance_->is_advertising()) {
+    if (BleProvisioner::sInstance_ && !BleProvisioner::sInstance_->advertising_) {
       NimBLEDevice::getAdvertising()->stop();
     }
   }
