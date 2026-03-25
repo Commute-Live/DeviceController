@@ -37,6 +37,7 @@ class BleProvisioner {
   void set_credentials_callback(OnCredentials cb, void *ctx);
   bool credentials_pending();
   BleCredentials take_credentials();
+  bool is_advertising() const { return advertising_; }
 
   // Called from the NimBLE GATT write callback (static context).
   static void handle_write(const uint8_t *data, size_t len);

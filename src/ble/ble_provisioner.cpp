@@ -38,7 +38,19 @@ class ProvisionWriteCallback : public NimBLECharacteristicCallbacks {
   }
 };
 
+// Server disconnect callback — NimBLE 1.4.x auto-restarts advertising after every
+// disconnect. If stop() was already called (provisioning done), cancel that restart.
+class ProvisionServerCallbacks : public NimBLEServerCallbacks {
+ public:
+  void onDisconnect(NimBLEServer *) override {
+    if (BleProvisioner::sInstance_ && !BleProvisioner::sInstance_->is_advertising()) {
+      NimBLEDevice::getAdvertising()->stop();
+    }
+  }
+};
+
 static ProvisionWriteCallback sWriteCallback;
+static ProvisionServerCallbacks sServerCallbacks;
 
 void BleProvisioner::begin(const char *bleName, const char *deviceId) {
   sInstance_ = this;
@@ -54,6 +66,7 @@ void BleProvisioner::begin(const char *bleName, const char *deviceId) {
     NimBLEDevice::setPower(ESP_PWR_LVL_P9);
 
     NimBLEServer  *server  = NimBLEDevice::createServer();
+    server->setCallbacks(&sServerCallbacks);
     NimBLEService *service = server->createService(kServiceUuid);
 
     // PROVISION characteristic: app writes WiFi credentials as JSON.
@@ -97,7 +110,6 @@ void BleProvisioner::begin(const char *bleName, const char *deviceId) {
 void BleProvisioner::stop() {
   NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
   if (adv) {
-    adv->setRestartOnDisconnect(false);
     adv->stop();
   }
   advertising_ = false;
