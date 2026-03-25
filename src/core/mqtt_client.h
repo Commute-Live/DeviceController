@@ -8,7 +8,8 @@
 namespace core {
 
 constexpr size_t kMaxTopicLen = 96;
-constexpr size_t kMaxPayloadLen = 1024;
+constexpr size_t kMaxMqttPacketLen = 2048;
+constexpr size_t kMaxPayloadLen = 1900;
 
 struct MqttConfig {
   char host[64];
