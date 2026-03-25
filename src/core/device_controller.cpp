@@ -241,6 +241,23 @@ String extract_row_direction_label(const String &message, uint8_t rowIndex) {
   return "";
 }
 
+String extract_row_display_label(const String &message, uint8_t rowIndex) {
+  String item;
+  if (extract_lines_object_at(message, rowIndex, item)) {
+    String label = extract_json_string_field(item, "label");
+    if (label.length() > 0) return label;
+    label = extract_json_string_field(item, "topText");
+    if (label.length() > 0) return label;
+    label = extract_json_string_field(item, "destination");
+    if (label.length() > 0) return label;
+    label = extract_json_string_field(item, "directionLabel");
+    if (label.length() > 0) return label;
+    label = extract_json_string_field(item, "stop");
+    if (label.length() > 0) return label;
+  }
+  return "";
+}
+
 int extract_eta_values_from_line_object(const String &lineObject, String outEtas[], int maxCount) {
   if (maxCount <= 0) return 0;
   int count = 0;
@@ -677,6 +694,8 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
 
   const String row1Direction = extract_row_direction_label(message, 0);
   const String row2Direction = extract_row_direction_label(message, 1);
+  const String row1DisplayLabel = extract_row_display_label(message, 0);
+  const String row2DisplayLabel = extract_row_display_label(message, 1);
   char row1EtaExtra[kMaxDestinationLen];
   char row2EtaExtra[kMaxDestinationLen];
   row1EtaExtra[0] = '\0';
@@ -708,7 +727,8 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   copy_str(renderModel_.rows[0].direction, sizeof(renderModel_.rows[0].direction),
            row1Direction.c_str());
   copy_str(renderModel_.rows[0].destination, sizeof(renderModel_.rows[0].destination),
-           parsed.row1.label.length() ? parsed.row1.label.c_str() : renderModel_.rows[0].routeId);
+           row1DisplayLabel.length() ? row1DisplayLabel.c_str() :
+           (parsed.row1.label.length() ? parsed.row1.label.c_str() : renderModel_.rows[0].routeId));
   normalize_eta(parsed.row1.eta, renderModel_.rows[0].eta, sizeof(renderModel_.rows[0].eta));
   copy_str(renderModel_.rows[0].etaExtra, sizeof(renderModel_.rows[0].etaExtra),
            compactExtraEtaPreset ? row1EtaExtra : "");
@@ -721,7 +741,8 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
     copy_str(renderModel_.rows[1].direction, sizeof(renderModel_.rows[1].direction),
              row2Direction.c_str());
     copy_str(renderModel_.rows[1].destination, sizeof(renderModel_.rows[1].destination),
-             parsed.row2.label.length() ? parsed.row2.label.c_str() : renderModel_.rows[1].routeId);
+             row2DisplayLabel.length() ? row2DisplayLabel.c_str() :
+             (parsed.row2.label.length() ? parsed.row2.label.c_str() : renderModel_.rows[1].routeId));
     normalize_eta(parsed.row2.eta, renderModel_.rows[1].eta, sizeof(renderModel_.rows[1].eta));
     copy_str(renderModel_.rows[1].etaExtra, sizeof(renderModel_.rows[1].etaExtra),
              compactExtraEtaPreset ? row2EtaExtra : "");
