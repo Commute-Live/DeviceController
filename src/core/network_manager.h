@@ -52,7 +52,9 @@ class NetworkManager final {
   uint32_t nextRetryAtMs_;
   uint32_t connectingStartMs_;
   uint32_t lastNoCredLogMs_;
+  uint32_t nextRecoveryActionAtMs_;
   uint8_t retryCount_;
+  uint8_t recoveryApRetryCount_;
   int lastWifiStatus_;
   StateCallback callback_;
   void *callbackCtx_;
@@ -61,7 +63,8 @@ class NetworkManager final {
 
   void transition_to(NetworkState next);
   bool connect_station_now();
-  void enable_recovery_ap();
+  bool enable_recovery_ap();
+  void schedule_recovery_ap_retry(uint32_t nowMs);
 };
 
 }  // namespace core
