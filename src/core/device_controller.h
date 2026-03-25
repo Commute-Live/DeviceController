@@ -37,6 +37,7 @@ class DeviceController final {
   ble::BleProvisioner bleProvisioner_;
   char pendingProvisionToken_[48];
   char pendingProvisionServerUrl_[128];
+  volatile bool bleScanPending_;
   uint32_t lastHeartbeatAtMs_;
   uint32_t lastTelemetryAtMs_;
   uint32_t lastRenderAtMs_;

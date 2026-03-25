@@ -451,12 +451,11 @@ bool DeviceController::begin() {
   // Use deviceId as the BLE name so the app can get the ID directly from the scan
   // without needing to read the STATUS characteristic (which is unreliable on iOS).
   bleProvisioner_.begin(runtimeConfig_.deviceId, runtimeConfig_.deviceId);
+  bleScanPending_ = false;
   bleProvisioner_.set_scan_callback([](void *ctx) {
-    auto *self = static_cast<DeviceController *>(ctx);
-    wifi_manager::scan_and_emit([](const char *json, void *ctx2) {
-      auto *ctrl = static_cast<DeviceController *>(ctx2);
-      ctrl->bleProvisioner_.notify_scan_results(json);
-    }, self);
+    // Do NOT run the scan here — this runs in the NimBLE host task (tiny stack).
+    // Set a flag and run from tick() on the main Arduino task instead.
+    static_cast<DeviceController *>(ctx)->bleScanPending_ = true;
   }, this);
   deps_.networkManager->begin(runtimeConfig_.network);
   server_.begin();
@@ -478,6 +477,13 @@ bool DeviceController::begin() {
 }
 
 void DeviceController::tick(uint32_t nowMs) {
+  if (bleScanPending_) {
+    bleScanPending_ = false;
+    wifi_manager::scan_and_emit([](const char *json, void *ctx2) {
+      static_cast<DeviceController *>(ctx2)->bleProvisioner_.notify_scan_results(json);
+    }, this);
+  }
+
   if (bleProvisioner_.credentials_pending()) {
     const ble::BleCredentials creds = bleProvisioner_.take_credentials();
     // Store token + serverUrl so we can call /device/provision once WiFi connects.
