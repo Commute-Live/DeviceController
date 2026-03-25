@@ -24,7 +24,7 @@ void set_ready_status(void *statusChar, const char *deviceId) {
   auto *chr = reinterpret_cast<NimBLECharacteristic *>(statusChar);
   char readyJson[128];
   snprintf(readyJson, sizeof(readyJson), "{\"status\":\"ready\",\"deviceId\":\"%s\"}", deviceId);
-  chr->setValue(readyJson);
+  chr->setValue(reinterpret_cast<const uint8_t *>(readyJson), strlen(readyJson));
 }
 
 }  // namespace
@@ -106,7 +106,7 @@ void BleProvisioner::stop() {
 void BleProvisioner::notify_status(const char *statusJson) {
   if (!statusChar_ || !statusJson) return;
   auto *chr = reinterpret_cast<NimBLECharacteristic *>(statusChar_);
-  chr->setValue(statusJson);
+  chr->setValue(reinterpret_cast<const uint8_t *>(statusJson), strlen(statusJson));
   chr->notify();
   DCTRL_LOGI("BLE", "Status notification sent payload=%s", statusJson);
 }
