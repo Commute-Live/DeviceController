@@ -451,6 +451,13 @@ bool DeviceController::begin() {
   // Use deviceId as the BLE name so the app can get the ID directly from the scan
   // without needing to read the STATUS characteristic (which is unreliable on iOS).
   bleProvisioner_.begin(runtimeConfig_.deviceId, runtimeConfig_.deviceId);
+  bleProvisioner_.set_scan_callback([](void *ctx) {
+    auto *self = static_cast<DeviceController *>(ctx);
+    wifi_manager::scan_and_emit([](const char *json, void *ctx2) {
+      auto *ctrl = static_cast<DeviceController *>(ctx2);
+      ctrl->bleProvisioner_.notify_scan_results(json);
+    }, self);
+  }, this);
   deps_.networkManager->begin(runtimeConfig_.network);
   server_.begin();
   DCTRL_LOGI("HTTP", "Core API ready routes=/connect,/device-info,/heartbeat,/status");

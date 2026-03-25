@@ -244,4 +244,56 @@ bool handle_connect_request(WebServer &server, String &connectedSsid, String &co
   return false;
 }
 
+int scan_and_emit(void (*emitChunk)(const char *json, void *ctx), void *ctx) {
+  if (!emitChunk) return 0;
+
+  const int n = fresh_scan_networks();
+  if (n <= 0) {
+    emitChunk("{\"c\":0,\"t\":1,\"n\":[]}", ctx);
+    WiFi.scanDelete();
+    return 0;
+  }
+
+  static constexpr int kPerChunk = 3;
+  const int totalChunks = (n + kPerChunk - 1) / kPerChunk;
+
+  for (int chunk = 0; chunk < totalChunks; chunk++) {
+    char buf[256];
+    int pos = snprintf(buf, sizeof(buf), "{\"c\":%d,\"t\":%d,\"n\":[", chunk, totalChunks);
+
+    const int start = chunk * kPerChunk;
+    const int end   = (start + kPerChunk < n) ? start + kPerChunk : n;
+
+    for (int i = start; i < end && pos < static_cast<int>(sizeof(buf)) - 40; i++) {
+      String ssid = WiFi.SSID(i);
+      if (ssid.length() == 0) continue;
+      if (ssid.length() > 32) ssid = ssid.substring(0, 32);
+
+      // Map wifi_auth_mode_t to compact enum: 0=open, 1=WEP, 2=WPA, 3=WPA2, 4=Enterprise
+      uint8_t enc = 3;
+      switch (WiFi.encryptionType(i)) {
+        case WIFI_AUTH_OPEN:            enc = 0; break;
+        case WIFI_AUTH_WEP:             enc = 1; break;
+        case WIFI_AUTH_WPA_PSK:         enc = 2; break;
+        case WIFI_AUTH_WPA2_PSK:        enc = 3; break;
+        case WIFI_AUTH_WPA2_ENTERPRISE: enc = 4; break;
+        default:                        enc = 3; break;
+      }
+
+      if (i > start) pos += snprintf(buf + pos, sizeof(buf) - pos, ",");
+      pos += snprintf(buf + pos, sizeof(buf) - pos,
+                       "{\"s\":\"%s\",\"r\":%d,\"e\":%u}",
+                       ssid.c_str(), WiFi.RSSI(i), static_cast<unsigned>(enc));
+    }
+
+    snprintf(buf + pos, sizeof(buf) - pos, "]}");
+    emitChunk(buf, ctx);
+    delay(50);  // small gap between notifications
+  }
+
+  WiFi.scanDelete();
+  DCTRL_LOGI("WIFI", "Scan results emitted networks=%d chunks=%d", n, totalChunks);
+  return n;
+}
+
 }  // namespace wifi_manager

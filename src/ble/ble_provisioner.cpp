@@ -11,6 +11,7 @@ namespace ble {
 static const char *kServiceUuid   = "a1b2c3d4-0000-4a5b-8c7d-9e0f1a2b3c4d";
 static const char *kProvisionUuid = "a1b2c3d4-0001-4a5b-8c7d-9e0f1a2b3c4d";
 static const char *kStatusUuid    = "a1b2c3d4-0002-4a5b-8c7d-9e0f1a2b3c4d";
+static const char *kWifiScanUuid  = "a1b2c3d4-0003-4a5b-8c7d-9e0f1a2b3c4d";
 
 BleProvisioner *BleProvisioner::sInstance_ = nullptr;
 
@@ -60,7 +61,10 @@ void BleProvisioner::begin(const char *bleName, const char *deviceId) {
   if (!initialized_) {
     credCb_ = nullptr;
     credCbCtx_ = nullptr;
+    scanCb_ = nullptr;
+    scanCbCtx_ = nullptr;
     statusChar_ = nullptr;
+    scanChar_ = nullptr;
 
     NimBLEDevice::init(bleName);   // BLE advertised name — what the app scans for
     NimBLEDevice::setPower(ESP_PWR_LVL_P9);
@@ -78,6 +82,11 @@ void BleProvisioner::begin(const char *bleName, const char *deviceId) {
         service->createCharacteristic(kStatusUuid, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
     statusChar_ = statusChr;
     set_ready_status(statusChar_, deviceId);
+
+    // WIFI_SCAN characteristic: device notifies scan results as chunked JSON.
+    NimBLECharacteristic *scanChr =
+        service->createCharacteristic(kWifiScanUuid, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+    scanChar_ = scanChr;
 
     service->start();
     NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
@@ -124,9 +133,21 @@ void BleProvisioner::notify_status(const char *statusJson) {
   DCTRL_LOGI("BLE", "Status notification sent payload=%s", statusJson);
 }
 
+void BleProvisioner::notify_scan_results(const char *json) {
+  if (!scanChar_ || !json) return;
+  auto *chr = reinterpret_cast<NimBLECharacteristic *>(scanChar_);
+  chr->setValue(reinterpret_cast<const uint8_t *>(json), strlen(json));
+  chr->notify();
+}
+
 void BleProvisioner::set_credentials_callback(OnCredentials cb, void *ctx) {
   credCb_    = cb;
   credCbCtx_ = ctx;
+}
+
+void BleProvisioner::set_scan_callback(OnScanRequest cb, void *ctx) {
+  scanCb_    = cb;
+  scanCbCtx_ = ctx;
 }
 
 bool BleProvisioner::credentials_pending() {
@@ -158,6 +179,16 @@ void BleProvisioner::handle_write(const uint8_t *data, size_t len) {
     if (end < 0) return "";
     return msg.substring(start, end);
   };
+
+  // Check for scan action before credential parsing
+  const String action = extract("action");
+  if (action == "scan") {
+    DCTRL_LOGI("BLE", "WiFi scan requested via BLE");
+    if (sInstance_->scanCb_) {
+      sInstance_->scanCb_(sInstance_->scanCbCtx_);
+    }
+    return;
+  }
 
   const String ssid      = extract("ssid");
   const String password  = extract("password");

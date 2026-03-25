@@ -28,4 +28,9 @@ String generate_or_load_ap_password();
 
 bool handle_connect_request(WebServer &server, String &connectedSsid, String &connectedPassword, String &connectedUser);
 
+// Performs a WiFi scan and calls emitChunk(jsonChunk, ctx) for each chunk of results.
+// Each chunk is a self-contained JSON object: {"c":0,"t":2,"n":[{"s":"SSID","r":-45,"e":3},...]}
+// Returns the total number of networks found.
+int scan_and_emit(void (*emitChunk)(const char *json, void *ctx), void *ctx);
+
 }  // namespace wifi_manager

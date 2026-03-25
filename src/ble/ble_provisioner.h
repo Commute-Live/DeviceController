@@ -19,8 +19,10 @@ struct BleCredentials {
 //   Service:   a1b2c3d4-0000-4a5b-8c7d-9e0f1a2b3c4d
 //   PROVISION: a1b2c3d4-0001-4a5b-8c7d-9e0f1a2b3c4d  (WRITE)
 //   STATUS:    a1b2c3d4-0002-4a5b-8c7d-9e0f1a2b3c4d  (READ | NOTIFY)
+//   WIFI_SCAN: a1b2c3d4-0003-4a5b-8c7d-9e0f1a2b3c4d  (READ | NOTIFY)
 //
 // App writes JSON to PROVISION: {"ssid":"...","password":"...","username":"...","token":"...","server_url":"..."}
+// Or: {"action":"scan"} to request a WiFi network scan (results on WIFI_SCAN characteristic)
 // Device notifies STATUS when WiFi result is known:
 //   {"status":"connecting"}
 //   {"status":"connected","deviceId":"esp32-XXXX"}
@@ -30,13 +32,16 @@ class ProvisionServerCallbacks;
 class BleProvisioner {
  public:
   using OnCredentials = void (*)(const BleCredentials &, void *);
+  using OnScanRequest = void (*)(void *);
 
   // bleName   — advertised BLE device name (e.g. "CommuteLive-6E20", used for scanning)
   // deviceId  — real device ID put in STATUS char (e.g. "esp32-ABCD1234", used for registration)
   void begin(const char *bleName, const char *deviceId);
   void stop();
   void notify_status(const char *statusJson);
+  void notify_scan_results(const char *json);
   void set_credentials_callback(OnCredentials cb, void *ctx);
+  void set_scan_callback(OnScanRequest cb, void *ctx);
   bool credentials_pending();
   BleCredentials take_credentials();
   bool is_advertising() const { return advertising_; }
@@ -47,9 +52,12 @@ class BleProvisioner {
  private:
   friend class ProvisionServerCallbacks;
   static BleProvisioner *sInstance_;
-  void *statusChar_ = nullptr;  // NimBLECharacteristic* — opaque to avoid header pollution
+  void *statusChar_ = nullptr;   // NimBLECharacteristic* — opaque to avoid header pollution
+  void *scanChar_ = nullptr;     // WIFI_SCAN characteristic
   OnCredentials credCb_ = nullptr;
   void *credCbCtx_ = nullptr;
+  OnScanRequest scanCb_ = nullptr;
+  void *scanCbCtx_ = nullptr;
   bool initialized_ = false;
   bool advertising_ = false;
   volatile bool credPending_ = false;
