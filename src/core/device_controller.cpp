@@ -616,14 +616,15 @@ bool DeviceController::call_provision_api(const char *serverUrl, const char *dev
 }
 
 void DeviceController::handle_command(const char *topic, const uint8_t *payload, size_t len) {
-  if (!payload || len == 0 || len >= kMaxPayloadLen) {
-    DCTRL_LOGW("MQTT", "Ignoring incoming command topic=%s invalidLen=%u",
+  if (!payload || len == 0 || len > kMaxPayloadLen) {
+    DCTRL_LOGW("MQTT", "Ignoring incoming command topic=%s payloadLen=%u maxPayloadLen=%u",
                core::logging::safe_str(topic),
-               static_cast<unsigned>(len));
+               static_cast<unsigned>(len),
+               static_cast<unsigned>(kMaxPayloadLen));
     return;
   }
 
-  char messageBuf[kMaxPayloadLen];
+  char messageBuf[kMaxPayloadLen + 1];
   memcpy(messageBuf, payload, len);
   messageBuf[len] = '\0';
   const String message(messageBuf);

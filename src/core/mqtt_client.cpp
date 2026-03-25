@@ -88,19 +88,22 @@ bool MqttClient::begin(const MqttConfig &config, const MqttTopics &topics) {
   lastTransportConnected_ = false;
 
   mqtt_.setServer(config_.host, config_.port);
-  mqtt_.setBufferSize(kMaxPayloadLen);
+  const bool bufferOk = mqtt_.setBufferSize(kMaxMqttPacketLen);
   mqtt_.setKeepAlive(30);
 
   activeInstance_ = this;
   mqtt_.setCallback(&MqttClient::global_on_message);
   DCTRL_LOGI("MQTT",
-             "Configured broker host=%s port=%u clientId=%s auth=%s stateTopic=%s commandTopic=%s",
+             "Configured broker host=%s port=%u clientId=%s auth=%s stateTopic=%s commandTopic=%s packetBuffer=%u payloadLimit=%u bufferOk=%s",
              core::logging::safe_str(config_.host),
              static_cast<unsigned>(config_.port),
              core::logging::safe_str(config_.clientId),
              core::logging::bool_str(config_.username[0] != '\0'),
              topics_.state,
-             topics_.command);
+             topics_.command,
+             static_cast<unsigned>(kMaxMqttPacketLen),
+             static_cast<unsigned>(kMaxPayloadLen),
+             core::logging::bool_str(bufferOk));
   return true;
 }
 
