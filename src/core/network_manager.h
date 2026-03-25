@@ -30,6 +30,7 @@ class NetworkManager final {
 
   bool begin(const NetworkConfig &config);
   void tick(uint32_t nowMs);
+  void disconnect(bool clearCredentials, bool restartProvisioning);
   void request_reconnect();
   void set_credentials(const char *ssid, const char *password, const char *username);
   void set_state_callback(StateCallback callback, void *ctx);
@@ -41,6 +42,7 @@ class NetworkManager final {
  private:
   NetworkConfig config_;
   NetworkState state_;
+  bool autoReconnectEnabled_;
   bool hasSavedCredentials_;
   bool recoveryApEnabled_;
   String savedSsid_;
@@ -50,6 +52,7 @@ class NetworkManager final {
   uint32_t nextRetryAtMs_;
   uint32_t connectingStartMs_;
   uint8_t retryCount_;
+  int lastWifiStatus_;
   StateCallback callback_;
   void *callbackCtx_;
 

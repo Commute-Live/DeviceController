@@ -4,6 +4,8 @@
 #include <Fonts/TomThumb.h>
 #include <ESP32-VirtualMatrixPanel-I2S-DMA.h>
 
+#include "core/logging.h"
+
 namespace core {
 
 namespace {
@@ -96,7 +98,11 @@ bool DisplayEngine::begin(const DisplayConfig &config) {
 
   DisplayGeometry geom{};
   if (!compute_geometry(config, geom)) {
-    Serial.println("[DISPLAY] Invalid geometry config");
+    DCTRL_LOGE("DISPLAY", "Invalid geometry config rows=%u cols=%u panel=%ux%u",
+               static_cast<unsigned>(config.panelRows),
+               static_cast<unsigned>(config.panelCols),
+               static_cast<unsigned>(config.panelWidth),
+               static_cast<unsigned>(config.panelHeight));
     return false;
   }
 
@@ -125,7 +131,9 @@ bool DisplayEngine::begin(const DisplayConfig &config) {
 
   matrix_ = new MatrixPanel_I2S_DMA(mxConfig);
   if (!matrix_ || !matrix_->begin()) {
-    Serial.println("[DISPLAY] Matrix initialization failed");
+    DCTRL_LOGE("DISPLAY", "Matrix initialization failed chainLength=%u brightness=%u",
+               static_cast<unsigned>(chainLength),
+               static_cast<unsigned>(config_.brightness));
     end();
     return false;
   }
@@ -142,7 +150,11 @@ bool DisplayEngine::begin(const DisplayConfig &config) {
                                           config_.panelHeight, chainType);
 
   if (!virtualMatrix_) {
-    Serial.println("[DISPLAY] Virtual matrix initialization failed");
+    DCTRL_LOGE("DISPLAY", "Virtual matrix initialization failed rows=%u cols=%u chainMode=%u serpentine=%s",
+               static_cast<unsigned>(config_.panelRows),
+               static_cast<unsigned>(config_.panelCols),
+               static_cast<unsigned>(config_.chainMode),
+               core::logging::bool_str(config_.serpentine));
     end();
     return false;
   }
@@ -154,8 +166,16 @@ bool DisplayEngine::begin(const DisplayConfig &config) {
   canvas_->fillScreen(0);
 
   ready_ = true;
-  Serial.printf("[DISPLAY] Ready %ux%u (%ux%u panels)\n", geometry_.totalWidth, geometry_.totalHeight,
-                config_.panelCols, config_.panelRows);
+  DCTRL_LOGI("DISPLAY", "Ready total=%ux%u panels=%ux%u brightness=%u serpentine=%s chainMode=%u offsets=(%d,%d)",
+             geometry_.totalWidth,
+             geometry_.totalHeight,
+             config_.panelCols,
+             config_.panelRows,
+             static_cast<unsigned>(config_.brightness),
+             core::logging::bool_str(config_.serpentine),
+             static_cast<unsigned>(config_.chainMode),
+             static_cast<int>(config_.xOffset),
+             static_cast<int>(config_.yOffset));
   return true;
 }
 

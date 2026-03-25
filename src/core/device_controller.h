@@ -48,6 +48,7 @@ class DeviceController final {
 
   void handle_network_state(NetworkState state);
   void handle_command(const char *topic, const uint8_t *payload, size_t len);
+  void handle_disconnect_wifi_command(const String &message);
   bool perform_ota_update(const String& url);
   void setup_http_routes();
   static void http_connect_handler();
