@@ -97,6 +97,7 @@ void BleProvisioner::begin(const char *bleName, const char *deviceId) {
 void BleProvisioner::stop() {
   NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
   if (adv) {
+    adv->setRestartOnDisconnect(false);
     adv->stop();
   }
   advertising_ = false;

@@ -51,6 +51,7 @@ class NetworkManager final {
 
   uint32_t nextRetryAtMs_;
   uint32_t connectingStartMs_;
+  uint32_t lastNoCredLogMs_;
   uint8_t retryCount_;
   int lastWifiStatus_;
   StateCallback callback_;

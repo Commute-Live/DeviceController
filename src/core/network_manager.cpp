@@ -70,6 +70,7 @@ NetworkManager::NetworkManager()
       savedUsername_(),
       nextRetryAtMs_(0),
       connectingStartMs_(0),
+      lastNoCredLogMs_(0),
       retryCount_(0),
       lastWifiStatus_(kUnknownWifiStatus),
       callback_(nullptr),
@@ -203,7 +204,10 @@ void NetworkManager::tick(uint32_t nowMs) {
   }
 
   if (!hasSavedCredentials_) {
-    DCTRL_LOGW("WIFI", "No credentials available; staying in recovery AP mode");
+    if (nowMs - lastNoCredLogMs_ >= 10000) {
+      DCTRL_LOGW("WIFI", "No credentials available; staying in recovery AP mode");
+      lastNoCredLogMs_ = nowMs;
+    }
     enable_recovery_ap();
     return;
   }
