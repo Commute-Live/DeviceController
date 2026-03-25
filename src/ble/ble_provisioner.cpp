@@ -109,9 +109,11 @@ void BleProvisioner::handle_write(const uint8_t *data, size_t len) {
     return msg.substring(start, end);
   };
 
-  const String ssid     = extract("ssid");
-  const String password = extract("password");
-  const String username = extract("username");
+  const String ssid      = extract("ssid");
+  const String password  = extract("password");
+  const String username  = extract("username");
+  const String token     = extract("token");
+  const String serverUrl = extract("server_url");
 
   if (ssid.length() == 0) {
     Serial.println("[BLE] Write ignored: missing ssid");
@@ -119,12 +121,14 @@ void BleProvisioner::handle_write(const uint8_t *data, size_t len) {
   }
 
   BleCredentials &c = sInstance_->pendingCreds_;
-  strncpy(c.ssid,     ssid.c_str(),     sizeof(c.ssid)     - 1);  c.ssid[sizeof(c.ssid) - 1]         = '\0';
-  strncpy(c.password, password.c_str(), sizeof(c.password) - 1);  c.password[sizeof(c.password) - 1] = '\0';
-  strncpy(c.username, username.c_str(), sizeof(c.username) - 1);  c.username[sizeof(c.username) - 1] = '\0';
+  strncpy(c.ssid,      ssid.c_str(),      sizeof(c.ssid)      - 1);  c.ssid[sizeof(c.ssid) - 1]           = '\0';
+  strncpy(c.password,  password.c_str(),  sizeof(c.password)  - 1);  c.password[sizeof(c.password) - 1]   = '\0';
+  strncpy(c.username,  username.c_str(),  sizeof(c.username)  - 1);  c.username[sizeof(c.username) - 1]   = '\0';
+  strncpy(c.token,     token.c_str(),     sizeof(c.token)     - 1);  c.token[sizeof(c.token) - 1]         = '\0';
+  strncpy(c.serverUrl, serverUrl.c_str(), sizeof(c.serverUrl) - 1);  c.serverUrl[sizeof(c.serverUrl) - 1] = '\0';
 
   sInstance_->credPending_ = true;
-  Serial.printf("[BLE] Credentials received: ssid='%s'\n", c.ssid);
+  Serial.printf("[BLE] Credentials received: ssid='%s' token=%s\n", c.ssid, token.length() > 0 ? "yes" : "no");
 }
 
 }  // namespace ble

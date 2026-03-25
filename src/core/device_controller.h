@@ -35,6 +35,8 @@ class DeviceController final {
   DrawList drawList_;
   WebServer server_;
   ble::BleProvisioner bleProvisioner_;
+  char pendingProvisionToken_[48];
+  char pendingProvisionServerUrl_[128];
   uint32_t lastHeartbeatAtMs_;
   uint32_t lastTelemetryAtMs_;
   uint32_t lastRenderAtMs_;
@@ -55,6 +57,7 @@ class DeviceController final {
   void update_ui_state();
   void render_frame(uint32_t nowMs);
   void publish_display_state();
+  bool call_provision_api(const char *serverUrl, const char *deviceId, const char *token);
 };
 
 }  // namespace core

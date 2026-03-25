@@ -352,6 +352,8 @@ DeviceController::DeviceController(const Dependencies &deps)
       lastRenderAtMs_(0),
       renderDirty_(true) {
   memset(&renderModel_, 0, sizeof(renderModel_));
+  memset(pendingProvisionToken_, 0, sizeof(pendingProvisionToken_));
+  memset(pendingProvisionServerUrl_, 0, sizeof(pendingProvisionServerUrl_));
   renderModel_.uiState = UiState::kBooting;
   copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "BOOTING");
   copy_str(renderModel_.statusDetail, sizeof(renderModel_.statusDetail), "Starting device");
@@ -406,6 +408,11 @@ bool DeviceController::begin() {
 void DeviceController::tick(uint32_t nowMs) {
   if (bleProvisioner_.credentials_pending()) {
     const ble::BleCredentials creds = bleProvisioner_.take_credentials();
+    // Store token + serverUrl so we can call /device/provision once WiFi connects.
+    strncpy(pendingProvisionToken_,     creds.token,     sizeof(pendingProvisionToken_)     - 1);
+    strncpy(pendingProvisionServerUrl_, creds.serverUrl, sizeof(pendingProvisionServerUrl_) - 1);
+    pendingProvisionToken_[sizeof(pendingProvisionToken_) - 1]         = '\0';
+    pendingProvisionServerUrl_[sizeof(pendingProvisionServerUrl_) - 1] = '\0';
     bleProvisioner_.notify_status("{\"status\":\"connecting\"}");
     deps_.mqttClient->disconnect(true);
     deps_.networkManager->set_credentials(creds.ssid, creds.password, creds.username);
@@ -463,6 +470,19 @@ void DeviceController::handle_network_state(NetworkState state) {
   // Only interact with BLE provisioner when it is active (no prior credentials).
   // Once credentials arrive, tick() stops the provisioner so these are no-ops.
   if (state == NetworkState::kConnected) {
+    // If we have a pending provision token, call the server to register this device.
+    if (pendingProvisionToken_[0] != '\0') {
+      const bool ok = call_provision_api(pendingProvisionServerUrl_, runtimeConfig_.deviceId, pendingProvisionToken_);
+      memset(pendingProvisionToken_,     0, sizeof(pendingProvisionToken_));
+      memset(pendingProvisionServerUrl_, 0, sizeof(pendingProvisionServerUrl_));
+      if (!ok) {
+        Serial.println("[PROVISION] Failed — notifying BLE");
+        bleProvisioner_.notify_status("{\"status\":\"failed\"}");
+        update_ui_state();
+        return;
+      }
+      Serial.println("[PROVISION] Success");
+    }
     char buf[128];
     snprintf(buf, sizeof(buf),
              "{\"status\":\"connected\",\"deviceId\":\"%s\"}",
@@ -472,6 +492,37 @@ void DeviceController::handle_network_state(NetworkState state) {
     bleProvisioner_.notify_status("{\"status\":\"failed\"}");
   }
   update_ui_state();
+}
+
+bool DeviceController::call_provision_api(const char *serverUrl, const char *deviceId, const char *token) {
+  if (!serverUrl || serverUrl[0] == '\0' || !token || token[0] == '\0') {
+    return false;
+  }
+
+  char url[256];
+  snprintf(url, sizeof(url), "%s/device/provision", serverUrl);
+
+  char body[256];
+  snprintf(body, sizeof(body), "{\"deviceId\":\"%s\",\"token\":\"%s\"}", deviceId, token);
+
+  Serial.printf("[PROVISION] POST %s\n", url);
+
+  WiFiClientSecure client;
+  client.setInsecure();  // skip cert verification — token provides auth
+  HTTPClient http;
+
+  if (!http.begin(client, url)) {
+    Serial.println("[PROVISION] http.begin failed");
+    return false;
+  }
+
+  http.addHeader("Content-Type", "application/json");
+  http.setTimeout(10000);
+  const int code = http.POST(body);
+  http.end();
+
+  Serial.printf("[PROVISION] Response code: %d\n", code);
+  return code == 200;
 }
 
 void DeviceController::handle_command(const char *topic, const uint8_t *payload, size_t len) {
