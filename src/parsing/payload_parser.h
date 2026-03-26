@@ -4,6 +4,10 @@
 
 String extract_json_string_field(const String &json, const char *field);
 int extract_json_int_field(const String &json, const char *field, int fallbackValue);
+int extract_json_string_array_field(const String &json,
+                                    const char *field,
+                                    String outValues[],
+                                    int maxCount);
 
 void build_eta_lines(const String &message, String &line1, String &line2, String &line3);
 
