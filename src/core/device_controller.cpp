@@ -163,7 +163,8 @@ uint8_t parse_brightness_percent(const String &message, uint8_t fallbackPercent)
 }
 
 uint8_t brightness_percent_to_panel(uint8_t percent) {
-  const uint16_t scaled = static_cast<uint16_t>((static_cast<uint32_t>(percent) * 255U + 50U) / 100U);
+  const uint32_t numerator = static_cast<uint32_t>(percent) * static_cast<uint32_t>(percent) * 255U;
+  const uint16_t scaled = static_cast<uint16_t>((numerator + 5000U) / 10000U);
   if (scaled < 1U) return 1;
   if (scaled > 255U) return 255;
   return static_cast<uint8_t>(scaled);
