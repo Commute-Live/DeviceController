@@ -243,6 +243,8 @@ String extract_row_direction_label(const String &message, uint8_t rowIndex) {
 
 int extract_eta_values_from_line_object(const String &lineObject, String outEtas[], int maxCount) {
   if (maxCount <= 0) return 0;
+  const int compactEtaCount = extract_json_string_array_field(lineObject, "etas", outEtas, maxCount);
+  if (compactEtaCount > 0) return compactEtaCount;
   int count = 0;
   int pos = 0;
   while (count < maxCount) {
@@ -731,8 +733,11 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
       clear_row(renderModel_.rows[i]);
     }
   } else {
+    String row1Item;
+    const bool hasExplicitRow1Eta =
+        extract_lines_object_at(message, 0, row1Item) && extract_json_string_field(row1Item, "eta").length() > 0;
     char etaParts[kMaxTransitRows][kMaxEtaLen];
-    const int etaCount = split_eta_tokens(renderModel_.rows[0].eta, etaParts);
+    const int etaCount = hasExplicitRow1Eta ? 0 : split_eta_tokens(renderModel_.rows[0].eta, etaParts);
     int rowsToRender = arrivalsToDisplay;
     if (etaCount > 0 && rowsToRender > etaCount) {
       rowsToRender = etaCount;

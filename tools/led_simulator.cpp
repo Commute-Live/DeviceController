@@ -499,6 +499,31 @@ bool extract_line_object(const std::string &json, int index, std::string &out) {
 // Extract all "eta" values from nextArrivals in a line object.
 std::vector<std::string> extract_eta_values(const std::string &lineObj) {
   std::vector<std::string> etas;
+  auto compactPos = lineObj.find("\"etas\"");
+  if (compactPos != std::string::npos) {
+    auto arrOpen = lineObj.find('[', compactPos);
+    if (arrOpen != std::string::npos) {
+      auto arrClose = find_bracket(lineObj, arrOpen, '[', ']');
+      if (arrClose != std::string::npos) {
+        size_t pos = arrOpen + 1;
+        while (pos < arrClose) {
+          while (pos < arrClose &&
+                 (lineObj[pos] == ' ' || lineObj[pos] == '\t' || lineObj[pos] == '\n' ||
+                  lineObj[pos] == '\r' || lineObj[pos] == ',')) {
+            ++pos;
+          }
+          if (pos >= arrClose || lineObj[pos] != '"') break;
+          auto vs = pos + 1;
+          auto ve = lineObj.find('"', vs);
+          if (ve == std::string::npos || ve > arrClose) break;
+          etas.push_back(lineObj.substr(vs, ve - vs));
+          pos = ve + 1;
+        }
+      }
+    }
+  }
+  if (!etas.empty()) return etas;
+
   size_t pos = 0;
   while (pos < lineObj.size()) {
     auto kp = lineObj.find("\"eta\":\"", pos);
@@ -584,20 +609,14 @@ void apply_mqtt_payload(const std::string &payload, LiveState &live) {
     if (eta.empty()) {
       auto etaVals = extract_eta_values(lineObj);
       if (!etaVals.empty()) {
-        std::string merged;
-        int count = 0;
         for (auto &ev : etaVals) {
-          if (count >= arrivalsToDisplay) break;
           std::string norm = normalize_eta_token(ev);
           if (norm == "--") continue;
-          if (!merged.empty()) merged += "/";
-          merged += norm;
-          ++count;
+          eta = norm;
+          break;
         }
-        eta = merged.empty() ? "--" : merged;
-      } else {
-        eta = "--";
       }
+      if (eta.empty()) eta = "--";
     }
 
     safe_copy(model.rows[rowCount].providerId, provider);
@@ -634,17 +653,22 @@ void apply_mqtt_payload(const std::string &payload, LiveState &live) {
 
   // If single line with multi-ETA, split into rows (mirroring device behavior)
   if (rowCount == 1 && (displayType != 4 && displayType != 5)) {
+    std::string row0Obj;
+    const bool hasExplicitEta =
+        extract_line_object(payload, 0, row0Obj) && !json_string(row0Obj, "eta").empty();
     std::string etaStr = model.rows[0].eta;
     std::vector<std::string> parts;
-    size_t start = 0;
-    while (start <= etaStr.size()) {
-      auto sep = etaStr.find('/', start);
-      std::string token = (sep == std::string::npos)
-                              ? etaStr.substr(start)
-                              : etaStr.substr(start, sep - start);
-      if (!token.empty()) parts.push_back(token);
-      if (sep == std::string::npos) break;
-      start = sep + 1;
+    if (!hasExplicitEta) {
+      size_t start = 0;
+      while (start <= etaStr.size()) {
+        auto sep = etaStr.find('/', start);
+        std::string token = (sep == std::string::npos)
+                                ? etaStr.substr(start)
+                                : etaStr.substr(start, sep - start);
+        if (!token.empty()) parts.push_back(token);
+        if (sep == std::string::npos) break;
+        start = sep + 1;
+      }
     }
 
     int rowsToRender = arrivalsToDisplay;

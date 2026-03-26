@@ -3,6 +3,8 @@
 #include <ctype.h>
 #include <time.h>
 
+static int find_matching_bracket(const String &s, int openPos, char openCh, char closeCh);
+
 String extract_json_string_field(const String &json, const char *field) {
   String key = "\"";
   key += field;
@@ -71,6 +73,46 @@ int extract_json_int_field(const String &json, const char *field, int fallbackVa
 
   if (!foundDigit) return fallbackValue;
   return neg ? -value : value;
+}
+
+int extract_json_string_array_field(const String &json,
+                                    const char *field,
+                                    String outValues[],
+                                    int maxCount) {
+  if (!outValues || maxCount <= 0) return 0;
+
+  String key = "\"";
+  key += field;
+  key += "\"";
+
+  int keyPos = json.indexOf(key);
+  if (keyPos < 0) return 0;
+
+  int colonPos = json.indexOf(':', keyPos + key.length());
+  if (colonPos < 0) return 0;
+
+  int arrayOpen = json.indexOf('[', colonPos + 1);
+  if (arrayOpen < 0) return 0;
+  int arrayClose = find_matching_bracket(json, arrayOpen, '[', ']');
+  if (arrayClose < 0) return 0;
+
+  int count = 0;
+  int pos = arrayOpen + 1;
+  while (count < maxCount && pos < arrayClose) {
+    while (pos < arrayClose &&
+           (json[pos] == ' ' || json[pos] == '\t' || json[pos] == '\n' || json[pos] == '\r' || json[pos] == ',')) {
+      pos++;
+    }
+    if (pos >= arrayClose || json[pos] != '"') break;
+
+    const int valueStart = pos + 1;
+    const int valueEnd = json.indexOf('"', valueStart);
+    if (valueEnd < 0 || valueEnd > arrayClose) break;
+    outValues[count++] = json.substring(valueStart, valueEnd);
+    pos = valueEnd + 1;
+  }
+
+  return count;
 }
 
 static bool parse_iso8601(const String &iso, time_t &out) {
@@ -213,26 +255,30 @@ static String normalize_eta_label(String etaRaw) {
   return etaRaw;
 }
 
+static String first_non_empty_eta(const String values[], int count) {
+  for (int i = 0; i < count; ++i) {
+    String eta = normalize_eta_label(values[i]);
+    if (eta != "--") {
+      return eta;
+    }
+  }
+  return "";
+}
+
 static String format_arrivals_compact(const String &json, const String &fallbackFetchedAt, int arrivalsToDisplay) {
-  const int maxEtas = clamp_arrivals_to_display(arrivalsToDisplay);
+  (void)arrivalsToDisplay;
+  String compactEtas[3];
+  const int compactEtaCount = extract_json_string_array_field(json, "etas", compactEtas, 3);
+  const String compactEta = first_non_empty_eta(compactEtas, compactEtaCount);
+  if (compactEta.length() > 0) {
+    return compactEta;
+  }
+
   String etaValues[3];
   int etaCount = extract_next_eta_list(json, etaValues, 3);
-  if (etaCount > 0) {
-    String parts[3];
-    int partCount = 0;
-    for (int i = 0; i < etaCount && partCount < maxEtas; i++) {
-      String eta = normalize_eta_label(etaValues[i]);
-      if (eta == "--") continue;
-      parts[partCount++] = eta;
-    }
-    if (partCount > 0) {
-      String merged = parts[0];
-      for (int i = 1; i < partCount; ++i) {
-        merged += "/";
-        merged += parts[i];
-      }
-      return merged;
-    }
+  const String nextEta = first_non_empty_eta(etaValues, etaCount);
+  if (nextEta.length() > 0) {
+    return nextEta;
   }
 
   String fetchedAt = extract_json_string_field(json, "fetchedAt");
@@ -245,9 +291,7 @@ static String format_arrivals_compact(const String &json, const String &fallback
   int n = extract_next_arrival_list(json, arrivals, 3);
   if (n <= 0) return "--";
 
-  String parts[3];
-  int partCount = 0;
-  for (int i = 0; i < n && partCount < maxEtas; i++) {
+  for (int i = 0; i < n; i++) {
     String label = "--";
     if (hasFetchedTs) {
       label = eta_label_for_arrival(arrivals[i], fetchedTs);
@@ -255,17 +299,9 @@ static String format_arrivals_compact(const String &json, const String &fallback
       label = arrivals[i].substring(11, 16);
     }
     label = normalize_eta_label(label);
-    if (label == "--") continue;
-    parts[partCount++] = label;
-  }
-
-  if (partCount > 0) {
-    String merged = parts[0];
-    for (int i = 1; i < partCount; ++i) {
-      merged += "/";
-      merged += parts[i];
+    if (label != "--") {
+      return label;
     }
-    return merged;
   }
   return "--";
 }
@@ -304,7 +340,10 @@ bool parse_lines_payload(const String &message,
     String line = extract_json_string_field(item, "line");
     if (line.length() == 0) continue;
     String provider = extract_json_string_field(item, "provider");
-    String directionLabel = extract_json_string_field(item, "destination");
+    String directionLabel = extract_json_string_field(item, "label");
+    if (directionLabel.length() == 0) {
+      directionLabel = extract_json_string_field(item, "destination");
+    }
     if (directionLabel.length() == 0) {
       directionLabel = extract_json_string_field(item, "directionLabel");
     }
