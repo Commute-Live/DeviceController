@@ -155,6 +155,20 @@ uint8_t clamp_display_type(int value) {
   return static_cast<uint8_t>(value);
 }
 
+uint8_t parse_brightness_percent(const String &message, uint8_t fallbackPercent) {
+  const int raw = extract_json_int_field(message, "brightness", static_cast<int>(fallbackPercent));
+  if (raw < 1) return 1;
+  if (raw > 100) return 100;
+  return static_cast<uint8_t>(raw);
+}
+
+uint8_t brightness_percent_to_panel(uint8_t percent) {
+  const uint16_t scaled = static_cast<uint16_t>((static_cast<uint32_t>(percent) * 255U + 50U) / 100U);
+  if (scaled < 1U) return 1;
+  if (scaled > 255U) return 255;
+  return static_cast<uint8_t>(scaled);
+}
+
 int find_matching_bracket(const String &text, int openPos, char openCh, char closeCh) {
   if (openPos < 0 || openPos >= static_cast<int>(text.length()) || text[openPos] != openCh) return -1;
   int depth = 0;
@@ -648,15 +662,19 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   const String message(messageBuf);
   const int arrivalsToDisplay = clamp_rows_to_display(extract_json_int_field(message, "arrivalsToDisplay", 1));
   const uint8_t displayType = clamp_display_type(extract_json_int_field(message, "displayType", 1));
+  const uint8_t brightnessPercent = parse_brightness_percent(message, 60);
+  const uint8_t panelBrightness = brightness_percent_to_panel(brightnessPercent);
   DCTRL_LOGI("MQTT", "Incoming command topic=%s len=%u", core::logging::safe_str(topic), static_cast<unsigned>(len));
   DCTRL_LOGI("MQTT", "Incoming payload=%s", message.c_str());
 
   String cmdType = extract_json_string_field(message, "type");
-  DCTRL_LOGI("MQTT", "Parsed command type=%s provider=%s displayType=%u arrivalsToDisplay=%d",
+  DCTRL_LOGI("MQTT", "Parsed command type=%s provider=%s displayType=%u arrivalsToDisplay=%d brightness=%u%% panel=%u",
              cmdType.length() ? cmdType.c_str() : "(data)",
              extract_json_string_field(message, "provider").c_str(),
              static_cast<unsigned>(displayType),
-             arrivalsToDisplay);
+             arrivalsToDisplay,
+             static_cast<unsigned>(brightnessPercent),
+             static_cast<unsigned>(panelBrightness));
   if (cmdType == "ota_update") {
     String url = extract_json_string_field(message, "url");
     if (url.length() > 0) {
@@ -819,10 +837,14 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   renderModel_.displayType = displayType;
   renderModel_.uiState = UiState::kTransit;
   renderModel_.updatedAtMs = millis();
+  runtimeConfig_.display.brightness = panelBrightness;
+  deps_.displayEngine->set_brightness(panelBrightness);
   renderDirty_ = true;
   DCTRL_LOGI("MQTT",
-             "Applied payload displayType=%u activeRows=%u row1={provider:%s line:%s eta:%s extra:%s} row2={provider:%s line:%s eta:%s extra:%s}",
+             "Applied payload displayType=%u brightness=%u%% panel=%u activeRows=%u row1={provider:%s line:%s eta:%s extra:%s} row2={provider:%s line:%s eta:%s extra:%s}",
              static_cast<unsigned>(renderModel_.displayType),
+             static_cast<unsigned>(brightnessPercent),
+             static_cast<unsigned>(panelBrightness),
              static_cast<unsigned>(renderModel_.activeRows),
              renderModel_.rows[0].providerId,
              renderModel_.rows[0].routeId,

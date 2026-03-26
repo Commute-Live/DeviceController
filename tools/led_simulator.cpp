@@ -48,6 +48,19 @@ constexpr uint8_t kTextSizeTinyPlus = 255;
 constexpr int kDefaultScale = 10;
 constexpr int kLedGapPx = 1;  // dark gap between LED dots (in output pixels)
 
+uint8_t clamp_payload_brightness(int value) {
+  if (value < 1) return 1;
+  if (value > 100) return 100;
+  return static_cast<uint8_t>(value);
+}
+
+uint8_t brightness_percent_to_panel(uint8_t percent) {
+  const uint16_t scaled = static_cast<uint16_t>((static_cast<uint32_t>(percent) * 255U + 50U) / 100U);
+  if (scaled < 1U) return 1;
+  if (scaled > 255U) return 255;
+  return static_cast<uint8_t>(scaled);
+}
+
 // ── Options ──────────────────────────────────────────────────────────────────
 
 struct SimOptions {
@@ -529,6 +542,7 @@ std::string normalize_eta_token(const std::string &raw) {
 struct LiveState {
   std::mutex mu;
   core::RenderModel model{};
+  uint8_t hwBrightness = kHwBrightness;
   bool hasUpdate = false;
   bool connected = false;
   std::string deviceId;
@@ -546,6 +560,8 @@ void apply_mqtt_payload(const std::string &payload, LiveState &live) {
   int displayType = json_int(payload, "displayType", 1);
   if (displayType < 1) displayType = 1;
   if (displayType > 5) displayType = 5;
+  const uint8_t panelBrightness =
+      brightness_percent_to_panel(clamp_payload_brightness(json_int(payload, "brightness", 60)));
   int arrivalsToDisplay = json_int(payload, "arrivalsToDisplay", 1);
   if (arrivalsToDisplay < 1) arrivalsToDisplay = 1;
   if (arrivalsToDisplay > 3) arrivalsToDisplay = 3;
@@ -673,6 +689,7 @@ void apply_mqtt_payload(const std::string &payload, LiveState &live) {
 
   std::lock_guard<std::mutex> lock(live.mu);
   live.model = model;
+  live.hwBrightness = panelBrightness;
   live.hasUpdate = true;
 }
 
@@ -942,7 +959,7 @@ void rgb565_to_rgb(uint16_t c, uint8_t brightness, uint8_t &r, uint8_t &g, uint8
 // - Dim "off" LED glow
 // - Panel seam line between the two 64-wide panels
 
-void blit_to_sdl(SDL_Renderer *renderer, const SimDisplayEngine &display, int pixScale, bool ledDots) {
+void blit_to_sdl(SDL_Renderer *renderer, const SimDisplayEngine &display, int pixScale, bool ledDots, uint8_t brightness) {
   const int w = display.width();
   const int h = display.height();
   const auto &pixels = display.pixels();
@@ -970,7 +987,7 @@ void blit_to_sdl(SDL_Renderer *renderer, const SimDisplayEngine &display, int pi
     for (int x = 0; x < w; ++x) {
       const uint16_t c = pixels[static_cast<size_t>(y) * w + x];
       uint8_t r, g, b;
-      rgb565_to_rgb(c, kHwBrightness, r, g, b);
+      rgb565_to_rgb(c, brightness, r, g, b);
 
       // "Off" LEDs still have a very faint dark glow on real panels
       if (c == kColorBlack) {
@@ -1366,7 +1383,8 @@ int run_simulator(SimOptions &opts) {
         render_frame(display, scen, opts, routeOffset);
       }
 
-      blit_to_sdl(renderer, display, opts.scale, opts.ledDots);
+      const uint8_t frameBrightness = liveMode ? liveState.hwBrightness : kHwBrightness;
+      blit_to_sdl(renderer, display, opts.scale, opts.ledDots, frameBrightness);
 
       // Update window title with current state
       char title[256];

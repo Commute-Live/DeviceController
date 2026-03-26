@@ -451,6 +451,20 @@ std::string normalize_eta_token(const std::string &raw) {
 static SimDisplayEngine gDisplay(kMatrixWidth, kMatrixHeight);
 static core::RenderModel gModel{};
 static uint8_t gRgbaBuffer[kMatrixWidth * kMatrixHeight * 4];
+static uint8_t gHwBrightness = kHwBrightness;
+
+static uint8_t clamp_payload_brightness(int value) {
+  if (value < 1) return 1;
+  if (value > 100) return 100;
+  return static_cast<uint8_t>(value);
+}
+
+static uint8_t brightness_percent_to_panel(uint8_t percent) {
+  const uint16_t scaled = static_cast<uint16_t>((static_cast<uint32_t>(percent) * 255U + 50U) / 100U);
+  if (scaled < 1U) return 1;
+  if (scaled > 255U) return 255;
+  return static_cast<uint8_t>(scaled);
+}
 
 static void rgb565_to_rgb(uint16_t c, uint8_t brightness, uint8_t &r, uint8_t &g, uint8_t &b) {
   uint16_t r8 = static_cast<uint16_t>(((c >> 11) & 0x1F) * 255 / 31);
@@ -505,7 +519,7 @@ static void render_and_export() {
     if (pixels[i] == kColorBlack) {
       r = 5; g = 6; b = 5;  // dim off-LED glow
     } else {
-      rgb565_to_rgb(pixels[i], kHwBrightness, r, g, b);
+      rgb565_to_rgb(pixels[i], gHwBrightness, r, g, b);
     }
     gRgbaBuffer[i * 4 + 0] = r;
     gRgbaBuffer[i * 4 + 1] = g;
@@ -519,6 +533,7 @@ static void apply_payload(const char *json, int len) {
   int displayType = json_int(payload, "displayType", 1);
   if (displayType < 1) displayType = 1;
   if (displayType > 5) displayType = 5;
+  gHwBrightness = brightness_percent_to_panel(clamp_payload_brightness(json_int(payload, "brightness", 60)));
   int arrivalsToDisplay = json_int(payload, "arrivalsToDisplay", 1);
   if (arrivalsToDisplay < 1) arrivalsToDisplay = 1;
   if (arrivalsToDisplay > 3) arrivalsToDisplay = 3;
