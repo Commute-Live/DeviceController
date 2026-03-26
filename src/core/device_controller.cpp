@@ -23,6 +23,8 @@ constexpr uint32_t kTelemetryEveryMs = 30000;
 constexpr uint32_t kMinRenderGapMs = 40;
 constexpr uint8_t kMinDisplayType = 1;
 constexpr uint8_t kMaxDisplayType = 5;
+constexpr uint16_t kColorBlack = 0x0000;
+constexpr uint16_t kColorAmber = 0xFD20;
 display::BadgeRenderer gBadgeRenderer;
 
 void copy_str(char *dst, size_t dstLen, const char *src) {
@@ -356,6 +358,109 @@ void clear_row(TransitRowModel &row) {
   copy_str(row.etaExtra, sizeof(row.etaExtra), "");
 }
 
+void trim_text_for_chars(const char *src, uint8_t charLimit, char *dst, size_t dstLen) {
+  if (!dst || dstLen == 0) {
+    return;
+  }
+  if (!src || charLimit == 0) {
+    dst[0] = '\0';
+    return;
+  }
+
+  size_t n = strnlen(src, dstLen - 1);
+  if (n > static_cast<size_t>(charLimit)) {
+    n = charLimit;
+  }
+  memcpy(dst, src, n);
+  dst[n] = '\0';
+}
+
+bool strings_equal(const char *lhs, const char *rhs) {
+  return strcmp(lhs ? lhs : "", rhs ? rhs : "") == 0;
+}
+
+bool rows_equal(const TransitRowModel &lhs, const TransitRowModel &rhs) {
+  return strings_equal(lhs.providerId, rhs.providerId) &&
+         strings_equal(lhs.routeId, rhs.routeId) &&
+         strings_equal(lhs.direction, rhs.direction) &&
+         strings_equal(lhs.destination, rhs.destination) &&
+         strings_equal(lhs.eta, rhs.eta) &&
+         strings_equal(lhs.etaExtra, rhs.etaExtra);
+}
+
+bool row_layout_fields_equal(const TransitRowModel &lhs, const TransitRowModel &rhs) {
+  return strings_equal(lhs.providerId, rhs.providerId) &&
+         strings_equal(lhs.routeId, rhs.routeId) &&
+         strings_equal(lhs.direction, rhs.direction) &&
+         strings_equal(lhs.destination, rhs.destination);
+}
+
+bool row_eta_fields_equal(const TransitRowModel &lhs, const TransitRowModel &rhs) {
+  return strings_equal(lhs.eta, rhs.eta) &&
+         strings_equal(lhs.etaExtra, rhs.etaExtra);
+}
+
+bool render_models_equal_for_display(const RenderModel &lhs, const RenderModel &rhs) {
+  if (lhs.uiState != rhs.uiState ||
+      lhs.hasData != rhs.hasData ||
+      lhs.displayType != rhs.displayType ||
+      lhs.activeRows != rhs.activeRows ||
+      !strings_equal(lhs.statusLine, rhs.statusLine) ||
+      !strings_equal(lhs.statusDetail, rhs.statusDetail) ||
+      !strings_equal(lhs.apSsid, rhs.apSsid) ||
+      !strings_equal(lhs.apPin, rhs.apPin)) {
+    return false;
+  }
+
+  for (uint8_t i = 0; i < kMaxTransitRows; ++i) {
+    if (!rows_equal(lhs.rows[i], rhs.rows[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+DeviceController::RenderMode classify_render_mode(const RenderModel &current,
+                                                  const RenderModel &next,
+                                                  bool doubleBuffered,
+                                                  uint8_t &etaDirtyRows) {
+  etaDirtyRows = 0;
+  if (render_models_equal_for_display(current, next)) {
+    return DeviceController::RenderMode::kNone;
+  }
+
+  if (doubleBuffered ||
+      current.uiState != UiState::kTransit ||
+      next.uiState != UiState::kTransit ||
+      !current.hasData ||
+      !next.hasData ||
+      current.displayType != next.displayType ||
+      current.activeRows != next.activeRows ||
+      !strings_equal(current.statusLine, next.statusLine) ||
+      !strings_equal(current.statusDetail, next.statusDetail) ||
+      !strings_equal(current.apSsid, next.apSsid) ||
+      !strings_equal(current.apPin, next.apPin)) {
+    return DeviceController::RenderMode::kFull;
+  }
+
+  for (uint8_t i = 0; i < current.activeRows; ++i) {
+    if (!row_layout_fields_equal(current.rows[i], next.rows[i])) {
+      return DeviceController::RenderMode::kFull;
+    }
+    if (!row_eta_fields_equal(current.rows[i], next.rows[i])) {
+      etaDirtyRows |= static_cast<uint8_t>(1U << i);
+    }
+  }
+
+  for (uint8_t i = current.activeRows; i < kMaxTransitRows; ++i) {
+    if (!rows_equal(current.rows[i], next.rows[i])) {
+      return DeviceController::RenderMode::kFull;
+    }
+  }
+
+  return etaDirtyRows == 0 ? DeviceController::RenderMode::kNone : DeviceController::RenderMode::kEtaOnly;
+}
+
 void json_escape(const char *src, char *dst, size_t dstLen) {
   if (dstLen == 0) {
     return;
@@ -433,7 +538,9 @@ DeviceController::DeviceController(const Dependencies &deps)
       lastHeartbeatAtMs_(0),
       lastTelemetryAtMs_(0),
       lastRenderAtMs_(0),
-      renderDirty_(true) {
+      renderDirty_(true),
+      pendingRenderMode_(RenderMode::kFull),
+      etaDirtyRowMask_(0) {
   memset(&renderModel_, 0, sizeof(renderModel_));
   memset(pendingProvisionToken_, 0, sizeof(pendingProvisionToken_));
   memset(pendingProvisionServerUrl_, 0, sizeof(pendingProvisionServerUrl_));
@@ -505,7 +612,7 @@ bool DeviceController::begin() {
                                    deps_.displayEngine->geometry().totalHeight);
 
   update_ui_state();
-  renderDirty_ = true;
+  schedule_full_render();
   render_frame(millis());
   DCTRL_LOGI("CORE", "Device controller begin complete deviceId=%s", runtimeConfig_.deviceId);
   return true;
@@ -705,7 +812,7 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   if (provider.length() == 0 || !parsing::is_supported_provider_id(provider)) {
     DCTRL_LOGW("MQTT", "Ignoring payload because provider is unsupported provider=%s", provider.c_str());
     renderModel_.hasData = false;
-    renderDirty_ = true;
+    schedule_full_render();
     return;
   }
 
@@ -743,43 +850,45 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
     }
   }
 
-  copy_str(renderModel_.rows[0].providerId, sizeof(renderModel_.rows[0].providerId),
+  RenderModel nextModel = renderModel_;
+  copy_str(nextModel.rows[0].providerId, sizeof(nextModel.rows[0].providerId),
            row1Provider.c_str());
-  copy_str(renderModel_.rows[0].routeId, sizeof(renderModel_.rows[0].routeId),
+  copy_str(nextModel.rows[0].routeId, sizeof(nextModel.rows[0].routeId),
            parsed.row1.line.length() ? parsed.row1.line.c_str() : "--");
-  copy_str(renderModel_.rows[0].direction, sizeof(renderModel_.rows[0].direction),
+  copy_str(nextModel.rows[0].direction, sizeof(nextModel.rows[0].direction),
            row1Direction.c_str());
-  copy_str(renderModel_.rows[0].destination, sizeof(renderModel_.rows[0].destination),
+  copy_str(nextModel.rows[0].destination, sizeof(nextModel.rows[0].destination),
            row1DisplayLabel.length() ? row1DisplayLabel.c_str() :
-           (parsed.row1.label.length() ? parsed.row1.label.c_str() : renderModel_.rows[0].routeId));
-  normalize_eta(parsed.row1.eta, renderModel_.rows[0].eta, sizeof(renderModel_.rows[0].eta));
-  copy_str(renderModel_.rows[0].etaExtra, sizeof(renderModel_.rows[0].etaExtra),
+           (parsed.row1.label.length() ? parsed.row1.label.c_str() : nextModel.rows[0].routeId));
+  normalize_eta(parsed.row1.eta, nextModel.rows[0].eta, sizeof(nextModel.rows[0].eta));
+  copy_str(nextModel.rows[0].etaExtra, sizeof(nextModel.rows[0].etaExtra),
            compactExtraEtaPreset ? row1EtaExtra : "");
 
   if (parsed.hasRow2) {
-    copy_str(renderModel_.rows[1].providerId, sizeof(renderModel_.rows[1].providerId),
-             parsed.row2.provider.c_str());
-    copy_str(renderModel_.rows[1].routeId, sizeof(renderModel_.rows[1].routeId),
+    const String row2Provider = parsed.row2.provider.length() ? parsed.row2.provider : provider;
+    copy_str(nextModel.rows[1].providerId, sizeof(nextModel.rows[1].providerId),
+             row2Provider.c_str());
+    copy_str(nextModel.rows[1].routeId, sizeof(nextModel.rows[1].routeId),
              parsed.row2.line.length() ? parsed.row2.line.c_str() : "--");
-    copy_str(renderModel_.rows[1].direction, sizeof(renderModel_.rows[1].direction),
+    copy_str(nextModel.rows[1].direction, sizeof(nextModel.rows[1].direction),
              row2Direction.c_str());
-    copy_str(renderModel_.rows[1].destination, sizeof(renderModel_.rows[1].destination),
+    copy_str(nextModel.rows[1].destination, sizeof(nextModel.rows[1].destination),
              row2DisplayLabel.length() ? row2DisplayLabel.c_str() :
-             (parsed.row2.label.length() ? parsed.row2.label.c_str() : renderModel_.rows[1].routeId));
-    normalize_eta(parsed.row2.eta, renderModel_.rows[1].eta, sizeof(renderModel_.rows[1].eta));
-    copy_str(renderModel_.rows[1].etaExtra, sizeof(renderModel_.rows[1].etaExtra),
+             (parsed.row2.label.length() ? parsed.row2.label.c_str() : nextModel.rows[1].routeId));
+    normalize_eta(parsed.row2.eta, nextModel.rows[1].eta, sizeof(nextModel.rows[1].eta));
+    copy_str(nextModel.rows[1].etaExtra, sizeof(nextModel.rows[1].etaExtra),
              compactExtraEtaPreset ? row2EtaExtra : "");
 
-    renderModel_.activeRows = 2;
+    nextModel.activeRows = 2;
     for (uint8_t i = 2; i < kMaxTransitRows; ++i) {
-      clear_row(renderModel_.rows[i]);
+      clear_row(nextModel.rows[i]);
     }
   } else {
     String row1Item;
     const bool hasExplicitRow1Eta =
         extract_lines_object_at(message, 0, row1Item) && extract_json_string_field(row1Item, "eta").length() > 0;
     char etaParts[kMaxTransitRows][kMaxEtaLen];
-    const int etaCount = hasExplicitRow1Eta ? 0 : split_eta_tokens(renderModel_.rows[0].eta, etaParts);
+    const int etaCount = hasExplicitRow1Eta ? 0 : split_eta_tokens(nextModel.rows[0].eta, etaParts);
     int rowsToRender = arrivalsToDisplay;
     if (etaCount > 0 && rowsToRender > etaCount) {
       rowsToRender = etaCount;
@@ -797,10 +906,10 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
     }
 
     if (etaCount > 0) {
-      copy_str(renderModel_.rows[0].eta, sizeof(renderModel_.rows[0].eta), etaParts[0]);
+      copy_str(nextModel.rows[0].eta, sizeof(nextModel.rows[0].eta), etaParts[0]);
     }
     if (compactExtraEtaPreset && row1EtaExtra[0] != '\0') {
-      copy_str(renderModel_.rows[0].etaExtra, sizeof(renderModel_.rows[0].etaExtra), row1EtaExtra);
+      copy_str(nextModel.rows[0].etaExtra, sizeof(nextModel.rows[0].etaExtra), row1EtaExtra);
     } else if (compactExtraEtaPreset && etaCount > 1) {
       char extraBuf[kMaxDestinationLen];
       extraBuf[0] = '\0';
@@ -811,41 +920,77 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
         }
         strncat(extraBuf, etaParts[i], sizeof(extraBuf) - strlen(extraBuf) - 1);
       }
-      copy_str(renderModel_.rows[0].etaExtra, sizeof(renderModel_.rows[0].etaExtra), extraBuf);
+      copy_str(nextModel.rows[0].etaExtra, sizeof(nextModel.rows[0].etaExtra), extraBuf);
     } else {
-      copy_str(renderModel_.rows[0].etaExtra, sizeof(renderModel_.rows[0].etaExtra), "");
+      copy_str(nextModel.rows[0].etaExtra, sizeof(nextModel.rows[0].etaExtra), "");
     }
 
     for (int i = 1; i < rowsToRender; ++i) {
-      copy_str(renderModel_.rows[i].providerId, sizeof(renderModel_.rows[i].providerId),
-               renderModel_.rows[0].providerId);
-      copy_str(renderModel_.rows[i].routeId, sizeof(renderModel_.rows[i].routeId),
-               renderModel_.rows[0].routeId);
-      copy_str(renderModel_.rows[i].direction, sizeof(renderModel_.rows[i].direction),
-               renderModel_.rows[0].direction);
-      copy_str(renderModel_.rows[i].destination, sizeof(renderModel_.rows[i].destination),
-               renderModel_.rows[0].destination);
-      copy_str(renderModel_.rows[i].etaExtra, sizeof(renderModel_.rows[i].etaExtra), "");
+      copy_str(nextModel.rows[i].providerId, sizeof(nextModel.rows[i].providerId),
+               nextModel.rows[0].providerId);
+      copy_str(nextModel.rows[i].routeId, sizeof(nextModel.rows[i].routeId),
+               nextModel.rows[0].routeId);
+      copy_str(nextModel.rows[i].direction, sizeof(nextModel.rows[i].direction),
+               nextModel.rows[0].direction);
+      copy_str(nextModel.rows[i].destination, sizeof(nextModel.rows[i].destination),
+               nextModel.rows[0].destination);
+      copy_str(nextModel.rows[i].etaExtra, sizeof(nextModel.rows[i].etaExtra), "");
       if (i < etaCount) {
-        copy_str(renderModel_.rows[i].eta, sizeof(renderModel_.rows[i].eta), etaParts[i]);
+        copy_str(nextModel.rows[i].eta, sizeof(nextModel.rows[i].eta), etaParts[i]);
       } else {
-        copy_str(renderModel_.rows[i].eta, sizeof(renderModel_.rows[i].eta), "--");
+        copy_str(nextModel.rows[i].eta, sizeof(nextModel.rows[i].eta), "--");
       }
     }
 
-    renderModel_.activeRows = static_cast<uint8_t>(rowsToRender);
+    nextModel.activeRows = static_cast<uint8_t>(rowsToRender);
     for (int i = rowsToRender; i < static_cast<int>(kMaxTransitRows); ++i) {
-      clear_row(renderModel_.rows[i]);
+      clear_row(nextModel.rows[i]);
     }
   }
 
-  renderModel_.hasData = true;
-  renderModel_.displayType = displayType;
-  renderModel_.uiState = UiState::kTransit;
-  renderModel_.updatedAtMs = millis();
+  nextModel.hasData = true;
+  nextModel.displayType = displayType;
+  nextModel.uiState = UiState::kTransit;
+  nextModel.updatedAtMs = millis();
+
+  uint8_t etaDirtyRows = 0;
+  const RenderMode nextRenderMode =
+      classify_render_mode(renderModel_, nextModel, runtimeConfig_.display.doubleBuffered, etaDirtyRows);
+  renderModel_ = nextModel;
+
   runtimeConfig_.display.brightness = panelBrightness;
   deps_.displayEngine->set_brightness(panelBrightness);
-  renderDirty_ = true;
+
+  switch (nextRenderMode) {
+    case RenderMode::kNone:
+      schedule_no_render();
+      DCTRL_LOGI("MQTT", "Applied payload without render change activeRows=%u displayType=%u brightness=%u%% panel=%u",
+                 static_cast<unsigned>(renderModel_.activeRows),
+                 static_cast<unsigned>(renderModel_.displayType),
+                 static_cast<unsigned>(brightnessPercent),
+                 static_cast<unsigned>(panelBrightness));
+      break;
+    case RenderMode::kEtaOnly:
+      schedule_eta_render(etaDirtyRows);
+      DCTRL_LOGI("MQTT",
+                 "Applied payload with ETA-only render rowsMask=0x%02x activeRows=%u displayType=%u brightness=%u%% panel=%u",
+                 static_cast<unsigned>(etaDirtyRows),
+                 static_cast<unsigned>(renderModel_.activeRows),
+                 static_cast<unsigned>(renderModel_.displayType),
+                 static_cast<unsigned>(brightnessPercent),
+                 static_cast<unsigned>(panelBrightness));
+      break;
+    case RenderMode::kFull:
+    default:
+      schedule_full_render();
+      DCTRL_LOGI("MQTT", "Applied payload with full render activeRows=%u displayType=%u brightness=%u%% panel=%u",
+                 static_cast<unsigned>(renderModel_.activeRows),
+                 static_cast<unsigned>(renderModel_.displayType),
+                 static_cast<unsigned>(brightnessPercent),
+                 static_cast<unsigned>(panelBrightness));
+      break;
+  }
+
   DCTRL_LOGI("MQTT",
              "Applied payload displayType=%u brightness=%u%% panel=%u activeRows=%u row1={provider:%s line:%s eta:%s extra:%s} row2={provider:%s line:%s eta:%s extra:%s}",
              static_cast<unsigned>(renderModel_.displayType),
@@ -885,7 +1030,7 @@ void DeviceController::handle_disconnect_wifi_command(const String &message) {
   renderModel_.hasData = false;
   set_default_rows(renderModel_);
   update_ui_state();
-  renderDirty_ = true;
+  schedule_full_render();
 }
 
 void DeviceController::setup_http_routes() {
@@ -954,6 +1099,29 @@ void DeviceController::http_status_handler() {
   activeController_->server_.send(200, "application/json", response);
 }
 
+void DeviceController::schedule_full_render() {
+  renderDirty_ = true;
+  pendingRenderMode_ = RenderMode::kFull;
+  etaDirtyRowMask_ = 0;
+}
+
+void DeviceController::schedule_eta_render(uint8_t rowMask) {
+  if (rowMask == 0 || pendingRenderMode_ == RenderMode::kFull) {
+    return;
+  }
+  renderDirty_ = true;
+  pendingRenderMode_ = RenderMode::kEtaOnly;
+  etaDirtyRowMask_ = static_cast<uint8_t>(etaDirtyRowMask_ | rowMask);
+}
+
+void DeviceController::schedule_no_render() {
+  if (renderDirty_) {
+    return;
+  }
+  pendingRenderMode_ = RenderMode::kNone;
+  etaDirtyRowMask_ = 0;
+}
+
 void DeviceController::update_ui_state() {
   const UiState previousState = renderModel_.uiState;
   char prevStatus[kMaxStatusLen];
@@ -992,7 +1160,7 @@ void DeviceController::update_ui_state() {
   if (previousState != renderModel_.uiState ||
       strcmp(prevStatus, renderModel_.statusLine) != 0 ||
       strcmp(prevDetail, renderModel_.statusDetail) != 0) {
-    renderDirty_ = true;
+    schedule_full_render();
     DCTRL_LOGI("UI",
                "UI state changed %s -> %s status='%s' detail='%s' wifiUp=%s mqttUp=%s hasData=%s networkState=%s",
                ui_state_name(previousState),
@@ -1006,6 +1174,61 @@ void DeviceController::update_ui_state() {
   }
 }
 
+void DeviceController::render_eta_updates() {
+  DCTRL_LOGI("DISPLAY", "Rendering ETA-only update rowsMask=0x%02x activeRows=%u displayType=%u",
+             static_cast<unsigned>(etaDirtyRowMask_),
+             static_cast<unsigned>(renderModel_.activeRows),
+             static_cast<unsigned>(renderModel_.displayType));
+
+  char etaText[kMaxEtaLen];
+  char etaExtraText[kMaxDestinationLen];
+  for (uint8_t i = 0; i < renderModel_.activeRows && i < kMaxTransitRows; ++i) {
+    if ((etaDirtyRowMask_ & static_cast<uint8_t>(1U << i)) == 0) {
+      continue;
+    }
+
+    TransitRowGeometry geometry{};
+    if (!deps_.layoutEngine->compute_transit_row_geometry(renderModel_, i, geometry)) {
+      DCTRL_LOGW("DISPLAY", "Falling back to full redraw because ETA geometry lookup failed row=%u",
+                 static_cast<unsigned>(i));
+      schedule_full_render();
+      return;
+    }
+
+    const TransitRowModel &row = renderModel_.rows[i];
+    deps_.displayEngine->fill_rect(geometry.etaClearX, geometry.etaClearY, geometry.etaClearW, geometry.etaClearH, kColorBlack);
+    trim_text_for_chars(row.eta[0] ? row.eta : "--", 3, etaText, sizeof(etaText));
+    deps_.displayEngine->draw_text(geometry.etaTextX,
+                                   geometry.etaTextY,
+                                   etaText,
+                                   LayoutEngine::eta_color_for_text(row.eta),
+                                   geometry.etaFont,
+                                   kColorBlack);
+
+    if (geometry.hasEtaExtra) {
+      deps_.displayEngine->fill_rect(geometry.etaExtraClearX,
+                                     geometry.etaExtraClearY,
+                                     geometry.etaExtraClearW,
+                                     geometry.etaExtraClearH,
+                                     kColorBlack);
+      if (row.etaExtra[0] != '\0' && geometry.etaExtraCharLimit > 0) {
+        trim_text_for_chars(row.etaExtra, geometry.etaExtraCharLimit, etaExtraText, sizeof(etaExtraText));
+        deps_.displayEngine->draw_text(geometry.etaExtraTextX,
+                                       geometry.etaExtraTextY,
+                                       etaExtraText,
+                                       kColorAmber,
+                                       geometry.etaExtraFont,
+                                       kColorBlack);
+      }
+    }
+  }
+
+  deps_.displayEngine->present();
+  renderDirty_ = false;
+  pendingRenderMode_ = RenderMode::kNone;
+  etaDirtyRowMask_ = 0;
+}
+
 void DeviceController::render_frame(uint32_t nowMs) {
   if (!renderDirty_) {
     return;
@@ -1017,6 +1240,11 @@ void DeviceController::render_frame(uint32_t nowMs) {
 
   if (!deps_.displayEngine->begin_frame()) {
     DCTRL_LOGW("DISPLAY", "Skipping render because display frame could not begin");
+    return;
+  }
+
+  if (pendingRenderMode_ == RenderMode::kEtaOnly) {
+    render_eta_updates();
     return;
   }
 
@@ -1058,6 +1286,8 @@ void DeviceController::render_frame(uint32_t nowMs) {
 
   deps_.displayEngine->present();
   renderDirty_ = false;
+  pendingRenderMode_ = RenderMode::kNone;
+  etaDirtyRowMask_ = 0;
 }
 
 void DeviceController::publish_display_state() {
