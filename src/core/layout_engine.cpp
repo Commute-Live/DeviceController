@@ -19,6 +19,7 @@ constexpr uint8_t kMinDisplayType = 1;
 constexpr uint8_t kMaxDisplayType = 5;
 constexpr uint8_t kTextSizeTiny = 0;
 constexpr uint8_t kTextSizeTinyPlus = 255;
+constexpr uint8_t kEtaChars = 3;
 
 
 struct TransitPresetConfig {
@@ -110,6 +111,57 @@ uint16_t eta_color(const char *eta) {
   return kColorWhite;
 }
 
+void compute_transit_row_frames(const RenderModel &model,
+                                uint16_t height,
+                                RowFrame out[kMaxTransitRows],
+                                uint8_t &rowCount,
+                                const TransitPresetConfig *&preset,
+                                int16_t &fixedBadgeSize,
+                                uint8_t &rowFont) {
+  rowCount = model.activeRows;
+  if (rowCount < 1) rowCount = 1;
+  if (rowCount > kMaxTransitRows) rowCount = kMaxTransitRows;
+
+  preset = &transit_preset_config(model.displayType);
+  const int16_t topMargin = (rowCount == 3) ? preset->topMarginThreeRow : preset->topMarginTwoRow;
+  const int16_t betweenMargin = (rowCount == 3) ? preset->betweenMarginThreeRow : preset->betweenMarginTwoRow;
+  const int16_t bottomMargin = (rowCount == 3) ? preset->bottomMarginThreeRow : preset->bottomMarginTwoRow;
+  const int16_t totalHeight = static_cast<int16_t>(height);
+  const int16_t totalGap = static_cast<int16_t>(topMargin + bottomMargin + (rowCount - 1) * betweenMargin);
+  const int16_t drawable = static_cast<int16_t>(totalHeight - totalGap);
+  int16_t blockH = rowCount > 0 ? static_cast<int16_t>(drawable / rowCount) : 0;
+
+  if (blockH <= 0) {
+    VerticalLayoutEngine verticalLayout;
+    const VerticalLayoutResult layout = verticalLayout.compute(height, rowCount);
+    for (uint8_t i = 0; i < rowCount; ++i) {
+      out[i] = layout.rows[i];
+    }
+    blockH = out[0].height > 0 ? out[0].height : 1;
+  } else {
+    for (uint8_t i = 0; i < rowCount; ++i) {
+      out[i] = {
+          static_cast<int16_t>(topMargin + i * (blockH + betweenMargin)),
+          blockH,
+      };
+    }
+  }
+
+  int16_t targetRadius = static_cast<int16_t>((blockH - 1) / 2);
+  if (rowCount == 3) {
+    targetRadius = 4;
+  }
+  if (targetRadius < 1) targetRadius = 1;
+
+  fixedBadgeSize = static_cast<int16_t>(2 * (targetRadius + 1));
+  if (fixedBadgeSize < 5) fixedBadgeSize = 5;
+
+  const int16_t targetTextHeight = static_cast<int16_t>((fixedBadgeSize * 3) / 5);
+  rowFont = static_cast<uint8_t>((targetTextHeight + 4) / 8);
+  if (rowFont < 1) rowFont = 1;
+  if (rowFont > 2) rowFont = 2;
+}
+
 }  // namespace
 
 const char *DrawList::copy_text(const char *text) {
@@ -130,6 +182,8 @@ const char *DrawList::copy_text(const char *text) {
 
 LayoutEngine::LayoutEngine() : width_(128), height_(32) {}
 
+uint16_t LayoutEngine::eta_color_for_text(const char *eta) { return eta_color(eta); }
+
 void LayoutEngine::set_viewport(uint16_t width, uint16_t height) {
   width_ = width;
   height_ = height;
@@ -148,6 +202,94 @@ const char *LayoutEngine::trim_for_width(const char *src, uint8_t charLimit, Dra
   memcpy(buf, src, n);
   buf[n] = '\0';
   return out.copy_text(buf);
+}
+
+bool LayoutEngine::compute_transit_row_geometry(const RenderModel &model,
+                                                uint8_t rowIndex,
+                                                TransitRowGeometry &out) const {
+  memset(&out, 0, sizeof(out));
+
+  const bool transitView = model.hasData && model.uiState == UiState::kTransit;
+  if (!transitView || rowIndex >= kMaxTransitRows) {
+    return false;
+  }
+
+  RowFrame rowFrames[kMaxTransitRows]{};
+  uint8_t rowCount = 0;
+  const TransitPresetConfig *preset = nullptr;
+  int16_t fixedBadgeSize = 0;
+  uint8_t rowFont = 1;
+  compute_transit_row_frames(model, height_, rowFrames, rowCount, preset, fixedBadgeSize, rowFont);
+  if (rowIndex >= rowCount || !preset) {
+    return false;
+  }
+
+  const TransitRowModel &row = model.rows[rowIndex];
+  out.valid = true;
+  out.normalizedDisplayType = normalize_display_type(model.displayType);
+  out.frame = rowFrames[rowIndex];
+
+  const int16_t rowY =
+      out.frame.yStart > 0 ? static_cast<int16_t>(out.frame.yStart + preset->rowYNudge) : out.frame.yStart;
+  display::RowFrame rowFrame{rowY, out.frame.height};
+  out.layout = rowLayout_.compute_row_layout(static_cast<int16_t>(width_), rowFrame, fixedBadgeSize, rowFont, kEtaChars);
+
+  out.badgeX = out.layout.badgeX > 0 ? static_cast<int16_t>(out.layout.badgeX + preset->rowXShift) : out.layout.badgeX;
+  out.destinationX =
+      out.layout.destinationX > 0 ? static_cast<int16_t>(out.layout.destinationX + preset->rowXShift)
+                                  : out.layout.destinationX;
+  const int16_t etaX =
+      out.layout.etaX > 0 ? static_cast<int16_t>(out.layout.etaX + preset->rowXShift) : out.layout.etaX;
+
+  out.etaFont =
+      (out.normalizedDisplayType == 4 || out.normalizedDisplayType == 5)
+          ? (rowFont > 1 ? static_cast<uint8_t>(rowFont - 1) : 1)
+          : rowFont;
+  const int16_t etaCharW = static_cast<int16_t>(6 * out.etaFont);
+  const uint8_t etaLen = static_cast<uint8_t>(strnlen(row.eta[0] ? row.eta : "--", kMaxEtaLen - 1));
+  const int16_t etaDrawW = static_cast<int16_t>(etaLen * etaCharW);
+  out.etaTextX = static_cast<int16_t>(etaX + out.layout.etaWidth - etaDrawW + preset->etaRightNudgePx);
+  out.etaTextY = static_cast<int16_t>(out.layout.textY + preset->etaYNudge);
+  out.etaClearX = etaX;
+  out.etaClearY = out.frame.yStart;
+  out.etaClearW = static_cast<int16_t>(out.layout.etaWidth + (preset->etaRightNudgePx > 0 ? preset->etaRightNudgePx : 0));
+  out.etaClearH = out.frame.height;
+
+  out.destinationFont = (out.normalizedDisplayType == 3)
+                            ? kTextSizeTiny
+                            : (rowFont > 1 ? static_cast<uint8_t>(rowFont - 1) : 1);
+  out.effectiveDestinationWidth =
+      static_cast<int16_t>(out.layout.destinationWidth + preset->etaRightNudgePx);
+  out.destinationY = static_cast<int16_t>(out.layout.textY + preset->destinationYNudge);
+
+  if (out.normalizedDisplayType == 4 || out.normalizedDisplayType == 5) {
+    const int16_t preset45Y = static_cast<int16_t>(out.destinationY - 3);
+    const int16_t extraY = static_cast<int16_t>(preset45Y + 13);
+    constexpr int16_t kTinyFontHeight = 6;
+    if (extraY + kTinyFontHeight <= static_cast<int16_t>(height_)) {
+      const int16_t lineCharW = 4;
+      const int16_t lineBudgetW = (out.effectiveDestinationWidth > static_cast<int16_t>(3 * lineCharW))
+                                      ? static_cast<int16_t>(out.effectiveDestinationWidth - static_cast<int16_t>(3 * lineCharW))
+                                      : 0;
+      const uint8_t lineChars =
+          (lineBudgetW > 0 && lineCharW > 0) ? static_cast<uint8_t>(lineBudgetW / lineCharW) : 0;
+      out.hasEtaExtra = true;
+      out.etaExtraFont = kTextSizeTiny;
+      out.etaExtraCharLimit = (lineChars > 2) ? static_cast<uint8_t>(lineChars - 2) : lineChars;
+      out.etaExtraTextX = out.destinationX;
+      out.etaExtraTextY = extraY;
+      out.etaExtraClearX = out.destinationX;
+      out.etaExtraClearY = static_cast<int16_t>(extraY > out.frame.yStart ? extraY - 1 : out.frame.yStart);
+      out.etaExtraClearW = static_cast<int16_t>(width_ - out.destinationX);
+      out.etaExtraClearH =
+          static_cast<int16_t>((out.frame.yStart + out.frame.height) - out.etaExtraClearY);
+      if (out.etaExtraClearH < 1) {
+        out.etaExtraClearH = 1;
+      }
+    }
+  }
+
+  return true;
 }
 
 void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out) {
@@ -388,101 +530,44 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
   uint8_t rowCount = model.activeRows;
   if (rowCount < 1) rowCount = 1;
   if (rowCount > kMaxTransitRows) rowCount = kMaxTransitRows;
-  const TransitPresetConfig &preset = transit_preset_config(model.displayType);
-
-  RowFrame rowFrames[kMaxTransitRows]{};
-  const int16_t kTopMargin = (rowCount == 3) ? preset.topMarginThreeRow : preset.topMarginTwoRow;
-  const int16_t kBetweenMargin = (rowCount == 3) ? preset.betweenMarginThreeRow : preset.betweenMarginTwoRow;
-  const int16_t kBottomMargin = (rowCount == 3) ? preset.bottomMarginThreeRow : preset.bottomMarginTwoRow;
-  const int16_t totalHeight = static_cast<int16_t>(height_);
-  const int16_t totalGap = static_cast<int16_t>(kTopMargin + kBottomMargin + (rowCount - 1) * kBetweenMargin);
-  const int16_t drawable = static_cast<int16_t>(totalHeight - totalGap);
-  int16_t blockH = rowCount > 0 ? static_cast<int16_t>(drawable / rowCount) : 0;
-
-  // Fallback to legacy vertical layout only if constraints are invalid.
-  if (blockH <= 0) {
-    const VerticalLayoutResult layout = verticalLayout_.compute(height_, rowCount);
-    for (uint8_t i = 0; i < rowCount; ++i) rowFrames[i] = layout.rows[i];
-    blockH = rowFrames[0].height > 0 ? rowFrames[0].height : 1;
-  } else {
-    for (uint8_t i = 0; i < rowCount; ++i) {
-      rowFrames[i] = {
-          static_cast<int16_t>(kTopMargin + i * (blockH + kBetweenMargin)),
-          blockH,
-      };
-    }
-  }
-
-  int16_t targetRadius = static_cast<int16_t>((blockH - 1) / 2);
-  if (rowCount == 3) {
-    targetRadius = 4;  // Logos branch rule.
-  }
-  if (targetRadius < 1) targetRadius = 1;
-
-  // BadgeRenderer uses r = (size / 2) - 1, so invert to preserve target radius.
-  int16_t fixedBadgeSize = static_cast<int16_t>(2 * (targetRadius + 1));
-  if (fixedBadgeSize < 5) fixedBadgeSize = 5;
-  const int16_t targetTextHeight = static_cast<int16_t>((fixedBadgeSize * 3) / 5);  // 0.6 * badge size
-  uint8_t rowFont = static_cast<uint8_t>((targetTextHeight + 4) / 8);
-  if (rowFont < 1) rowFont = 1;
-  if (rowFont > 2) rowFont = 2;
-  constexpr uint8_t kEtaChars = 3;
 
   for (uint8_t i = 0; i < rowCount; ++i) {
     const TransitRowModel &row = model.rows[i];
-    const uint8_t normalizedDisplayType = normalize_display_type(model.displayType);
-    const RowFrame frame = rowFrames[i];
+    TransitRowGeometry rowGeometry{};
+    if (!compute_transit_row_geometry(model, i, rowGeometry)) {
+      continue;
+    }
+
+    const uint8_t normalizedDisplayType = rowGeometry.normalizedDisplayType;
     const bool hasRoute = row.routeId[0] != '\0' && strcmp(row.routeId, "--") != 0;
-    const int16_t rowY =
-        frame.yStart > 0 ? static_cast<int16_t>(frame.yStart + preset.rowYNudge) : frame.yStart;
-    display::RowFrame rowFrame{
-        rowY,
-        frame.height,
-    };
-    const display::RowLayout rowGeom =
-        rowLayout_.compute_row_layout(static_cast<int16_t>(width_), rowFrame, fixedBadgeSize, rowFont, kEtaChars);
-    const int16_t badgeX =
-        rowGeom.badgeX > 0 ? static_cast<int16_t>(rowGeom.badgeX + preset.rowXShift) : rowGeom.badgeX;
-    const int16_t destinationX =
-        rowGeom.destinationX > 0 ? static_cast<int16_t>(rowGeom.destinationX + preset.rowXShift) : rowGeom.destinationX;
-    const int16_t etaX = rowGeom.etaX > 0 ? static_cast<int16_t>(rowGeom.etaX + preset.rowXShift) : rowGeom.etaX;
 
     DrawCommand badge{};
     badge.type = DrawCommandType::kBadge;
-    badge.x = badgeX;
-    badge.y = rowGeom.badgeY;
-    badge.w = rowGeom.badgeSize;
-    badge.h = rowGeom.badgeSize;
+    badge.x = rowGeometry.badgeX;
+    badge.y = rowGeometry.layout.badgeY;
+    badge.w = rowGeometry.layout.badgeSize;
+    badge.h = rowGeometry.layout.badgeSize;
     badge.color = kColorWhite;
     badge.bg = kColorBlack;
-    badge.size = rowFont;
+    badge.size = rowGeometry.etaFont;
     badge.text = trim_for_width(hasRoute ? row.routeId : "--", 2, out);
     badge.bitmap = nullptr;
     out.push(badge);
 
     DrawCommand eta{};
     eta.type = DrawCommandType::kText;
-    const uint8_t etaFont =
-        (normalizedDisplayType == 4 || normalizedDisplayType == 5)
-            ? (rowFont > 1 ? static_cast<uint8_t>(rowFont - 1) : 1)
-            : rowFont;
-    const int16_t etaCharW = static_cast<int16_t>(6 * etaFont);
-    const uint8_t etaLen = static_cast<uint8_t>(strnlen(row.eta[0] ? row.eta : "--", kMaxEtaLen - 1));
-    const int16_t etaDrawW = static_cast<int16_t>(etaLen * etaCharW);
-    eta.x = static_cast<int16_t>(etaX + rowGeom.etaWidth - etaDrawW + preset.etaRightNudgePx);
-    eta.y = static_cast<int16_t>(rowGeom.textY + preset.etaYNudge);
+    eta.x = rowGeometry.etaTextX;
+    eta.y = rowGeometry.etaTextY;
     eta.color = eta_color(row.eta);
     eta.bg = kColorBlack;
-    eta.size = etaFont;
+    eta.size = rowGeometry.etaFont;
     eta.text = trim_for_width(row.eta[0] ? row.eta : "--", kEtaChars, out);
     eta.bitmap = nullptr;
     out.push(eta);
 
-    const uint8_t destinationFont = (normalizedDisplayType == 3)
-                                        ? kTextSizeTiny
-                                        : (rowFont > 1 ? static_cast<uint8_t>(rowFont - 1) : 1);
-    const int16_t effectiveDestinationWidth = static_cast<int16_t>(rowGeom.destinationWidth + preset.etaRightNudgePx);
-    const int16_t destinationY = static_cast<int16_t>(rowGeom.textY + preset.destinationYNudge);
+    const uint8_t destinationFont = rowGeometry.destinationFont;
+    const int16_t effectiveDestinationWidth = rowGeometry.effectiveDestinationWidth;
+    const int16_t destinationY = rowGeometry.destinationY;
 
     auto draw_compact_line = [&](const char *text,
                                  int16_t y,
@@ -510,7 +595,7 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
       strncpy(destinationBuf, src, sizeof(destinationBuf) - 1);
       destinationBuf[sizeof(destinationBuf) - 1] = '\0';
 
-      int16_t cursorX = destinationX;
+      int16_t cursorX = rowGeometry.destinationX;
       char token[kMaxDestinationLen];
       size_t tokenLen = 0;
 
@@ -557,15 +642,9 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
                               ? (row.direction[0] ? row.direction : (row.destination[0] ? row.destination : "-"))
                               : (row.destination[0] ? row.destination : "-");
       draw_compact_line(line1, preset45Y, destinationFont);
-      if (row.etaExtra[0] != '\0') {
+      if (rowGeometry.hasEtaExtra && row.etaExtra[0] != '\0') {
         // Reserve extra space on the right so bottom ETAs never overlap the main ETA column.
-        // Only draw etaExtra if there is enough vertical room (skips when rows are too short,
-        // e.g. 2-row layout where each row is ~13px and etaExtra would extend past the display).
-        const int16_t extraY = static_cast<int16_t>(preset45Y + 13);
-        constexpr int16_t kTinyFontHeight = 6;  // TomThumb 5px glyphs + 1px spacing
-        if (extraY + kTinyFontHeight <= static_cast<int16_t>(height_)) {
-          draw_compact_line(row.etaExtra, extraY, kTextSizeTiny, 3, kColorAmber);
-        }
+        draw_compact_line(row.etaExtra, rowGeometry.etaExtraTextY, rowGeometry.etaExtraFont, 3, kColorAmber);
       }
     } else {
       draw_compact_line(row_label_for_display_type(row, model.displayType), destinationY, destinationFont);

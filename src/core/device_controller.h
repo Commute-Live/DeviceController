@@ -23,6 +23,12 @@ class DeviceController final {
     LayoutEngine *layoutEngine;
   };
 
+  enum class RenderMode : uint8_t {
+    kNone,
+    kFull,
+    kEtaOnly,
+  };
+
   explicit DeviceController(const Dependencies &deps);
 
   bool begin();
@@ -42,6 +48,8 @@ class DeviceController final {
   uint32_t lastTelemetryAtMs_;
   uint32_t lastRenderAtMs_;
   bool renderDirty_;
+  RenderMode pendingRenderMode_;
+  uint8_t etaDirtyRowMask_;
   static DeviceController *activeController_;
 
   static void on_network_state_change(NetworkState state, void *ctx);
@@ -56,8 +64,12 @@ class DeviceController final {
   static void http_device_info_handler();
   static void http_heartbeat_handler();
   static void http_status_handler();
+  void schedule_full_render();
+  void schedule_eta_render(uint8_t rowMask);
+  void schedule_no_render();
   void update_ui_state();
   void render_frame(uint32_t nowMs);
+  void render_eta_updates();
   void publish_display_state();
   bool call_provision_api(const char *serverUrl, const char *deviceId, const char *token);
 };
