@@ -11,6 +11,65 @@ namespace core {
 namespace {
 constexpr uint8_t kTextSizeTiny = 0;
 constexpr uint8_t kTextSizeTinyPlus = 255;
+
+const char *shift_driver_name(uint8_t value) {
+  switch (value) {
+    case 0: return "SHIFTREG";
+    case 1: return "FM6124";
+    case 2: return "FM6126A";
+    case 3: return "ICN2038S";
+    case 4: return "MBI5124";
+    case 5: return "DP3246";
+    default: return "SHIFTREG";
+  }
+}
+
+const char *line_driver_name(uint8_t value) {
+  switch (value) {
+    case 0: return "TYPE138";
+    case 1: return "TYPE595";
+    case 2: return "TYPE_DIRECT";
+    case 3: return "SM5266P";
+    default: return "TYPE138";
+  }
+}
+
+const char *clock_speed_name(uint8_t value) {
+  switch (value) {
+    case 0: return "8MHz";
+    case 1: return "16MHz";
+    case 2: return "20MHz";
+    default: return "8MHz";
+  }
+}
+
+HUB75_I2S_CFG::shift_driver to_shift_driver(uint8_t value) {
+  switch (value) {
+    case 1: return HUB75_I2S_CFG::FM6124;
+    case 2: return HUB75_I2S_CFG::FM6126A;
+    case 3: return HUB75_I2S_CFG::ICN2038S;
+    case 4: return HUB75_I2S_CFG::MBI5124;
+    case 5: return HUB75_I2S_CFG::DP3246;
+    default: return HUB75_I2S_CFG::SHIFTREG;
+  }
+}
+
+HUB75_I2S_CFG::line_driver to_line_driver(uint8_t value) {
+  switch (value) {
+    case 1: return HUB75_I2S_CFG::TYPE595;
+    case 2: return HUB75_I2S_CFG::TYPE_DIRECT;
+    case 3: return HUB75_I2S_CFG::SM5266P;
+    default: return HUB75_I2S_CFG::TYPE138;
+  }
+}
+
+HUB75_I2S_CFG::clk_speed to_clock_speed(uint8_t value) {
+  switch (value) {
+    case 1: return HUB75_I2S_CFG::HZ_16M;
+    case 2: return HUB75_I2S_CFG::HZ_20M;
+    default: return HUB75_I2S_CFG::HZ_8M;
+  }
+}
 }
 
 namespace {
@@ -81,7 +140,7 @@ PhysicalPoint SerpentinePanelMapper::map(const DisplayConfig &cfg, int16_t x, in
 }
 
 DisplayEngine::DisplayEngine()
-    : config_{1, 2, 64, 32, 80, false, true, 0, 0, 0},
+    : config_{1, 2, 64, 32, 80, false, true, 0, 0, 0, 0, 0, 0, 4, false},
       geometry_{128, 32},
       ready_(false),
       matrix_(nullptr),
@@ -117,17 +176,14 @@ bool DisplayEngine::begin(const DisplayConfig &config) {
   };
 
   const uint16_t chainLength = static_cast<uint16_t>(config_.panelRows) * config_.panelCols;
-  HUB75_I2S_CFG mxConfig(config_.panelWidth,
-                         config_.panelHeight,
-                         chainLength,
-                         pins,
-                         HUB75_I2S_CFG::SHIFTREG,
-                         HUB75_I2S_CFG::TYPE138,
-                         config_.doubleBuffered,
-                         HUB75_I2S_CFG::HZ_8M,
-                         1,
-                         true,
-                         60);
+  HUB75_I2S_CFG mxConfig(config_.panelWidth, config_.panelHeight, chainLength, pins);
+  mxConfig.driver = to_shift_driver(config_.shiftDriver);
+  mxConfig.line_decoder = to_line_driver(config_.lineDriver);
+  mxConfig.double_buff = config_.doubleBuffered;
+  mxConfig.i2sspeed = to_clock_speed(config_.clockSpeed);
+  mxConfig.latch_blanking = config_.latchBlanking;
+  mxConfig.clkphase = config_.clkPhase;
+  mxConfig.min_refresh_rate = 60;
 
   matrix_ = new MatrixPanel_I2S_DMA(mxConfig);
   if (!matrix_ || !matrix_->begin()) {
@@ -137,6 +193,7 @@ bool DisplayEngine::begin(const DisplayConfig &config) {
     end();
     return false;
   }
+  matrix_->setLatBlanking(config_.latchBlanking);
 
   PANEL_CHAIN_TYPE chainType = CHAIN_TOP_LEFT_DOWN;
   if (config_.chainMode == 1) {
@@ -166,7 +223,8 @@ bool DisplayEngine::begin(const DisplayConfig &config) {
   canvas_->fillScreen(0);
 
   ready_ = true;
-  DCTRL_LOGI("DISPLAY", "Ready total=%ux%u panels=%ux%u brightness=%u serpentine=%s chainMode=%u offsets=(%d,%d)",
+  DCTRL_LOGI("DISPLAY",
+             "Ready total=%ux%u panels=%ux%u brightness=%u serpentine=%s chainMode=%u offsets=(%d,%d) driver=%s line=%s clk=%s lat=%u clkphase=%s",
              geometry_.totalWidth,
              geometry_.totalHeight,
              config_.panelCols,
@@ -175,7 +233,12 @@ bool DisplayEngine::begin(const DisplayConfig &config) {
              core::logging::bool_str(config_.serpentine),
              static_cast<unsigned>(config_.chainMode),
              static_cast<int>(config_.xOffset),
-             static_cast<int>(config_.yOffset));
+             static_cast<int>(config_.yOffset),
+             shift_driver_name(config_.shiftDriver),
+             line_driver_name(config_.lineDriver),
+             clock_speed_name(config_.clockSpeed),
+             static_cast<unsigned>(config_.latchBlanking),
+             core::logging::bool_str(config_.clkPhase));
   return true;
 }
 

@@ -21,9 +21,47 @@ constexpr const char *kPrefsNs = "corecfg";
 constexpr const char *kKeyChain = "chain";
 constexpr const char *kKeyXOff = "xoff";
 constexpr const char *kKeyYOff = "yoff";
+constexpr const char *kKeyShiftDrv = "shdrv";
+constexpr const char *kKeyLineDrv = "lndrv";
+constexpr const char *kKeyClkSpd = "clksp";
+constexpr const char *kKeyLatBlk = "latbk";
+constexpr const char *kKeyClkPh = "clkph";
+
+const char *shift_driver_name(uint8_t value) {
+  switch (value) {
+    case 0: return "SHIFTREG";
+    case 1: return "FM6124";
+    case 2: return "FM6126A";
+    case 3: return "ICN2038S";
+    case 4: return "MBI5124";
+    case 5: return "DP3246";
+    default: return "SHIFTREG";
+  }
+}
+
+const char *line_driver_name(uint8_t value) {
+  switch (value) {
+    case 0: return "TYPE138";
+    case 1: return "TYPE595";
+    case 2: return "TYPE_DIRECT";
+    case 3: return "SM5266P";
+    default: return "TYPE138";
+  }
+}
+
+const char *clock_speed_name(uint8_t value) {
+  switch (value) {
+    case 0: return "8MHz";
+    case 1: return "16MHz";
+    case 2: return "20MHz";
+    default: return "8MHz";
+  }
+}
 
 void print_help() {
-  DCTRL_LOGI("CAL", "Commands: n/p map, l/r/t/b edge-fix, i/j/k/m fine XY, u/d up/down, z reset XY, s save, x cancel, h help");
+  DCTRL_LOGI("CAL", "Commands: n/p map, l/r/t/b edge-fix, i/j/k/m fine XY, u/d up/down, z reset XY");
+  DCTRL_LOGI("CAL", "         g cycle shift-driver, o cycle line-driver, v cycle clock, q toggle clkphase");
+  DCTRL_LOGI("CAL", "         1/2/3/4 set latch blanking, 0 reset panel tuning, s save, x cancel, h help");
 }
 
 void draw_test_pattern(DisplayEngine &display, const DisplayConfig &cfg) {
@@ -47,14 +85,19 @@ void draw_test_pattern(DisplayEngine &display, const DisplayConfig &cfg) {
   if (cfg.chainMode == 1) mode = "TR_DOWN";
   if (cfg.chainMode == 2) mode = "TL_ZZ";
   char top[48];
-  snprintf(top, sizeof(top), "CAL %s", mode);
+  snprintf(top, sizeof(top), "CAL %s %s", mode, clock_speed_name(cfg.clockSpeed));
   display.draw_text_transparent(10, 2, top, kWhite, 1);
   display.draw_text_transparent(10, static_cast<int16_t>(h - 9), "n p lrtb s", kWhite, 1);
 
-  DCTRL_LOGI("CAL", "Pattern redrawn mode=%s xOff=%d yOff=%d",
+  DCTRL_LOGI("CAL", "Pattern redrawn mode=%s xOff=%d yOff=%d driver=%s line=%s clk=%s lat=%u clkphase=%s",
              mode,
              static_cast<int>(cfg.xOffset),
-             static_cast<int>(cfg.yOffset));
+             static_cast<int>(cfg.yOffset),
+             shift_driver_name(cfg.shiftDriver),
+             line_driver_name(cfg.lineDriver),
+             clock_speed_name(cfg.clockSpeed),
+             static_cast<unsigned>(cfg.latchBlanking),
+             cfg.clkPhase ? "true" : "false");
 }
 
 void cycle_mode(DisplayConfig &cfg, int8_t step) {
@@ -62,6 +105,10 @@ void cycle_mode(DisplayConfig &cfg, int8_t step) {
   if (next < 0) next = 2;
   if (next > 2) next = 0;
   cfg.chainMode = static_cast<uint8_t>(next);
+}
+
+void cycle_wrap(uint8_t &value, uint8_t maxValue) {
+  value = static_cast<uint8_t>((value >= maxValue) ? 0 : value + 1);
 }
 
 }  // namespace
@@ -76,6 +123,11 @@ bool maybe_run(DisplayEngine &display,
       runtimeConfig.display.chainMode = prefs.getUChar(kKeyChain, runtimeConfig.display.chainMode);
       runtimeConfig.display.xOffset = prefs.getChar(kKeyXOff, runtimeConfig.display.xOffset);
       runtimeConfig.display.yOffset = prefs.getChar(kKeyYOff, runtimeConfig.display.yOffset);
+      runtimeConfig.display.shiftDriver = prefs.getUChar(kKeyShiftDrv, runtimeConfig.display.shiftDriver);
+      runtimeConfig.display.lineDriver = prefs.getUChar(kKeyLineDrv, runtimeConfig.display.lineDriver);
+      runtimeConfig.display.clockSpeed = prefs.getUChar(kKeyClkSpd, runtimeConfig.display.clockSpeed);
+      runtimeConfig.display.latchBlanking = prefs.getUChar(kKeyLatBlk, runtimeConfig.display.latchBlanking);
+      runtimeConfig.display.clkPhase = prefs.getBool(kKeyClkPh, runtimeConfig.display.clkPhase);
       prefs.end();
     }
   }
@@ -144,6 +196,37 @@ bool maybe_run(DisplayEngine &display,
       work.xOffset = 0;
       work.yOffset = 0;
       redraw = true;
+    } else if (ch == '0') {
+      work.chainMode = 0;
+      work.xOffset = 0;
+      work.yOffset = 0;
+      work.shiftDriver = 0;
+      work.lineDriver = 0;
+      work.clockSpeed = 0;
+      work.latchBlanking = 4;
+      work.clkPhase = false;
+      remap = true;
+      redraw = true;
+    } else if (ch == 'g') {
+      cycle_wrap(work.shiftDriver, 5);
+      remap = true;
+      redraw = true;
+    } else if (ch == 'o') {
+      cycle_wrap(work.lineDriver, 3);
+      remap = true;
+      redraw = true;
+    } else if (ch == 'v') {
+      cycle_wrap(work.clockSpeed, 2);
+      remap = true;
+      redraw = true;
+    } else if (ch == 'q') {
+      work.clkPhase = !work.clkPhase;
+      remap = true;
+      redraw = true;
+    } else if (ch >= '1' && ch <= '4') {
+      work.latchBlanking = static_cast<uint8_t>(ch - '0');
+      remap = true;
+      redraw = true;
     } else if (ch == 'h') {
       print_help();
     } else if (ch == 'x') {
@@ -168,6 +251,10 @@ bool maybe_run(DisplayEngine &display,
     if (work.xOffset > 32) work.xOffset = 32;
     if (work.yOffset < -16) work.yOffset = -16;
     if (work.yOffset > 16) work.yOffset = 16;
+    if (work.shiftDriver > 5) work.shiftDriver = 0;
+    if (work.lineDriver > 3) work.lineDriver = 0;
+    if (work.clockSpeed > 2) work.clockSpeed = 0;
+    if (work.latchBlanking > 4) work.latchBlanking = 4;
 
     if (remap) {
       display.end();

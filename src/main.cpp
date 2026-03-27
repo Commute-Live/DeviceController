@@ -61,7 +61,7 @@ void setup() {
              ESP.getSdkVersion());
 
   core::DeviceRuntimeConfig cfg{};
-  cfg.schemaVersion = 1;
+  cfg.schemaVersion = 2;
   build_device_id(cfg.deviceId, sizeof(cfg.deviceId));
 
   cfg.display.panelRows = 1;
@@ -74,6 +74,11 @@ void setup() {
   cfg.display.chainMode = 0;
   cfg.display.xOffset = 0;
   cfg.display.yOffset = 0;
+  cfg.display.shiftDriver = 0;
+  cfg.display.lineDriver = 0;
+  cfg.display.clockSpeed = 0;
+  cfg.display.latchBlanking = 4;
+  cfg.display.clkPhase = false;
 
   // WiFi credentials are not set here — provisioned at runtime via BLE.
   cfg.network.ssid[0]     = '\0';

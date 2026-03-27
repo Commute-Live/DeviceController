@@ -7,17 +7,23 @@ namespace transit {
 
 namespace {
 
+constexpr uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
+  return static_cast<uint16_t>(((r & 0xF8) << 8) |
+                               ((g & 0xFC) << 3) |
+                               (b >> 3));
+}
+
 // Official MTA route family colors encoded as RGB565.
 static constexpr RouteColorEntry kRouteColorTable[] = {
-    {"ACE", 0x01B4},   // #0039A6
-    {"BDFM", 0xFB23},  // #FF6319
-    {"G", 0x65E8},     // #6CBE45
-    {"JZ", 0x9B26},    // #996633
-    {"L", 0xAD55},     // #A7A9AC
-    {"NQRW", 0xFE61},  // #FCCC0A
-    {"123", 0xE986},   // #EE352E
-    {"456", 0x04A7},   // #00933C
-    {"7", 0xB2B5},     // #B933AD
+    {"ACE", rgb565(0x00, 0x39, 0xA6)},
+    {"BDFM", rgb565(0xFF, 0x63, 0x19)},
+    {"G", rgb565(0x6C, 0xBE, 0x45)},
+    {"JZ", rgb565(0x99, 0x66, 0x33)},
+    {"L", rgb565(0xA7, 0xA9, 0xAC)},
+    {"NQRW", rgb565(0xFC, 0xCC, 0x0A)},
+    {"123", rgb565(0xEE, 0x35, 0x2E)},
+    {"456", rgb565(0x00, 0x93, 0x3C)},
+    {"7", rgb565(0xB9, 0x33, 0xAD)},
 };
 
 char normalize_route_char(const char *routeId) {
