@@ -19,6 +19,11 @@ constexpr const char *kKeyDb = "db";
 constexpr const char *kKeyChain = "chain";
 constexpr const char *kKeyXOff = "xoff";
 constexpr const char *kKeyYOff = "yoff";
+constexpr const char *kKeyShiftDrv = "shdrv";
+constexpr const char *kKeyLineDrv = "lndrv";
+constexpr const char *kKeyClkSpd = "clksp";
+constexpr const char *kKeyLatBlk = "latbk";
+constexpr const char *kKeyClkPh = "clkph";
 
 void copy_str(char *dst, size_t dstLen, const char *src) {
   if (dstLen == 0) {
@@ -34,7 +39,7 @@ void copy_str(char *dst, size_t dstLen, const char *src) {
 
 void apply_defaults(DeviceRuntimeConfig &cfg) {
   memset(&cfg, 0, sizeof(cfg));
-  cfg.schemaVersion = 1;
+  cfg.schemaVersion = 2;
   copy_str(cfg.deviceId, sizeof(cfg.deviceId), "esp32-unknown");
 
   cfg.display.panelRows = 1;
@@ -47,6 +52,11 @@ void apply_defaults(DeviceRuntimeConfig &cfg) {
   cfg.display.chainMode = 0;
   cfg.display.xOffset = 0;
   cfg.display.yOffset = 0;
+  cfg.display.shiftDriver = 0;
+  cfg.display.lineDriver = 0;
+  cfg.display.clockSpeed = 0;
+  cfg.display.latchBlanking = 4;
+  cfg.display.clkPhase = false;
 }
 
 void sanitize_display(DisplayConfig &cfg) {
@@ -65,6 +75,10 @@ void sanitize_display(DisplayConfig &cfg) {
   if (cfg.xOffset > 32) cfg.xOffset = 32;
   if (cfg.yOffset < -16) cfg.yOffset = -16;
   if (cfg.yOffset > 16) cfg.yOffset = 16;
+  if (cfg.shiftDriver > 5) cfg.shiftDriver = 0;
+  if (cfg.lineDriver > 3) cfg.lineDriver = 0;
+  if (cfg.clockSpeed > 2) cfg.clockSpeed = 0;
+  if (cfg.latchBlanking > 4) cfg.latchBlanking = 4;
 }
 
 }  // namespace
@@ -74,12 +88,10 @@ ConfigStore::ConfigStore() : bootstrapConfig_{}, hasBootstrapConfig_(false) {}
 bool ConfigStore::begin() { return true; }
 
 bool ConfigStore::load(DeviceRuntimeConfig &outConfig) {
+  apply_defaults(outConfig);
   if (hasBootstrapConfig_) {
     outConfig = bootstrapConfig_;
-    return true;
   }
-
-  apply_defaults(outConfig);
 
   Preferences prefs;
   if (!prefs.begin(kPrefsNs, true)) {
@@ -101,6 +113,11 @@ bool ConfigStore::load(DeviceRuntimeConfig &outConfig) {
   outConfig.display.chainMode = prefs.getUChar(kKeyChain, defaultChain);
   outConfig.display.xOffset = prefs.getChar(kKeyXOff, outConfig.display.xOffset);
   outConfig.display.yOffset = prefs.getChar(kKeyYOff, outConfig.display.yOffset);
+  outConfig.display.shiftDriver = prefs.getUChar(kKeyShiftDrv, outConfig.display.shiftDriver);
+  outConfig.display.lineDriver = prefs.getUChar(kKeyLineDrv, outConfig.display.lineDriver);
+  outConfig.display.clockSpeed = prefs.getUChar(kKeyClkSpd, outConfig.display.clockSpeed);
+  outConfig.display.latchBlanking = prefs.getUChar(kKeyLatBlk, outConfig.display.latchBlanking);
+  outConfig.display.clkPhase = prefs.getBool(kKeyClkPh, outConfig.display.clkPhase);
   prefs.end();
 
   sanitize_display(outConfig.display);
@@ -129,6 +146,11 @@ bool ConfigStore::save(const DeviceRuntimeConfig &config) {
   prefs.putUChar(kKeyChain, next.display.chainMode);
   prefs.putChar(kKeyXOff, next.display.xOffset);
   prefs.putChar(kKeyYOff, next.display.yOffset);
+  prefs.putUChar(kKeyShiftDrv, next.display.shiftDriver);
+  prefs.putUChar(kKeyLineDrv, next.display.lineDriver);
+  prefs.putUChar(kKeyClkSpd, next.display.clockSpeed);
+  prefs.putUChar(kKeyLatBlk, next.display.latchBlanking);
+  prefs.putBool(kKeyClkPh, next.display.clkPhase);
   prefs.end();
   return true;
 }

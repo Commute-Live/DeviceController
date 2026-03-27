@@ -29,6 +29,11 @@ struct DisplayConfig {
   uint8_t chainMode;  // 0=TL_DOWN, 1=TR_DOWN, 2=TL_ZZ
   int8_t xOffset;
   int8_t yOffset;
+  uint8_t shiftDriver;   // HUB75_I2S_CFG::shift_driver
+  uint8_t lineDriver;    // HUB75_I2S_CFG::line_driver
+  uint8_t clockSpeed;    // 0=8MHz, 1=16MHz, 2=20MHz
+  uint8_t latchBlanking; // 0..4 clock pulses
+  bool clkPhase;
 };
 
 struct DisplayGeometry {
