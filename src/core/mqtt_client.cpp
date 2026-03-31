@@ -16,6 +16,7 @@ constexpr uint32_t kRetryMaxMs = 60000;
 constexpr uint32_t kRetryJitterMs = 750;
 constexpr int kUnknownWifiStatus = 999;
 constexpr int kUnknownMqttState = 999;
+constexpr size_t kMqttPublishHeaderReserve = 7;
 
 uint32_t bounded_backoff(uint8_t attempt) {
   uint32_t waitMs = kRetryBaseMs;
@@ -348,19 +349,37 @@ bool MqttClient::publish_with_trace(const char *topic, const char *payload, bool
     return false;
   }
 
-  const bool ok = mqtt_.publish(topic, payload ? payload : "", retained);
+  const char *safeTopic = topic ? topic : "";
+  const char *safePayload = payload ? payload : "";
+  const size_t topicLen = strlen(safeTopic);
+  const size_t payloadLen = strlen(safePayload);
+  const size_t packetLen = kMqttPublishHeaderReserve + topicLen + payloadLen;
+
+  if (packetLen > kMaxMqttPacketLen) {
+    DCTRL_LOGE("MQTT",
+               "Skipping %s publish because packet is too large topic=%s topicLen=%u payloadLen=%u packetLen=%u limit=%u",
+               core::logging::safe_str(label),
+               safeTopic,
+               static_cast<unsigned>(topicLen),
+               static_cast<unsigned>(payloadLen),
+               static_cast<unsigned>(packetLen),
+               static_cast<unsigned>(kMaxMqttPacketLen));
+    return false;
+  }
+
+  const bool ok = mqtt_.publish(safeTopic, safePayload, retained);
   if (ok) {
     DCTRL_LOGI("MQTT", "Published %s topic=%s retained=%s payload=%s",
                core::logging::safe_str(label),
-               core::logging::safe_str(topic),
+               safeTopic,
                core::logging::bool_str(retained),
-               core::logging::safe_str(payload));
+               safePayload);
   } else {
     DCTRL_LOGE("MQTT", "Publish failed %s topic=%s retained=%s payload=%s rc=%d (%s)",
                core::logging::safe_str(label),
-               core::logging::safe_str(topic),
+               safeTopic,
                core::logging::bool_str(retained),
-               core::logging::safe_str(payload),
+               safePayload,
                mqtt_.state(),
                mqtt_state_name(mqtt_.state()));
   }
