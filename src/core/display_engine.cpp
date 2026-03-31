@@ -140,7 +140,7 @@ PhysicalPoint SerpentinePanelMapper::map(const DisplayConfig &cfg, int16_t x, in
 }
 
 DisplayEngine::DisplayEngine()
-    : config_{1, 2, 64, 32, 80, false, true, 0, 0, 0, 0, 0, 0, 4, false},
+    : config_{1, 2, 64, 32, 255, false, true, 0, 0, 0, 0, 0, 0, 4, false},
       geometry_{128, 32},
       ready_(false),
       matrix_(nullptr),
