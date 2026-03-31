@@ -12,6 +12,10 @@
 #include "display/badge_renderer.h"
 #include "network/wifi_manager.h"
 
+#ifndef JACK_LEI
+#define JACK_LEI false
+#endif
+
 namespace core {
 
 DeviceController *DeviceController::activeController_ = nullptr;
@@ -23,6 +27,7 @@ constexpr uint32_t kTelemetryEveryMs = 30000;
 constexpr uint32_t kMinRenderGapMs = 40;
 constexpr uint8_t kMinDisplayType = 1;
 constexpr uint8_t kMaxDisplayType = 5;
+constexpr uint8_t kBrightnessFallbackPercent = JACK_LEI ? 80 : 60;
 constexpr uint16_t kColorBlack = 0x0000;
 constexpr uint16_t kColorAmber = 0xFD20;
 display::BadgeRenderer gBadgeRenderer;
@@ -772,7 +777,7 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   const String message(messageBuf);
   const int arrivalsToDisplay = clamp_rows_to_display(extract_json_int_field(message, "arrivalsToDisplay", 1));
   const uint8_t displayType = clamp_display_type(extract_json_int_field(message, "displayType", 1));
-  const uint8_t brightnessPercent = parse_brightness_percent(message, 60);
+  const uint8_t brightnessPercent = parse_brightness_percent(message, kBrightnessFallbackPercent);
   const uint8_t panelBrightness = brightness_percent_to_panel(brightnessPercent);
   DCTRL_LOGI("MQTT", "Incoming command topic=%s len=%u", core::logging::safe_str(topic), static_cast<unsigned>(len));
   DCTRL_LOGI("MQTT", "Incoming payload=%s", message.c_str());

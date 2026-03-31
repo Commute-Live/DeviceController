@@ -25,7 +25,7 @@ class ConfigStore final {
   void set_bootstrap_config(const DeviceRuntimeConfig &config);
 
  private:
-  static constexpr uint16_t kCurrentSchemaVersion = 1;
+  static constexpr uint16_t kCurrentSchemaVersion = 2;
   DeviceRuntimeConfig bootstrapConfig_;
   bool hasBootstrapConfig_;
 };
