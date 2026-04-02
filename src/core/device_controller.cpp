@@ -1,8 +1,10 @@
 #include "core/device_controller.h"
 
 #include <Arduino.h>
+#include <Preferences.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include <esp_system.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -16,6 +18,14 @@
 #define JACK_LEI false
 #endif
 
+#ifndef COMMUTELIVE_FIRMWARE_VERSION
+#define COMMUTELIVE_FIRMWARE_VERSION "dev"
+#endif
+
+#ifndef COMMUTELIVE_DEVICE_ENV
+#define COMMUTELIVE_DEVICE_ENV "unknown"
+#endif
+
 namespace core {
 
 DeviceController *DeviceController::activeController_ = nullptr;
@@ -24,6 +34,10 @@ namespace {
 
 constexpr uint32_t kHeartbeatEveryMs = 15000;
 constexpr uint32_t kTelemetryEveryMs = 30000;
+constexpr uint32_t kDeviceLogHeartbeatEveryMs = 300000;
+constexpr uint32_t kLowHeapWarningEveryMs = 60000;
+constexpr uint32_t kCrashBreadcrumbPersistEveryMs = 30000;
+constexpr uint32_t kLowHeapWarningThresholdBytes = 32768;
 constexpr uint32_t kMinRenderGapMs = 40;
 constexpr uint8_t kMinDisplayType = 1;
 constexpr uint8_t kMaxDisplayType = 5;
@@ -31,6 +45,7 @@ constexpr uint8_t kBrightnessFallbackPercent = JACK_LEI ? 80 : 60;
 constexpr uint16_t kColorBlack = 0x0000;
 constexpr uint16_t kColorAmber = 0xFD20;
 display::BadgeRenderer gBadgeRenderer;
+Preferences gDevicePrefs;
 
 void copy_str(char *dst, size_t dstLen, const char *src) {
   if (dstLen == 0) {
@@ -532,6 +547,48 @@ const char *network_state_name(NetworkState state) {
   }
 }
 
+const char *reset_reason_name(esp_reset_reason_t reason) {
+  switch (reason) {
+    case ESP_RST_UNKNOWN:
+      return "ESP_RST_UNKNOWN";
+    case ESP_RST_POWERON:
+      return "ESP_RST_POWERON";
+    case ESP_RST_EXT:
+      return "ESP_RST_EXT";
+    case ESP_RST_SW:
+      return "ESP_RST_SW";
+    case ESP_RST_PANIC:
+      return "ESP_RST_PANIC";
+    case ESP_RST_INT_WDT:
+      return "ESP_RST_INT_WDT";
+    case ESP_RST_TASK_WDT:
+      return "ESP_RST_TASK_WDT";
+    case ESP_RST_WDT:
+      return "ESP_RST_WDT";
+    case ESP_RST_DEEPSLEEP:
+      return "ESP_RST_DEEPSLEEP";
+    case ESP_RST_BROWNOUT:
+      return "ESP_RST_BROWNOUT";
+    case ESP_RST_SDIO:
+      return "ESP_RST_SDIO";
+    default:
+      return "ESP_RST_OTHER";
+  }
+}
+
+bool is_crash_reset_reason(esp_reset_reason_t reason) {
+  switch (reason) {
+    case ESP_RST_PANIC:
+    case ESP_RST_INT_WDT:
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT:
+    case ESP_RST_BROWNOUT:
+      return true;
+    default:
+      return false;
+  }
+}
+
 }  // namespace
 
 DeviceController::DeviceController(const Dependencies &deps)
@@ -540,15 +597,28 @@ DeviceController::DeviceController(const Dependencies &deps)
       renderModel_{},
       drawList_{},
       server_(80),
+      bootCount_(0),
+      lastBreadcrumbPersistAtMs_(0),
       lastHeartbeatAtMs_(0),
       lastTelemetryAtMs_(0),
+      lastDeviceLogHeartbeatAtMs_(0),
+      lastLowMemoryWarningAtMs_(0),
       lastRenderAtMs_(0),
+      lastWifiDisconnectAtMs_(0),
+      lastMqttDisconnectAtMs_(0),
       renderDirty_(true),
+      lastMqttConnected_(false),
+      bootLogPublished_(false),
+      pendingCrashReport_(false),
+      pendingWifiConnectedLog_(false),
+      pendingWifiDisconnectLog_(false),
+      pendingMqttDisconnectLog_(false),
       pendingRenderMode_(RenderMode::kFull),
       etaDirtyRowMask_(0) {
   memset(&renderModel_, 0, sizeof(renderModel_));
   memset(pendingProvisionToken_, 0, sizeof(pendingProvisionToken_));
   memset(pendingProvisionServerUrl_, 0, sizeof(pendingProvisionServerUrl_));
+  memset(pendingCrashReportMetadata_, 0, sizeof(pendingCrashReportMetadata_));
   renderModel_.uiState = UiState::kBooting;
   copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "BOOTING");
   copy_str(renderModel_.statusDetail, sizeof(renderModel_.statusDetail), "Starting device");
@@ -577,6 +647,37 @@ bool DeviceController::begin() {
              runtimeConfig_.display.panelHeight,
              runtimeConfig_.display.panelCols,
              runtimeConfig_.display.panelRows);
+
+  const esp_reset_reason_t resetReason = esp_reset_reason();
+  if (gDevicePrefs.begin("device", false)) {
+    const uint32_t lastUptimeMs = gDevicePrefs.getUInt("last_uptime_ms", 0);
+    const uint32_t lastFreeHeap = gDevicePrefs.getUInt("last_free_heap", 0);
+    const int32_t lastWifiRssi = gDevicePrefs.getInt("last_wifi_rssi", 0);
+    const bool lastWifiConnected = gDevicePrefs.getBool("last_wifi_up", false);
+    const bool lastMqttConnected = gDevicePrefs.getBool("last_mqtt_up", false);
+    bootCount_ = gDevicePrefs.getUInt("boot_count", 0) + 1;
+    gDevicePrefs.putUInt("boot_count", bootCount_);
+    if (is_crash_reset_reason(resetReason)) {
+      snprintf(pendingCrashReportMetadata_,
+               sizeof(pendingCrashReportMetadata_),
+               "{\"boot_count\":%lu,\"reset_reason\":\"%s\",\"last_uptime_ms\":%lu,\"last_free_heap\":%lu,\"last_wifi_connected\":%s,\"last_mqtt_connected\":%s,\"last_wifi_rssi\":%ld}",
+               static_cast<unsigned long>(bootCount_),
+               reset_reason_name(resetReason),
+               static_cast<unsigned long>(lastUptimeMs),
+               static_cast<unsigned long>(lastFreeHeap),
+               lastWifiConnected ? "true" : "false",
+               lastMqttConnected ? "true" : "false",
+               static_cast<long>(lastWifiRssi));
+      pendingCrashReport_ = true;
+    }
+    gDevicePrefs.end();
+  } else {
+    bootCount_ = 1;
+  }
+  DCTRL_LOGI("CORE", "Boot metadata firmware=%s bootCount=%lu resetReason=%s",
+             COMMUTELIVE_FIRMWARE_VERSION,
+             static_cast<unsigned long>(bootCount_),
+             reset_reason_name(resetReason));
 
   MqttTopics topics{};
   if (!MqttClient::build_default_topics(runtimeConfig_.deviceId, topics)) {
@@ -617,6 +718,7 @@ bool DeviceController::begin() {
                                    deps_.displayEngine->geometry().totalHeight);
 
   update_ui_state();
+  persist_runtime_breadcrumbs(millis(), true);
   schedule_full_render();
   render_frame(millis());
   DCTRL_LOGI("CORE", "Device controller begin complete deviceId=%s", runtimeConfig_.deviceId);
@@ -651,10 +753,47 @@ void DeviceController::tick(uint32_t nowMs) {
   }
   deps_.networkManager->tick(nowMs);
   deps_.mqttClient->tick(nowMs);
+  const bool mqttConnected = deps_.mqttClient->connected();
   server_.handleClient();
   update_ui_state();
 
-  if (deps_.mqttClient->connected()) {
+  if (!mqttConnected && lastMqttConnected_) {
+    lastMqttDisconnectAtMs_ = nowMs;
+    pendingMqttDisconnectLog_ = true;
+  }
+
+  if (mqttConnected && !lastMqttConnected_) {
+    if (pendingWifiConnectedLog_) {
+      publish_device_log("info", "wifi_connected", "WiFi connected");
+      pendingWifiConnectedLog_ = false;
+    }
+
+    if (pendingMqttDisconnectLog_) {
+      char metadata[128];
+      snprintf(metadata, sizeof(metadata),
+               "{\"disconnect_duration_ms\":%lu}",
+               static_cast<unsigned long>(nowMs - lastMqttDisconnectAtMs_));
+      publish_device_log("warn", "mqtt_disconnected", "MQTT connection recovered after disconnect", metadata);
+      pendingMqttDisconnectLog_ = false;
+    }
+
+    publish_device_log("info", "mqtt_connected", "MQTT connected");
+
+    if (!bootLogPublished_) {
+      if (pendingCrashReport_) {
+        publish_device_log("error",
+                           "crash_reboot",
+                           "Device restarted after crash",
+                           pendingCrashReportMetadata_[0] ? pendingCrashReportMetadata_ : "{}");
+        pendingCrashReport_ = false;
+      }
+      publish_device_log("info", "boot", "Device boot completed");
+      bootLogPublished_ = true;
+    }
+  }
+  lastMqttConnected_ = mqttConnected;
+
+  if (mqttConnected) {
     if (nowMs - lastHeartbeatAtMs_ >= kHeartbeatEveryMs) {
       lastHeartbeatAtMs_ = nowMs;
 
@@ -664,7 +803,9 @@ void DeviceController::tick(uint32_t nowMs) {
                runtimeConfig_.deviceId,
                static_cast<unsigned long>(nowMs),
                static_cast<unsigned long>(ESP.getFreeHeap()));
-      deps_.mqttClient->publish_heartbeat(payload);
+      if (!deps_.mqttClient->publish_heartbeat(payload)) {
+        publish_device_log("error", "mqtt_publish_failed", "Failed to publish heartbeat", "{\"topic\":\"heartbeat\"}");
+      }
     }
 
     if (nowMs - lastTelemetryAtMs_ >= kTelemetryEveryMs) {
@@ -675,9 +816,25 @@ void DeviceController::tick(uint32_t nowMs) {
                static_cast<unsigned long>(ESP.getFreeHeap()),
                static_cast<unsigned long>(ESP.getMaxAllocHeap()),
                WiFi.RSSI());
-      deps_.mqttClient->publish_telemetry(payload);
+      if (!deps_.mqttClient->publish_telemetry(payload)) {
+        publish_device_log("error", "mqtt_publish_failed", "Failed to publish telemetry", "{\"topic\":\"telemetry\"}");
+      }
+    }
+
+    if (nowMs - lastDeviceLogHeartbeatAtMs_ >= kDeviceLogHeartbeatEveryMs) {
+      lastDeviceLogHeartbeatAtMs_ = nowMs;
+      publish_device_log("info", "heartbeat", "Device heartbeat");
+    }
+
+    const uint32_t freeHeap = ESP.getFreeHeap();
+    if (freeHeap <= kLowHeapWarningThresholdBytes &&
+        nowMs - lastLowMemoryWarningAtMs_ >= kLowHeapWarningEveryMs) {
+      lastLowMemoryWarningAtMs_ = nowMs;
+      publish_device_log("warn", "low_memory", "Device free heap is low");
     }
   }
+
+  persist_runtime_breadcrumbs(nowMs);
 
   render_frame(nowMs);
 }
@@ -702,6 +859,21 @@ void DeviceController::handle_network_state(NetworkState state) {
              core::logging::wifi_status_name(WiFi.status()),
              core::logging::bool_str(deps_.mqttClient->connected()),
              core::logging::bool_str(deps_.networkManager->setup_mode_active()));
+  if (state == NetworkState::kConnected) {
+    pendingWifiConnectedLog_ = true;
+    if (pendingWifiDisconnectLog_) {
+      char metadata[160];
+      snprintf(metadata, sizeof(metadata),
+               "{\"disconnect_duration_ms\":%lu}",
+               static_cast<unsigned long>(millis() - lastWifiDisconnectAtMs_));
+      publish_device_log("warn", "wifi_disconnected", "WiFi connection recovered after disconnect", metadata);
+      pendingWifiDisconnectLog_ = false;
+    }
+  } else if (state == NetworkState::kDisconnected || state == NetworkState::kApMode) {
+    lastWifiDisconnectAtMs_ = millis();
+    pendingWifiDisconnectLog_ = true;
+  }
+
   // Only interact with BLE provisioner when it is active (no prior credentials).
   // Once credentials arrive, tick() stops the provisioner so these are no-ops.
   if (state == NetworkState::kConnected) {
@@ -1098,9 +1270,10 @@ void DeviceController::http_status_handler() {
              ui_state_name(activeController_->renderModel_.uiState));
   char response[192];
   snprintf(response, sizeof(response),
-           "{\"deviceId\":\"%s\",\"wifiConnected\":%s,\"firmwareVersion\":\"1.0.0\"}",
+           "{\"deviceId\":\"%s\",\"wifiConnected\":%s,\"firmwareVersion\":\"%s\"}",
            activeController_->runtimeConfig_.deviceId,
-           wifiConnected ? "true" : "false");
+           wifiConnected ? "true" : "false",
+           COMMUTELIVE_FIRMWARE_VERSION);
   activeController_->server_.send(200, "application/json", response);
 }
 
@@ -1232,6 +1405,83 @@ void DeviceController::render_eta_updates() {
   renderDirty_ = false;
   pendingRenderMode_ = RenderMode::kNone;
   etaDirtyRowMask_ = 0;
+}
+
+bool DeviceController::publish_device_log(const char *status,
+                                          const char *eventType,
+                                          const char *message,
+                                          const char *metadataJson) {
+  if (!deps_.mqttClient->connected()) {
+    DCTRL_LOGW("MQTT", "Skipping device log publish because MQTT is offline eventType=%s",
+               core::logging::safe_str(eventType));
+    return false;
+  }
+
+  char safeMessage[160];
+  char safeStatus[16];
+  char safeEventType[64];
+  char safeFirmware[32];
+  char safeEnv[24];
+  char safeResetReason[32];
+  json_escape(core::logging::safe_str(message), safeMessage, sizeof(safeMessage));
+  json_escape(core::logging::safe_str(status), safeStatus, sizeof(safeStatus));
+  json_escape(core::logging::safe_str(eventType), safeEventType, sizeof(safeEventType));
+  json_escape(COMMUTELIVE_FIRMWARE_VERSION, safeFirmware, sizeof(safeFirmware));
+  json_escape(COMMUTELIVE_DEVICE_ENV, safeEnv, sizeof(safeEnv));
+  json_escape(reset_reason_name(esp_reset_reason()), safeResetReason, sizeof(safeResetReason));
+
+  char payload[kMaxPayloadLen + 1];
+  const int written = snprintf(
+      payload,
+      sizeof(payload),
+      "{\"message\":\"%s\",\"service\":\"device-controller\",\"source\":\"esp32\",\"status\":\"%s\",\"device_id\":\"%s\",\"firmware_version\":\"%s\",\"env\":\"%s\",\"reset_reason\":\"%s\",\"uptime_ms\":%lu,\"free_heap\":%lu,\"wifi_connected\":%s,\"mqtt_connected\":%s,\"boot_count\":%lu,\"event_type\":\"%s\",\"metadata\":%s}",
+      safeMessage,
+      safeStatus,
+      runtimeConfig_.deviceId,
+      safeFirmware,
+      safeEnv,
+      safeResetReason,
+      static_cast<unsigned long>(millis()),
+      static_cast<unsigned long>(ESP.getFreeHeap()),
+      deps_.networkManager->is_connected() ? "true" : "false",
+      deps_.mqttClient->connected() ? "true" : "false",
+      static_cast<unsigned long>(bootCount_),
+      safeEventType,
+      metadataJson ? metadataJson : "{}");
+
+  if (written <= 0 || written >= static_cast<int>(sizeof(payload))) {
+    DCTRL_LOGE("MQTT", "Device log payload exceeded buffer eventType=%s", core::logging::safe_str(eventType));
+    return false;
+  }
+
+  if (!deps_.mqttClient->publish_log(payload)) {
+    DCTRL_LOGE("MQTT", "Failed to publish device log eventType=%s", core::logging::safe_str(eventType));
+    return false;
+  }
+
+  DCTRL_LOGI("MQTT", "Published device log eventType=%s status=%s message=%s",
+             core::logging::safe_str(eventType),
+             core::logging::safe_str(status),
+             core::logging::safe_str(message));
+  return true;
+}
+
+void DeviceController::persist_runtime_breadcrumbs(uint32_t nowMs, bool force) {
+  if (!force && nowMs - lastBreadcrumbPersistAtMs_ < kCrashBreadcrumbPersistEveryMs) {
+    return;
+  }
+
+  if (!gDevicePrefs.begin("device", false)) {
+    return;
+  }
+
+  gDevicePrefs.putUInt("last_uptime_ms", nowMs);
+  gDevicePrefs.putUInt("last_free_heap", ESP.getFreeHeap());
+  gDevicePrefs.putInt("last_wifi_rssi", WiFi.RSSI());
+  gDevicePrefs.putBool("last_wifi_up", deps_.networkManager->is_connected());
+  gDevicePrefs.putBool("last_mqtt_up", deps_.mqttClient->connected());
+  gDevicePrefs.end();
+  lastBreadcrumbPersistAtMs_ = nowMs;
 }
 
 void DeviceController::render_frame(uint32_t nowMs) {

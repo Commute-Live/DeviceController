@@ -44,12 +44,25 @@ class DeviceController final {
   char pendingProvisionToken_[48];
   char pendingProvisionServerUrl_[128];
   volatile bool bleScanPending_;
+  uint32_t bootCount_;
+  uint32_t lastBreadcrumbPersistAtMs_;
   uint32_t lastHeartbeatAtMs_;
   uint32_t lastTelemetryAtMs_;
+  uint32_t lastDeviceLogHeartbeatAtMs_;
+  uint32_t lastLowMemoryWarningAtMs_;
   uint32_t lastRenderAtMs_;
+  uint32_t lastWifiDisconnectAtMs_;
+  uint32_t lastMqttDisconnectAtMs_;
   bool renderDirty_;
+  bool lastMqttConnected_;
+  bool bootLogPublished_;
+  bool pendingCrashReport_;
+  bool pendingWifiConnectedLog_;
+  bool pendingWifiDisconnectLog_;
+  bool pendingMqttDisconnectLog_;
   RenderMode pendingRenderMode_;
   uint8_t etaDirtyRowMask_;
+  char pendingCrashReportMetadata_[256];
   static DeviceController *activeController_;
 
   static void on_network_state_change(NetworkState state, void *ctx);
@@ -70,6 +83,11 @@ class DeviceController final {
   void update_ui_state();
   void render_frame(uint32_t nowMs);
   void render_eta_updates();
+  bool publish_device_log(const char *status,
+                          const char *eventType,
+                          const char *message,
+                          const char *metadataJson = nullptr);
+  void persist_runtime_breadcrumbs(uint32_t nowMs, bool force = false);
   void publish_display_state();
   bool call_provision_api(const char *serverUrl, const char *deviceId, const char *token);
 };

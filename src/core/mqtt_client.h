@@ -8,8 +8,8 @@
 namespace core {
 
 constexpr size_t kMaxTopicLen = 96;
-constexpr size_t kMaxMqttPacketLen = 350;
-constexpr size_t kMaxPayloadLen = 350;
+constexpr size_t kMaxMqttPacketLen = 768;
+constexpr size_t kMaxPayloadLen = 700;
 
 struct MqttConfig {
   char host[64];
@@ -26,6 +26,7 @@ struct MqttTopics {
   char heartbeat[kMaxTopicLen];
   char event[kMaxTopicLen];
   char telemetry[kMaxTopicLen];
+  char logs[kMaxTopicLen];
 };
 
 class MqttClient final {
@@ -46,6 +47,7 @@ class MqttClient final {
   bool publish_heartbeat(const char *payload);
   bool publish_event(const char *payload);
   bool publish_telemetry(const char *payload);
+  bool publish_log(const char *payload);
 
   static bool build_default_topics(const char *deviceId, MqttTopics &outTopics);
 

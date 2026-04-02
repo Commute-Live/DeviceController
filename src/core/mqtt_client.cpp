@@ -302,6 +302,10 @@ bool MqttClient::publish_telemetry(const char *payload) {
   return publish_with_trace(topics_.telemetry, payload, false, "telemetry");
 }
 
+bool MqttClient::publish_log(const char *payload) {
+  return publish_with_trace(topics_.logs, payload, false, "logs");
+}
+
 bool MqttClient::build_default_topics(const char *deviceId, MqttTopics &outTopics) {
   if (!deviceId || deviceId[0] == '\0') {
     return false;
@@ -313,14 +317,16 @@ bool MqttClient::build_default_topics(const char *deviceId, MqttTopics &outTopic
   const int h = snprintf(outTopics.heartbeat, sizeof(outTopics.heartbeat), "device/%s/heartbeat", deviceId);
   const int e = snprintf(outTopics.event, sizeof(outTopics.event), "device/%s/event", deviceId);
   const int t = snprintf(outTopics.telemetry, sizeof(outTopics.telemetry), "device/%s/telemetry", deviceId);
+  const int l = snprintf(outTopics.logs, sizeof(outTopics.logs), "device/%s/logs", deviceId);
 
-  return s > 0 && p > 0 && c > 0 && h > 0 && e > 0 && t > 0 &&
+  return s > 0 && p > 0 && c > 0 && h > 0 && e > 0 && t > 0 && l > 0 &&
          s < static_cast<int>(sizeof(outTopics.state)) &&
          p < static_cast<int>(sizeof(outTopics.presence)) &&
          c < static_cast<int>(sizeof(outTopics.command)) &&
          h < static_cast<int>(sizeof(outTopics.heartbeat)) &&
          e < static_cast<int>(sizeof(outTopics.event)) &&
-         t < static_cast<int>(sizeof(outTopics.telemetry));
+         t < static_cast<int>(sizeof(outTopics.telemetry)) &&
+         l < static_cast<int>(sizeof(outTopics.logs));
 }
 
 void MqttClient::global_on_message(char *topic, uint8_t *payload, unsigned int len) {
