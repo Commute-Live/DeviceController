@@ -51,6 +51,35 @@ static constexpr RouteColorEntry kMnrRouteColorTable[] = {
     {"6", rgb565(0xEE, 0x00, 0x34)},  // Waterbury
 };
 
+// SEPTA Regional Rail — keyed by GTFS route_short_name
+static constexpr RouteColorEntry kSeptaRailColorTable[] = {
+    {"AIR", rgb565(0x00, 0x5D, 0xAA)},  // Airport Line
+    {"CHE", rgb565(0x00, 0x5D, 0xAA)},  // Chestnut Hill East
+    {"CHW", rgb565(0x00, 0x5D, 0xAA)},  // Chestnut Hill West
+    {"CYN", rgb565(0x00, 0x5D, 0xAA)},  // Cynwyd
+    {"FOX", rgb565(0x00, 0x5D, 0xAA)},  // Fox Chase
+    {"LAN", rgb565(0x00, 0x5D, 0xAA)},  // Lansdale/Doylestown
+    {"MED", rgb565(0x7B, 0x2D, 0x8B)},  // Media/Elwyn
+    {"NOR", rgb565(0x00, 0x5D, 0xAA)},  // Manayunk/Norristown
+    {"PAO", rgb565(0x00, 0x5D, 0xAA)},  // Paoli/Thorndale
+    {"TRE", rgb565(0xC8, 0x10, 0x2E)},  // Trenton
+    {"WAR", rgb565(0x00, 0x5D, 0xAA)},  // Warminster
+    {"WIL", rgb565(0x00, 0x5D, 0xAA)},  // Wilmington/Newark
+    {"WTR", rgb565(0x00, 0x5D, 0xAA)},  // West Trenton
+};
+
+// SEPTA trolley lines — keyed by internal GTFS route ID
+static constexpr RouteColorEntry kSeptaTrolleyColorTable[] = {
+    {"G1", rgb565(0x3B, 0x7B, 0x38)},  // Route 15
+    {"T1", rgb565(0x3B, 0x7B, 0x38)},  // Route 10
+    {"T2", rgb565(0x3B, 0x7B, 0x38)},  // Route 11
+    {"T3", rgb565(0x3B, 0x7B, 0x38)},  // Route 13
+    {"T4", rgb565(0x3B, 0x7B, 0x38)},  // Route 34
+    {"T5", rgb565(0x3B, 0x7B, 0x38)},  // Route 36
+};
+
+static constexpr uint16_t kSeptaBusColor = rgb565(0x00, 0x5D, 0xAA);
+
 char normalize_route_char(const char *routeId) {
   if (!routeId) return '\0';
   for (size_t i = 0; routeId[i] != '\0'; ++i) {
@@ -102,6 +131,28 @@ uint16_t MtaColorMap::color_for_provider_route(const char *providerId, const cha
         }
       }
       return kFallbackColor;
+    }
+
+    if (strcmp(providerId, "septa-rail") == 0) {
+      for (size_t i = 0; i < (sizeof(kSeptaRailColorTable) / sizeof(kSeptaRailColorTable[0])); ++i) {
+        if (strcmp(kSeptaRailColorTable[i].routes, routeId) == 0) {
+          return kSeptaRailColorTable[i].color565;
+        }
+      }
+      return rgb565(0x00, 0x5D, 0xAA);  // SEPTA blue fallback
+    }
+
+    if (strcmp(providerId, "septa-trolley") == 0) {
+      for (size_t i = 0; i < (sizeof(kSeptaTrolleyColorTable) / sizeof(kSeptaTrolleyColorTable[0])); ++i) {
+        if (strcmp(kSeptaTrolleyColorTable[i].routes, routeId) == 0) {
+          return kSeptaTrolleyColorTable[i].color565;
+        }
+      }
+      return rgb565(0x3B, 0x7B, 0x38);  // SEPTA trolley green fallback
+    }
+
+    if (strcmp(providerId, "septa-bus") == 0) {
+      return kSeptaBusColor;
     }
   }
 
