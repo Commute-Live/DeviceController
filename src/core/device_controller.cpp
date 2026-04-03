@@ -1524,7 +1524,7 @@ void DeviceController::render_scroll_updates() {
     const TransitRowModel &row = renderModel_.rows[i];
     const char *text = row.destination[0] ? row.destination : row.direction;
 
-    // Clear the destination zone
+    // Clear only the destination zone (badge and ETA are untouched)
     deps_.displayEngine->fill_rect(
         geom.destinationX,
         geom.destinationY,
@@ -1532,50 +1532,19 @@ void DeviceController::render_scroll_updates() {
         static_cast<int16_t>(8 * geom.destinationFont),
         kColorBlack);
 
-    // Draw text with scroll offset — negative offset causes text to start left of destinationX
-    deps_.displayEngine->draw_text(
-        static_cast<int16_t>(geom.destinationX + s.offset),
-        geom.destinationY,
-        text,
-        0xFFFF,  // white
-        geom.destinationFont,
-        kColorBlack);
-
-    // Clip left bleed: text drawn left of destinationX overwrites the badge area.
-    // Re-fill the badge area and re-execute any badge/bitmap commands from the last
-    // full render that fall within this row's badge zone.
-    if (s.offset < 0) {
-      if (geom.destinationX > 0) {
-        deps_.displayEngine->fill_rect(
-            0, geom.frame.yStart, geom.destinationX, geom.frame.height, kColorBlack);
-        for (size_t j = 0; j < drawList_.count; ++j) {
-          const DrawCommand &cmd = drawList_.commands[j];
-          if (cmd.x >= geom.destinationX) continue;
-          if (cmd.y < geom.frame.yStart || cmd.y >= geom.frame.yStart + geom.frame.height) continue;
-          switch (cmd.type) {
-            case DrawCommandType::kBadge:
-              gBadgeRenderer.draw_badge(*deps_.displayEngine, cmd.x, cmd.y, cmd.w, cmd.text, cmd.color);
-              break;
-            case DrawCommandType::kRectBadge:
-              gBadgeRenderer.draw_rect_badge(*deps_.displayEngine, cmd.x, cmd.y, cmd.w, cmd.h, cmd.text, cmd.color);
-              break;
-            case DrawCommandType::kMonoBitmap:
-              if (cmd.bitmap && cmd.w > 0 && cmd.h > 0) {
-                for (int16_t y = 0; y < cmd.h; ++y) {
-                  for (int16_t x = 0; x < cmd.w; ++x) {
-                    const uint8_t pixel = cmd.bitmap[static_cast<size_t>(y) * static_cast<size_t>(cmd.w) + static_cast<size_t>(x)];
-                    deps_.displayEngine->draw_pixel(static_cast<int16_t>(cmd.x + x),
-                                                    static_cast<int16_t>(cmd.y + y),
-                                                    pixel ? cmd.color : cmd.bg);
-                  }
-                }
-              }
-              break;
-            default:
-              break;
-          }
-        }
-      }
+    // Draw characters one-by-one, strictly clipped to the destination zone.
+    // Only characters fully within [destinationX, destinationX + effectiveDestinationWidth)
+    // are rendered — no pixels ever bleed into the badge or ETA areas.
+    const int16_t charW = static_cast<int16_t>(6 * geom.destinationFont);
+    const int16_t clipLeft = geom.destinationX;
+    const int16_t clipRight = static_cast<int16_t>(geom.destinationX + geom.effectiveDestinationWidth);
+    int16_t cx = static_cast<int16_t>(geom.destinationX + s.offset);
+    char buf[2] = {0, 0};
+    for (const char *p = text; *p; ++p, cx = static_cast<int16_t>(cx + charW)) {
+      if (cx < clipLeft) continue;           // starts left of zone — skip
+      if (cx + charW > clipRight) break;     // extends past right of zone — done
+      buf[0] = *p;
+      deps_.displayEngine->draw_text(cx, geom.destinationY, buf, 0xFFFF, geom.destinationFont, kColorBlack);
     }
   }
 
