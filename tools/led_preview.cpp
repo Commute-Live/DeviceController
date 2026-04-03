@@ -79,11 +79,11 @@ void copy_cstr(char (&dst)[N], const char *src) {
 void print_usage(const char *program) {
   fprintf(stderr,
           "Usage: %s [options]\n"
-          "  --scenario transit|transit-compact|transit-three|setup|waiting\n"
+          "  --scenario transit|transit-compact|setup|waiting\n"
           "  --output <path>          Output PPM path (default: /tmp/devicecontroller-led-preview.ppm)\n"
           "  --scale <n>              Pixel upscale factor (default: 8)\n"
           "  --display-type <1-5>     Layout preset (default: 1)\n"
-          "  --rows <1-3>             Active rows for transit scenarios\n"
+          "  --rows <1-2>             Active rows for transit scenarios\n"
           "  --ble-name <value>       Setup mode Bluetooth name\n"
           "  --route<N> <value>       Row route id, N=1..3\n"
           "  --destination<N> <value> Row destination, N=1..3\n"
@@ -254,7 +254,7 @@ bool parse_args(int argc, char **argv, PreviewOptions &options) {
     options.scale = 1;
   }
   options.displayType = clamp_u8(options.displayType, 1, 5);
-  options.rows = clamp_u8(options.rows, 1, 3);
+  options.rows = clamp_u8(options.rows, 1, core::kMaxVisibleTransitRows);
   return true;
 }
 
@@ -650,7 +650,7 @@ void apply_row(core::TransitRowModel &row,
 core::RenderModel build_model(const PreviewOptions &options) {
   core::RenderModel model{};
   model.displayType = clamp_u8(options.displayType, 1, 5);
-  model.activeRows = clamp_u8(options.rows, 1, 3);
+  model.activeRows = clamp_u8(options.rows, 1, core::kMaxVisibleTransitRows);
   model.updatedAtMs = 0;
 
   if (options.scenario == "setup") {
@@ -676,8 +676,6 @@ core::RenderModel build_model(const PreviewOptions &options) {
   if (options.scenario == "transit-compact") {
     model.displayType = 4;
     model.activeRows = 1;
-  } else if (options.scenario == "transit-three") {
-    model.activeRows = 3;
   }
 
   apply_row(model.rows[0],

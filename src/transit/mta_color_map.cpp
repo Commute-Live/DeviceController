@@ -24,6 +24,31 @@ static constexpr RouteColorEntry kRouteColorTable[] = {
     {"123", rgb565(0xEE, 0x35, 0x2E)},
     {"456", rgb565(0x00, 0x93, 0x3C)},
     {"7", rgb565(0xB9, 0x33, 0xAD)},
+    {"S", rgb565(0x80, 0x81, 0x83)},
+};
+
+static constexpr RouteColorEntry kLirrRouteColorTable[] = {
+    {"1", rgb565(0x00, 0x98, 0x5F)},   // Babylon Branch
+    {"2", rgb565(0xCE, 0x8E, 0x00)},   // Hempstead Branch
+    {"3", rgb565(0x00, 0xAF, 0x3F)},   // Oyster Bay Branch
+    {"4", rgb565(0xA6, 0x26, 0xAA)},   // Ronkonkoma Branch
+    {"5", rgb565(0x00, 0x69, 0x83)},   // Montauk Branch
+    {"6", rgb565(0xFF, 0x63, 0x19)},   // Long Beach Branch
+    {"7", rgb565(0x6E, 0x32, 0x19)},   // Far Rockaway Branch
+    {"8", rgb565(0x00, 0xA1, 0xDE)},   // West Hempstead Branch
+    {"9", rgb565(0xC6, 0x0C, 0x30)},   // Port Washington Branch
+    {"10", rgb565(0x00, 0x39, 0xA6)},  // Port Jefferson Branch
+    {"12", rgb565(0x4D, 0x53, 0x57)},  // City Terminal Zone
+    {"13", rgb565(0xA6, 0x26, 0xAA)},  // Greenport Service
+};
+
+static constexpr RouteColorEntry kMnrRouteColorTable[] = {
+    {"1", rgb565(0x00, 0x9B, 0x3A)},  // Hudson
+    {"2", rgb565(0x00, 0x39, 0xA6)},  // Harlem
+    {"3", rgb565(0xEE, 0x00, 0x34)},  // New Haven
+    {"4", rgb565(0xEE, 0x00, 0x34)},  // New Canaan
+    {"5", rgb565(0xEE, 0x00, 0x34)},  // Danbury
+    {"6", rgb565(0xEE, 0x00, 0x34)},  // Waterbury
 };
 
 char normalize_route_char(const char *routeId) {
@@ -53,6 +78,34 @@ uint16_t MtaColorMap::color_for_route(const char *routeId) {
   }
 
   return kFallbackColor;
+}
+
+uint16_t MtaColorMap::color_for_provider_route(const char *providerId, const char *routeId) {
+  if (!routeId || routeId[0] == '\0') {
+    return kFallbackColor;
+  }
+
+  if (providerId) {
+    if (strcmp(providerId, "mta-lirr") == 0) {
+      for (size_t i = 0; i < (sizeof(kLirrRouteColorTable) / sizeof(kLirrRouteColorTable[0])); ++i) {
+        if (strcmp(kLirrRouteColorTable[i].routes, routeId) == 0) {
+          return kLirrRouteColorTable[i].color565;
+        }
+      }
+      return kFallbackColor;
+    }
+
+    if (strcmp(providerId, "mta-mnr") == 0) {
+      for (size_t i = 0; i < (sizeof(kMnrRouteColorTable) / sizeof(kMnrRouteColorTable[0])); ++i) {
+        if (strcmp(kMnrRouteColorTable[i].routes, routeId) == 0) {
+          return kMnrRouteColorTable[i].color565;
+        }
+      }
+      return kFallbackColor;
+    }
+  }
+
+  return color_for_route(routeId);
 }
 
 }  // namespace transit

@@ -150,6 +150,7 @@ void set_default_rows(RenderModel &model) {
   model.activeRows = 1;
   copy_str(model.rows[0].providerId, sizeof(model.rows[0].providerId), "");
   copy_str(model.rows[0].routeId, sizeof(model.rows[0].routeId), "--");
+  model.rows[0].displayType = kMinDisplayType;
   copy_str(model.rows[0].direction, sizeof(model.rows[0].direction), "");
   copy_str(model.rows[0].destination, sizeof(model.rows[0].destination), "Waiting data");
   copy_str(model.rows[0].eta, sizeof(model.rows[0].eta), "--");
@@ -158,6 +159,7 @@ void set_default_rows(RenderModel &model) {
   for (uint8_t i = 1; i < kMaxTransitRows; ++i) {
     copy_str(model.rows[i].providerId, sizeof(model.rows[i].providerId), "");
     copy_str(model.rows[i].routeId, sizeof(model.rows[i].routeId), "");
+    model.rows[i].displayType = kMinDisplayType;
     copy_str(model.rows[i].direction, sizeof(model.rows[i].direction), "");
     copy_str(model.rows[i].destination, sizeof(model.rows[i].destination), "");
     copy_str(model.rows[i].eta, sizeof(model.rows[i].eta), "");
@@ -167,7 +169,7 @@ void set_default_rows(RenderModel &model) {
 
 int clamp_rows_to_display(int value) {
   if (value < 1) return 1;
-  if (value > static_cast<int>(kMaxTransitRows)) return static_cast<int>(kMaxTransitRows);
+  if (value > static_cast<int>(kMaxVisibleTransitRows)) return static_cast<int>(kMaxVisibleTransitRows);
   return value;
 }
 
@@ -278,6 +280,14 @@ String extract_row_direction_label(const String &message, uint8_t rowIndex) {
   return "";
 }
 
+uint8_t extract_row_display_type(const String &message, uint8_t rowIndex, uint8_t fallbackDisplayType) {
+  String item;
+  if (!extract_lines_object_at(message, rowIndex, item)) {
+    return fallbackDisplayType;
+  }
+  return clamp_display_type(extract_json_int_field(item, "displayType", fallbackDisplayType));
+}
+
 String extract_row_display_label(const String &message, uint8_t rowIndex) {
   String item;
   if (extract_lines_object_at(message, rowIndex, item)) {
@@ -372,6 +382,7 @@ int split_eta_tokens(const char *etaRaw, char out[kMaxTransitRows][kMaxEtaLen]) 
 void clear_row(TransitRowModel &row) {
   copy_str(row.providerId, sizeof(row.providerId), "");
   copy_str(row.routeId, sizeof(row.routeId), "");
+  row.displayType = kMinDisplayType;
   copy_str(row.direction, sizeof(row.direction), "");
   copy_str(row.destination, sizeof(row.destination), "");
   copy_str(row.eta, sizeof(row.eta), "");
@@ -402,6 +413,7 @@ bool strings_equal(const char *lhs, const char *rhs) {
 bool rows_equal(const TransitRowModel &lhs, const TransitRowModel &rhs) {
   return strings_equal(lhs.providerId, rhs.providerId) &&
          strings_equal(lhs.routeId, rhs.routeId) &&
+         lhs.displayType == rhs.displayType &&
          strings_equal(lhs.direction, rhs.direction) &&
          strings_equal(lhs.destination, rhs.destination) &&
          strings_equal(lhs.eta, rhs.eta) &&
@@ -411,6 +423,7 @@ bool rows_equal(const TransitRowModel &lhs, const TransitRowModel &rhs) {
 bool row_layout_fields_equal(const TransitRowModel &lhs, const TransitRowModel &rhs) {
   return strings_equal(lhs.providerId, rhs.providerId) &&
          strings_equal(lhs.routeId, rhs.routeId) &&
+         lhs.displayType == rhs.displayType &&
          strings_equal(lhs.direction, rhs.direction) &&
          strings_equal(lhs.destination, rhs.destination);
 }
@@ -1003,12 +1016,15 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   const String row2Direction = extract_row_direction_label(message, 1);
   const String row1DisplayLabel = extract_row_display_label(message, 0);
   const String row2DisplayLabel = extract_row_display_label(message, 1);
+  const uint8_t row1DisplayType = extract_row_display_type(message, 0, displayType);
+  const uint8_t row2DisplayType = extract_row_display_type(message, 1, displayType);
   char row1EtaExtra[kMaxDestinationLen];
   char row2EtaExtra[kMaxDestinationLen];
   row1EtaExtra[0] = '\0';
   row2EtaExtra[0] = '\0';
-  const bool compactExtraEtaPreset = (displayType == 4 || displayType == 5);
-  if (compactExtraEtaPreset) {
+  const bool row1CompactExtraEtaPreset = (row1DisplayType == 4 || row1DisplayType == 5);
+  const bool row2CompactExtraEtaPreset = (row2DisplayType == 4 || row2DisplayType == 5);
+  if (row1CompactExtraEtaPreset || row2CompactExtraEtaPreset) {
     extract_row_eta_extra(message, 0, row1EtaExtra, sizeof(row1EtaExtra));
     extract_row_eta_extra(message, 1, row2EtaExtra, sizeof(row2EtaExtra));
   }
@@ -1032,6 +1048,7 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
            row1Provider.c_str());
   copy_str(nextModel.rows[0].routeId, sizeof(nextModel.rows[0].routeId),
            parsed.row1.line.length() ? parsed.row1.line.c_str() : "--");
+  nextModel.rows[0].displayType = row1DisplayType;
   copy_str(nextModel.rows[0].direction, sizeof(nextModel.rows[0].direction),
            row1Direction.c_str());
   copy_str(nextModel.rows[0].destination, sizeof(nextModel.rows[0].destination),
@@ -1039,7 +1056,7 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
            (parsed.row1.label.length() ? parsed.row1.label.c_str() : nextModel.rows[0].routeId));
   normalize_eta(parsed.row1.eta, nextModel.rows[0].eta, sizeof(nextModel.rows[0].eta));
   copy_str(nextModel.rows[0].etaExtra, sizeof(nextModel.rows[0].etaExtra),
-           compactExtraEtaPreset ? row1EtaExtra : "");
+           row1CompactExtraEtaPreset ? row1EtaExtra : "");
 
   if (parsed.hasRow2) {
     const String row2Provider = parsed.row2.provider.length() ? parsed.row2.provider : provider;
@@ -1047,6 +1064,7 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
              row2Provider.c_str());
     copy_str(nextModel.rows[1].routeId, sizeof(nextModel.rows[1].routeId),
              parsed.row2.line.length() ? parsed.row2.line.c_str() : "--");
+    nextModel.rows[1].displayType = row2DisplayType;
     copy_str(nextModel.rows[1].direction, sizeof(nextModel.rows[1].direction),
              row2Direction.c_str());
     copy_str(nextModel.rows[1].destination, sizeof(nextModel.rows[1].destination),
@@ -1054,7 +1072,7 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
              (parsed.row2.label.length() ? parsed.row2.label.c_str() : nextModel.rows[1].routeId));
     normalize_eta(parsed.row2.eta, nextModel.rows[1].eta, sizeof(nextModel.rows[1].eta));
     copy_str(nextModel.rows[1].etaExtra, sizeof(nextModel.rows[1].etaExtra),
-             compactExtraEtaPreset ? row2EtaExtra : "");
+             row2CompactExtraEtaPreset ? row2EtaExtra : "");
 
     nextModel.activeRows = 2;
     for (uint8_t i = 2; i < kMaxTransitRows; ++i) {
@@ -1070,7 +1088,7 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
     if (etaCount > 0 && rowsToRender > etaCount) {
       rowsToRender = etaCount;
     }
-    if (compactExtraEtaPreset) {
+    if (row1CompactExtraEtaPreset) {
       rowsToRender = 1;
     } else {
       // For single-line payloads, always show at least the next two ETAs when available.
@@ -1085,9 +1103,9 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
     if (etaCount > 0) {
       copy_str(nextModel.rows[0].eta, sizeof(nextModel.rows[0].eta), etaParts[0]);
     }
-    if (compactExtraEtaPreset && row1EtaExtra[0] != '\0') {
+    if (row1CompactExtraEtaPreset && row1EtaExtra[0] != '\0') {
       copy_str(nextModel.rows[0].etaExtra, sizeof(nextModel.rows[0].etaExtra), row1EtaExtra);
-    } else if (compactExtraEtaPreset && etaCount > 1) {
+    } else if (row1CompactExtraEtaPreset && etaCount > 1) {
       char extraBuf[kMaxDestinationLen];
       extraBuf[0] = '\0';
       for (int i = 1; i < etaCount; ++i) {
@@ -1107,6 +1125,7 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
                nextModel.rows[0].providerId);
       copy_str(nextModel.rows[i].routeId, sizeof(nextModel.rows[i].routeId),
                nextModel.rows[0].routeId);
+      nextModel.rows[i].displayType = nextModel.rows[0].displayType;
       copy_str(nextModel.rows[i].direction, sizeof(nextModel.rows[i].direction),
                nextModel.rows[0].direction);
       copy_str(nextModel.rows[i].destination, sizeof(nextModel.rows[i].destination),
@@ -1559,11 +1578,6 @@ void DeviceController::publish_display_state() {
   char r2Line[80];
   char r2Label[128];
   char r2Eta[32];
-  char r3Provider[80];
-  char r3Line[80];
-  char r3Label[128];
-  char r3Eta[32];
-
   json_escape(renderModel_.rows[0].providerId, r1Provider, sizeof(r1Provider));
   json_escape(renderModel_.rows[0].routeId, r1Line, sizeof(r1Line));
   json_escape(renderModel_.rows[0].destination, r1Label, sizeof(r1Label));
@@ -1572,17 +1586,14 @@ void DeviceController::publish_display_state() {
   json_escape(renderModel_.rows[1].routeId, r2Line, sizeof(r2Line));
   json_escape(renderModel_.rows[1].destination, r2Label, sizeof(r2Label));
   json_escape(renderModel_.rows[1].eta, r2Eta, sizeof(r2Eta));
-  json_escape(renderModel_.rows[2].providerId, r3Provider, sizeof(r3Provider));
-  json_escape(renderModel_.rows[2].routeId, r3Line, sizeof(r3Line));
-  json_escape(renderModel_.rows[2].destination, r3Label, sizeof(r3Label));
-  json_escape(renderModel_.rows[2].eta, r3Eta, sizeof(r3Eta));
 
   char payload[768];
+  const uint8_t reportedRows = renderModel_.activeRows > kMaxVisibleTransitRows ? kMaxVisibleTransitRows : renderModel_.activeRows;
   snprintf(payload,
            sizeof(payload),
-           "{\"deviceId\":\"%s\",\"activeRows\":%u,\"row1\":{\"provider\":\"%s\",\"line\":\"%s\",\"label\":\"%s\",\"eta\":\"%s\"},\"row2\":{\"provider\":\"%s\",\"line\":\"%s\",\"label\":\"%s\",\"eta\":\"%s\"},\"row3\":{\"provider\":\"%s\",\"line\":\"%s\",\"label\":\"%s\",\"eta\":\"%s\"}}",
+           "{\"deviceId\":\"%s\",\"activeRows\":%u,\"row1\":{\"provider\":\"%s\",\"line\":\"%s\",\"label\":\"%s\",\"eta\":\"%s\"},\"row2\":{\"provider\":\"%s\",\"line\":\"%s\",\"label\":\"%s\",\"eta\":\"%s\"}}",
            runtimeConfig_.deviceId,
-           static_cast<unsigned>(renderModel_.activeRows),
+           static_cast<unsigned>(reportedRows),
            r1Provider,
            r1Line,
            r1Label,
@@ -1590,11 +1601,7 @@ void DeviceController::publish_display_state() {
            r2Provider,
            r2Line,
            r2Label,
-           r2Eta,
-           r3Provider,
-           r3Line,
-           r3Label,
-           r3Eta);
+           r2Eta);
 
   DCTRL_LOGI("MQTT", "Publishing display state payload=%s", payload);
   deps_.mqttClient->publish_state(payload, false);

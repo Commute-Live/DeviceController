@@ -17,6 +17,7 @@ constexpr size_t kMaxEtaLen = 12;
 constexpr size_t kMaxErrorLen = 96;
 constexpr size_t kMaxStatusLen = 32;
 constexpr uint8_t kMaxTransitRows = 3;
+constexpr uint8_t kMaxVisibleTransitRows = 2;
 
 struct DisplayConfig {
   uint8_t panelRows;
@@ -70,6 +71,7 @@ enum class UiState : uint8_t {
 struct TransitRowModel {
   char providerId[kMaxProviderIdLen];
   char routeId[kMaxRouteIdLen];
+  uint8_t displayType;
   char direction[kMaxDestinationLen];
   char destination[kMaxDestinationLen];
   char eta[kMaxEtaLen];

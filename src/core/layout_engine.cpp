@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "transit/mta_color_map.h"
+
 namespace core {
 
 namespace {
@@ -69,8 +71,8 @@ const TransitPresetConfig &transit_preset_config(uint8_t displayType) {
   }
 }
 
-const char *row_label_for_display_type(const TransitRowModel &row, uint8_t displayType) {
-  const uint8_t normalizedDisplayType = normalize_display_type(displayType);
+const char *row_label_for_display_type(const TransitRowModel &row) {
+  const uint8_t normalizedDisplayType = normalize_display_type(row.displayType);
   if (normalizedDisplayType == 2 && row.direction[0] != '\0') {
     return row.direction;
   }
@@ -226,7 +228,7 @@ bool LayoutEngine::compute_transit_row_geometry(const RenderModel &model,
 
   const TransitRowModel &row = model.rows[rowIndex];
   out.valid = true;
-  out.normalizedDisplayType = normalize_display_type(model.displayType);
+  out.normalizedDisplayType = normalize_display_type(row.displayType);
   out.frame = rowFrames[rowIndex];
 
   const int16_t rowY =
@@ -540,19 +542,44 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
 
     const uint8_t normalizedDisplayType = rowGeometry.normalizedDisplayType;
     const bool hasRoute = row.routeId[0] != '\0' && strcmp(row.routeId, "--") != 0;
+    const bool isNycRailBar =
+        strcmp(row.providerId, "mta-lirr") == 0 || strcmp(row.providerId, "mta-mnr") == 0;
 
-    DrawCommand badge{};
-    badge.type = DrawCommandType::kBadge;
-    badge.x = rowGeometry.badgeX;
-    badge.y = rowGeometry.layout.badgeY;
-    badge.w = rowGeometry.layout.badgeSize;
-    badge.h = rowGeometry.layout.badgeSize;
-    badge.color = kColorWhite;
-    badge.bg = kColorBlack;
-    badge.size = rowGeometry.etaFont;
-    badge.text = trim_for_width(hasRoute ? row.routeId : "--", 2, out);
-    badge.bitmap = nullptr;
-    out.push(badge);
+    if (isNycRailBar) {
+      const int16_t badgeSize = rowGeometry.layout.badgeSize;
+      const int16_t barWidth = badgeSize >= 10 ? 8 : 6;
+      const int16_t barHeight = badgeSize > 2 ? static_cast<int16_t>(badgeSize - 2) : badgeSize;
+      const int16_t barX = static_cast<int16_t>(rowGeometry.badgeX + ((badgeSize - barWidth) / 2));
+      const int16_t barY = static_cast<int16_t>(rowGeometry.layout.badgeY + ((badgeSize - barHeight) / 2));
+
+      DrawCommand railBar{};
+      railBar.type = DrawCommandType::kFillRect;
+      railBar.x = barX;
+      railBar.y = barY;
+      railBar.w = barWidth;
+      railBar.h = barHeight;
+      railBar.color = transit::MtaColorMap::color_for_provider_route(
+          row.providerId,
+          hasRoute ? row.routeId : "");
+      railBar.bg = kColorBlack;
+      railBar.size = 1;
+      railBar.text = nullptr;
+      railBar.bitmap = nullptr;
+      out.push(railBar);
+    } else {
+      DrawCommand badge{};
+      badge.type = DrawCommandType::kBadge;
+      badge.x = rowGeometry.badgeX;
+      badge.y = rowGeometry.layout.badgeY;
+      badge.w = rowGeometry.layout.badgeSize;
+      badge.h = rowGeometry.layout.badgeSize;
+      badge.color = kColorWhite;
+      badge.bg = kColorBlack;
+      badge.size = rowGeometry.etaFont;
+      badge.text = trim_for_width(hasRoute ? row.routeId : "--", 2, out);
+      badge.bitmap = nullptr;
+      out.push(badge);
+    }
 
     DrawCommand eta{};
     eta.type = DrawCommandType::kText;
@@ -647,7 +674,7 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
         draw_compact_line(row.etaExtra, rowGeometry.etaExtraTextY, rowGeometry.etaExtraFont, 3, kColorAmber);
       }
     } else {
-      draw_compact_line(row_label_for_display_type(row, model.displayType), destinationY, destinationFont);
+      draw_compact_line(row_label_for_display_type(row), destinationY, destinationFont);
     }
   }
 }

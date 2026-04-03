@@ -15,6 +15,7 @@ bool is_supported_provider_id(const String &provider) {
   p.toLowerCase();
   return p == "mta-subway" ||
          p == "mta-lirr" ||
+         p == "mta-mnr" ||
          p == "mta-bus" ||
          p == "mbta" ||
          p == "cta-subway" ||
@@ -27,7 +28,7 @@ bool parse_provider_payload(const String &provider, const String &message, Provi
   p.trim();
   p.toLowerCase();
 
-  if (p == "mta-subway" || p == "mta-lirr") {
+  if (p == "mta-subway" || p == "mta-lirr" || p == "mta-mnr") {
     return parse_mta_subway_payload(message, out);
   }
   if (p == "cta-subway") {

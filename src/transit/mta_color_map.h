@@ -13,6 +13,7 @@ class MtaColorMap final {
  public:
   static constexpr uint16_t kFallbackColor = 0x7BEF;  // neutral gray
   static uint16_t color_for_route(const char *routeId);
+  static uint16_t color_for_provider_route(const char *providerId, const char *routeId);
 };
 
 }  // namespace transit
