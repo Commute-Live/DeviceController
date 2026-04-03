@@ -1545,10 +1545,9 @@ void DeviceController::render_scroll_updates() {
     // Re-fill the badge area and re-execute any badge/bitmap commands from the last
     // full render that fall within this row's badge zone.
     if (s.offset < 0) {
-      const int16_t badgeZoneW = static_cast<int16_t>(geom.destinationX - geom.frame.x);
-      if (badgeZoneW > 0) {
+      if (geom.destinationX > 0) {
         deps_.displayEngine->fill_rect(
-            geom.frame.x, geom.frame.yStart, badgeZoneW, geom.frame.height, kColorBlack);
+            0, geom.frame.yStart, geom.destinationX, geom.frame.height, kColorBlack);
         for (size_t j = 0; j < drawList_.count; ++j) {
           const DrawCommand &cmd = drawList_.commands[j];
           if (cmd.x >= geom.destinationX) continue;
