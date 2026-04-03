@@ -1366,7 +1366,7 @@ void DeviceController::tick_scroll(uint32_t nowMs) {
           ? renderModel_.rows[i].destination
           : renderModel_.rows[i].direction;
       const display::TextMetrics tm = deps_.displayEngine->measure_text(text, geom.destinationFont);
-      s.textPixelWidth = static_cast<int16_t>(tm.w);
+      s.textPixelWidth = static_cast<int16_t>(tm.width);
       s.budgetWidth = geom.effectiveDestinationWidth;
       // Only activate scroll if text overflows
       s.active = s.textPixelWidth > s.budgetWidth;
