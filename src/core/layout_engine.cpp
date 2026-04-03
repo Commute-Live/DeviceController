@@ -107,10 +107,7 @@ uint16_t eta_color(const char *eta) {
   if (minutes <= 5) {
     return kColorAmber;
   }
-  if (minutes <= 12) {
-    return kColorGreen;
-  }
-  return kColorWhite;
+  return kColorGreen;
 }
 
 void compute_transit_row_frames(const RenderModel &model,
@@ -543,7 +540,9 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
     const uint8_t normalizedDisplayType = rowGeometry.normalizedDisplayType;
     const bool hasRoute = row.routeId[0] != '\0' && strcmp(row.routeId, "--") != 0;
     const bool isNycRailBar =
-        strcmp(row.providerId, "mta-lirr") == 0 || strcmp(row.providerId, "mta-mnr") == 0;
+        strcmp(row.providerId, "mta-lirr") == 0 || strcmp(row.providerId, "mta-mnr") == 0 ||
+        strcmp(row.providerId, "septa-rail") == 0 || strcmp(row.providerId, "septa-bus") == 0 ||
+        strcmp(row.providerId, "septa-trolley") == 0;
 
     if (isNycRailBar) {
       const int16_t badgeSize = rowGeometry.layout.badgeSize;
