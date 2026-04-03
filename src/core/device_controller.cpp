@@ -1260,14 +1260,8 @@ void DeviceController::handle_display_blank_command(const String &message,
   renderModel_.displayType = kMinDisplayType;
   renderModel_.activeRows = 0;
   renderModel_.updatedAtMs = millis();
-  if (reason == "quiet_hours") {
-    copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "QUIET HOURS");
-    copy_str(renderModel_.statusDetail, sizeof(renderModel_.statusDetail), "Display paused");
-  } else {
-    copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "DISPLAY BLANK");
-    copy_str(renderModel_.statusDetail, sizeof(renderModel_.statusDetail),
-             reason.length() ? reason.c_str() : "Blank command");
-  }
+  copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "");
+  copy_str(renderModel_.statusDetail, sizeof(renderModel_.statusDetail), "");
   for (uint8_t i = 0; i < kMaxTransitRows; ++i) {
     clear_row(renderModel_.rows[i]);
     reset_scroll_state(i);
