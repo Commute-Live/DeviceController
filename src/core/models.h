@@ -65,6 +65,7 @@ enum class UiState : uint8_t {
   kNoWifi,
   kWifiOkNoMqtt,
   kConnectedWaitingData,
+  kBlank,
   kTransit,
 };
 
