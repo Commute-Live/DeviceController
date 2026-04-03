@@ -58,31 +58,32 @@ static constexpr RouteColorEntry kMnrRouteColorTable[] = {
 
 // SEPTA Regional Rail — keyed by GTFS route_short_name
 static constexpr RouteColorEntry kSeptaRailColorTable[] = {
-    {"AIR", rgb565(0x00, 0x5D, 0xAA)},  // Airport Line
-    {"CHE", rgb565(0x00, 0x5D, 0xAA)},  // Chestnut Hill East
-    {"CHW", rgb565(0x00, 0x5D, 0xAA)},  // Chestnut Hill West
-    {"CYN", rgb565(0x00, 0x5D, 0xAA)},  // Cynwyd
-    {"FOX", rgb565(0x00, 0x5D, 0xAA)},  // Fox Chase
-    {"LAN", rgb565(0x00, 0x5D, 0xAA)},  // Lansdale/Doylestown
-    {"MED", rgb565(0x7B, 0x2D, 0x8B)},  // Media/Elwyn
-    {"NOR", rgb565(0x00, 0x5D, 0xAA)},  // Manayunk/Norristown
-    {"PAO", rgb565(0x00, 0x5D, 0xAA)},  // Paoli/Thorndale
-    {"TRE", rgb565(0xC8, 0x10, 0x2E)},  // Trenton
-    {"WAR", rgb565(0x00, 0x5D, 0xAA)},  // Warminster
-    {"WIL", rgb565(0x00, 0x5D, 0xAA)},  // Wilmington/Newark
-    {"WTR", rgb565(0x00, 0x5D, 0xAA)},  // West Trenton
+    {"AIR", rgb565(0x45, 0x63, 0x7A)},  // Airport Line
+    {"CHE", rgb565(0x45, 0x63, 0x7A)},  // Chestnut Hill East
+    {"CHW", rgb565(0x45, 0x63, 0x7A)},  // Chestnut Hill West
+    {"CYN", rgb565(0x45, 0x63, 0x7A)},  // Cynwyd
+    {"FOX", rgb565(0x45, 0x63, 0x7A)},  // Fox Chase
+    {"LAN", rgb565(0x45, 0x63, 0x7A)},  // Lansdale/Doylestown
+    {"MED", rgb565(0x45, 0x63, 0x7A)},  // Media/Wawa
+    {"NOR", rgb565(0x45, 0x63, 0x7A)},  // Manayunk/Norristown
+    {"PAO", rgb565(0x45, 0x63, 0x7A)},  // Paoli/Thorndale
+    {"TRE", rgb565(0x45, 0x63, 0x7A)},  // Trenton
+    {"WAR", rgb565(0x45, 0x63, 0x7A)},  // Warminster
+    {"WIL", rgb565(0x45, 0x63, 0x7A)},  // Wilmington/Newark
+    {"WTR", rgb565(0x45, 0x63, 0x7A)},  // West Trenton
 };
 
 // SEPTA trolley lines — keyed by internal GTFS route ID
 static constexpr RouteColorEntry kSeptaTrolleyColorTable[] = {
-    {"G1", rgb565(0x3B, 0x7B, 0x38)},  // Route 15
+    {"G1", rgb565(0xFF, 0xD7, 0x00)},  // Route 15
     {"T1", rgb565(0x3B, 0x7B, 0x38)},  // Route 10
-    {"T2", rgb565(0x3B, 0x7B, 0x38)},  // Route 11
+    {"T2", rgb565(0x3B, 0x7B, 0x38)},  // Route 34
     {"T3", rgb565(0x3B, 0x7B, 0x38)},  // Route 13
-    {"T4", rgb565(0x3B, 0x7B, 0x38)},  // Route 34
+    {"T4", rgb565(0x3B, 0x7B, 0x38)},  // Route 11
     {"T5", rgb565(0x3B, 0x7B, 0x38)},  // Route 36
+    {"D1", rgb565(0xDC, 0x2E, 0x6B)},  // Route 101
+    {"D2", rgb565(0xDC, 0x2E, 0x6B)},  // Route 102
 };
-
 static constexpr uint16_t kSeptaBusColor = rgb565(0x00, 0x5D, 0xAA);
 static constexpr uint16_t kCtaBusFallbackColor = rgb565(0x99, 0x99, 0x9C);
 
@@ -104,6 +105,11 @@ static constexpr AliasRouteColorEntry kCtaBusColorTable[] = {
     {"1|103|106|108|11|111|111A|112|115|119|124|126|15|151|152|155|156|157|165|169|171|172|18|192|201|206|21|22|24|28|29|3|30|31|35|36|37|39|43|44|48|49B|50|51|52|52A|53A|54A|54B|55A|55N|56|57|59|62|62H|63W|65|67|68|7|70|71|73|74|75|76|78|8|80|81W|84|85|85A|86|87|88|8A|90|91|92|93|94|96|97|N5",
      rgb565(0x99, 0x99, 0x9C)},
 };
+static constexpr uint16_t kSeptaRailBadgeColor = rgb565(0x45, 0x63, 0x7A);
+static constexpr uint16_t kSeptaBroadStreetColor = rgb565(0xF2, 0x61, 0x00);
+static constexpr uint16_t kSeptaTrolleyGreen = rgb565(0x5A, 0x96, 0x0A);
+static constexpr uint16_t kSeptaNhslPurple = rgb565(0x5F, 0x24, 0x9F);
+static constexpr uint16_t kSeptaMediaSharonHillPink = rgb565(0xDC, 0x2E, 0x6B);
 
 char normalize_route_char(const char *routeId) {
   if (!routeId) return '\0';
@@ -213,7 +219,7 @@ uint16_t MtaColorMap::color_for_provider_route(const char *providerId, const cha
           return kSeptaRailColorTable[i].color565;
         }
       }
-      return rgb565(0x00, 0x5D, 0xAA);  // SEPTA blue fallback
+      return kSeptaRailBadgeColor;
     }
 
     if (strcmp(providerId, "septa-trolley") == 0) {
@@ -226,6 +232,22 @@ uint16_t MtaColorMap::color_for_provider_route(const char *providerId, const cha
     }
 
     if (strcmp(providerId, "septa-bus") == 0) {
+      if (strcmp(routeId, "L1") == 0 || strcmp(routeId, "L1 OWL") == 0) {
+        return rgb565(0x00, 0x97, 0xD6);
+      }
+      if (strcmp(routeId, "B1") == 0 || strcmp(routeId, "B2") == 0 || strcmp(routeId, "B3") == 0 ||
+          strcmp(routeId, "B1 OWL") == 0) {
+        return kSeptaBroadStreetColor;
+      }
+      if (strcmp(routeId, "M1") == 0 || strcmp(routeId, "M1 BUS") == 0) {
+        return kSeptaNhslPurple;
+      }
+      if (strcmp(routeId, "T BUS") == 0 || strcmp(routeId, "T5 BUS") == 0) {
+        return kSeptaTrolleyGreen;
+      }
+      if (strcmp(routeId, "D1 BUS") == 0 || strcmp(routeId, "D2 BUS") == 0) {
+        return kSeptaMediaSharonHillPink;
+      }
       return kSeptaBusColor;
     }
 

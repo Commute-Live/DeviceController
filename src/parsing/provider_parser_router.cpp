@@ -21,7 +21,8 @@ bool is_supported_provider_id(const String &provider) {
          p == "mbta" ||
          p == "cta-subway" ||
          p == "septa-rail" ||
-         p == "septa-bus";
+         p == "septa-bus" ||
+         p == "septa-trolley";
 }
 
 bool parse_provider_payload(const String &provider, const String &message, ProviderPayload &out) {
@@ -45,6 +46,9 @@ bool parse_provider_payload(const String &provider, const String &message, Provi
     return parse_septa_rail_payload(message, out);
   }
   if (p == "septa-bus") {
+    return parse_septa_bus_payload(message, out);
+  }
+  if (p == "septa-trolley") {
     return parse_septa_bus_payload(message, out);
   }
 

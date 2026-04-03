@@ -1,5 +1,6 @@
 #include "core/layout_engine.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -77,6 +78,113 @@ const char *row_label_for_display_type(const TransitRowModel &row) {
     return row.direction;
   }
   return row.destination[0] ? row.destination : "-";
+}
+
+bool is_septa_provider(const char *providerId) {
+  return providerId &&
+         (strcmp(providerId, "septa-rail") == 0 || strcmp(providerId, "septa-bus") == 0 ||
+          strcmp(providerId, "septa-trolley") == 0);
+}
+
+bool is_nyc_rail_bar_provider(const char *providerId) {
+  return providerId &&
+         (strcmp(providerId, "mta-lirr") == 0 || strcmp(providerId, "mta-mnr") == 0);
+}
+
+const char *copy_upper_trimmed(const char *src, char *out, size_t outLen) {
+  if (!out || outLen == 0) return "";
+  out[0] = '\0';
+  if (!src) return out;
+
+  size_t j = 0;
+  for (size_t i = 0; src[i] != '\0' && j + 1 < outLen; ++i) {
+    const char c = src[i];
+    if (c == ' ' || c == '-' || c == '_') continue;
+    out[j++] = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+  }
+  out[j] = '\0';
+  return out;
+}
+
+const char *septa_badge_text(const TransitRowModel &row, char *out, size_t outLen) {
+  const char *routeId = row.routeId;
+  if (!routeId || routeId[0] == '\0') {
+    return copy_upper_trimmed("--", out, outLen);
+  }
+
+  char compact[kMaxRouteIdLen];
+  copy_upper_trimmed(routeId, compact, sizeof(compact));
+
+  if (strcmp(row.providerId, "septa-rail") == 0) {
+    strncpy(out, compact, outLen - 1);
+    out[outLen - 1] = '\0';
+    return out;
+  }
+
+  if (strcmp(compact, "G1") == 0) {
+    return copy_upper_trimmed("G", out, outLen);
+  }
+  if (strcmp(compact, "TBUS") == 0) {
+    return copy_upper_trimmed("T", out, outLen);
+  }
+  if (strcmp(compact, "T5BUS") == 0) {
+    return copy_upper_trimmed("T5", out, outLen);
+  }
+  if (strcmp(compact, "D1BUS") == 0 || strcmp(compact, "D1") == 0) {
+    return copy_upper_trimmed("D1", out, outLen);
+  }
+  if (strcmp(compact, "D2BUS") == 0 || strcmp(compact, "D2") == 0) {
+    return copy_upper_trimmed("D2", out, outLen);
+  }
+  if (strcmp(compact, "M1") == 0 || strcmp(compact, "M1BUS") == 0) {
+    return copy_upper_trimmed("M", out, outLen);
+  }
+  if (strcmp(compact, "L1") == 0 || strcmp(compact, "L1OWL") == 0) {
+    return copy_upper_trimmed("L", out, outLen);
+  }
+  if (strcmp(compact, "B1") == 0 || strcmp(compact, "B2") == 0 || strcmp(compact, "B3") == 0 ||
+      strcmp(compact, "B1OWL") == 0) {
+    return copy_upper_trimmed("B", out, outLen);
+  }
+  if (compact[0] == 'T' && isdigit(static_cast<unsigned char>(compact[1])) && compact[2] == '\0') {
+    strncpy(out, compact, outLen - 1);
+    out[outLen - 1] = '\0';
+    return out;
+  }
+
+  strncpy(out, compact, outLen - 1);
+  out[outLen - 1] = '\0';
+  return out;
+}
+
+int16_t septa_badge_width(const TransitRowModel &row, int16_t badgeHeight) {
+  char badgeLabel[8];
+  const char *label = septa_badge_text(row, badgeLabel, sizeof(badgeLabel));
+  const size_t len = strnlen(label, sizeof(badgeLabel));
+
+  int16_t width = badgeHeight;
+  if (len >= 2) width = static_cast<int16_t>(width + 4);
+  if (len >= 3) width = static_cast<int16_t>(width + 4);
+  if (len >= 4) width = static_cast<int16_t>(width + 4);
+  if (width < badgeHeight) width = badgeHeight;
+  if (width > 24) width = 24;
+  return width;
+}
+
+int16_t max_septa_badge_width(const RenderModel &model, int16_t badgeHeight) {
+  int16_t width = badgeHeight;
+  uint8_t rowCount = model.activeRows;
+  if (rowCount < 1) rowCount = 1;
+  if (rowCount > kMaxTransitRows) rowCount = kMaxTransitRows;
+
+  for (uint8_t i = 0; i < rowCount; ++i) {
+    const TransitRowModel &row = model.rows[i];
+    if (!is_septa_provider(row.providerId)) continue;
+    const int16_t candidate = septa_badge_width(row, badgeHeight);
+    if (candidate > width) width = candidate;
+  }
+
+  return width;
 }
 
 uint16_t eta_color(const char *eta) {
@@ -231,7 +339,10 @@ bool LayoutEngine::compute_transit_row_geometry(const RenderModel &model,
   const int16_t rowY =
       out.frame.yStart > 0 ? static_cast<int16_t>(out.frame.yStart + preset->rowYNudge) : out.frame.yStart;
   display::RowFrame rowFrame{rowY, out.frame.height};
-  out.layout = rowLayout_.compute_row_layout(static_cast<int16_t>(width_), rowFrame, fixedBadgeSize, rowFont, kEtaChars);
+  const int16_t badgeWidth =
+      is_septa_provider(row.providerId) ? max_septa_badge_width(model, fixedBadgeSize) : fixedBadgeSize;
+  out.layout =
+      rowLayout_.compute_row_layout(static_cast<int16_t>(width_), rowFrame, fixedBadgeSize, badgeWidth, rowFont, kEtaChars);
 
   out.badgeX = out.layout.badgeX > 0 ? static_cast<int16_t>(out.layout.badgeX + preset->rowXShift) : out.layout.badgeX;
   out.destinationX =
@@ -539,10 +650,8 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
 
     const uint8_t normalizedDisplayType = rowGeometry.normalizedDisplayType;
     const bool hasRoute = row.routeId[0] != '\0' && strcmp(row.routeId, "--") != 0;
-    const bool isNycRailBar =
-        strcmp(row.providerId, "mta-lirr") == 0 || strcmp(row.providerId, "mta-mnr") == 0 ||
-        strcmp(row.providerId, "septa-rail") == 0 || strcmp(row.providerId, "septa-bus") == 0 ||
-        strcmp(row.providerId, "septa-trolley") == 0;
+    const bool isNycRailBar = is_nyc_rail_bar_provider(row.providerId);
+    const bool isSeptaBadge = is_septa_provider(row.providerId);
 
     if (isNycRailBar) {
       const int16_t badgeSize = rowGeometry.layout.badgeSize;
@@ -565,6 +674,28 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
       railBar.text = nullptr;
       railBar.bitmap = nullptr;
       out.push(railBar);
+    } else if (isSeptaBadge) {
+      char badgeLabel[8];
+      const char *resolvedBadgeLabel = septa_badge_text(row, badgeLabel, sizeof(badgeLabel));
+      const int16_t badgeY = static_cast<int16_t>(rowGeometry.layout.badgeY + 1);
+      const int16_t badgeH =
+          rowGeometry.layout.badgeSize > 2 ? static_cast<int16_t>(rowGeometry.layout.badgeSize - 2)
+                                           : rowGeometry.layout.badgeSize;
+
+      DrawCommand badge{};
+      badge.type = DrawCommandType::kRectBadge;
+      badge.x = rowGeometry.badgeX;
+      badge.y = badgeY;
+      badge.w = rowGeometry.layout.badgeWidth;
+      badge.h = badgeH;
+      badge.color = transit::MtaColorMap::color_for_provider_route(
+          row.providerId,
+          hasRoute ? row.routeId : "");
+      badge.bg = kColorBlack;
+      badge.size = rowGeometry.etaFont;
+      badge.text = out.copy_text(resolvedBadgeLabel);
+      badge.bitmap = nullptr;
+      out.push(badge);
     } else {
       DrawCommand badge{};
       badge.type = DrawCommandType::kBadge;

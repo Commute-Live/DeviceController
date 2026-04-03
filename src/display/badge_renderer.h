@@ -18,6 +18,13 @@ class BadgeRenderer final {
                   int16_t size,
                   const char *routeId,
                   uint16_t fillColor) const;
+  void draw_rect_badge(DisplayEngine &display,
+                       int16_t x,
+                       int16_t y,
+                       int16_t w,
+                       int16_t h,
+                       const char *label,
+                       uint16_t fill) const;
 
  private:
   int16_t corrected_radius(int16_t value, uint16_t aspectXQ8_8, uint16_t aspectYQ8_8) const;

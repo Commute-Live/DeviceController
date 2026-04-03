@@ -129,4 +129,34 @@ void BadgeRenderer::draw_badge(DisplayEngine &display,
   display.draw_text_transparent(tx, ty, textBuf, badge_text_color(fill), textSize);
 }
 
+void BadgeRenderer::draw_rect_badge(DisplayEngine &display,
+                                    int16_t x,
+                                    int16_t y,
+                                    int16_t w,
+                                    int16_t h,
+                                    const char *label,
+                                    uint16_t fill) const {
+  if (w <= 0 || h <= 0 || !label || label[0] == '\0') return;
+
+  display.fill_rect(x, y, w, h, fill);
+
+  uint8_t textSize = 1;
+  const size_t labelLen = strnlen(label, 8);
+  if (labelLen <= 1 && h >= 10) {
+    textSize = 2;
+  }
+
+  TextMetrics tm = display.measure_text(label, textSize);
+  while (textSize > 1 && (tm.width > static_cast<int16_t>(w - 4) || tm.height > static_cast<int16_t>(h - 4))) {
+    --textSize;
+    tm = display.measure_text(label, textSize);
+  }
+
+  const int16_t cx = static_cast<int16_t>(x + (w / 2));
+  const int16_t cy = static_cast<int16_t>(y + (h / 2));
+  const int16_t tx = static_cast<int16_t>(cx - (tm.width / 2) - tm.xOffset);
+  const int16_t ty = static_cast<int16_t>(cy - (tm.height / 2) - tm.yOffset);
+  display.draw_text_transparent(tx, ty, label, badge_text_color(fill), textSize);
+}
+
 }  // namespace display

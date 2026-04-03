@@ -13,6 +13,7 @@ enum class DrawCommandType : uint8_t {
   kFillRect,
   kText,
   kBadge,
+  kRectBadge,
   kMonoBitmap,
 };
 

@@ -5,6 +5,7 @@ namespace display {
 RowLayout LayoutEngine::compute_row_layout(int16_t totalWidth,
                                            const RowFrame &frame,
                                            int16_t fixedBadgeSize,
+                                           int16_t fixedBadgeWidth,
                                            uint8_t textSize,
                                            uint8_t etaChars) const {
   RowLayout out{};
@@ -13,11 +14,13 @@ RowLayout LayoutEngine::compute_row_layout(int16_t totalWidth,
 
   int16_t badgeSize = fixedBadgeSize;
   if (badgeSize < 5) badgeSize = 5;
+  int16_t badgeWidth = fixedBadgeWidth;
+  if (badgeWidth < badgeSize) badgeWidth = badgeSize;
 
   const int16_t etaWidth = static_cast<int16_t>(etaChars * 6 * textSize);
   const int16_t badgeX = kOuterMargin;
   const int16_t badgeY = static_cast<int16_t>(frame.yStart + ((frame.height - badgeSize) / 2));
-  const int16_t leftZoneWidth = static_cast<int16_t>(badgeSize + kInnerGap);
+  const int16_t leftZoneWidth = static_cast<int16_t>(badgeWidth + kInnerGap);
   const int16_t etaX = static_cast<int16_t>(totalWidth - kOuterMargin - etaWidth);
   const int16_t destinationX = static_cast<int16_t>(badgeX + leftZoneWidth);
   int16_t destinationWidth = static_cast<int16_t>(etaX - destinationX - kInnerGap);
@@ -30,6 +33,7 @@ RowLayout LayoutEngine::compute_row_layout(int16_t totalWidth,
   out.badgeX = badgeX;
   out.badgeY = badgeY;
   out.badgeSize = badgeSize;
+  out.badgeWidth = badgeWidth;
   out.destinationX = destinationX;
   out.destinationWidth = destinationWidth;
   out.etaX = etaX;

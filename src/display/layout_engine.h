@@ -13,6 +13,7 @@ struct RowLayout {
   int16_t badgeX;
   int16_t badgeY;
   int16_t badgeSize;
+  int16_t badgeWidth;
   int16_t destinationX;
   int16_t destinationWidth;
   int16_t etaX;
@@ -28,6 +29,7 @@ class LayoutEngine final {
   RowLayout compute_row_layout(int16_t totalWidth,
                                const RowFrame &frame,
                                int16_t fixedBadgeSize,
+                               int16_t badgeWidth,
                                uint8_t textSize,
                                uint8_t etaChars) const;
 };
