@@ -3,8 +3,6 @@
 #include <ctype.h>
 #include <string.h>
 
-#include "transit/mta_color_map.h"
-
 namespace display {
 
 namespace {
@@ -94,7 +92,8 @@ void BadgeRenderer::draw_badge(DisplayEngine &display,
                                int16_t x,
                                int16_t y,
                                int16_t size,
-                               const char *routeId) const {
+                               const char *routeId,
+                               uint16_t fillColor) const {
   if (size <= 0) return;
 
   int16_t badgeSize = size;
@@ -104,7 +103,7 @@ void BadgeRenderer::draw_badge(DisplayEngine &display,
   if (r < 1) r = 1;
   const int16_t cx = static_cast<int16_t>(x + (badgeSize / 2));
   const int16_t cy = static_cast<int16_t>(y + (badgeSize / 2));
-  const uint16_t fill = transit::MtaColorMap::color_for_route(routeId);
+  const uint16_t fill = fillColor;
 
   fill_circle_midpoint(display, cx, cy, r, fill);
 

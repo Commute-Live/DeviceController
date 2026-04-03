@@ -572,7 +572,9 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
       badge.y = rowGeometry.layout.badgeY;
       badge.w = rowGeometry.layout.badgeSize;
       badge.h = rowGeometry.layout.badgeSize;
-      badge.color = kColorWhite;
+      badge.color = transit::MtaColorMap::color_for_provider_route(
+          row.providerId,
+          hasRoute ? row.routeId : "");
       badge.bg = kColorBlack;
       badge.size = rowGeometry.etaFont;
       badge.text = trim_for_width(hasRoute ? row.routeId : "--", 2, out);

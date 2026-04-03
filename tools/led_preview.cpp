@@ -730,7 +730,7 @@ int run_preview(const PreviewOptions &options) {
         display.draw_text(cmd.x, cmd.y, cmd.text, cmd.color, cmd.size, cmd.bg);
         break;
       case core::DrawCommandType::kBadge:
-        badgeRenderer.draw_badge(display, cmd.x, cmd.y, cmd.w, cmd.text);
+        badgeRenderer.draw_badge(display, cmd.x, cmd.y, cmd.w, cmd.text, cmd.color);
         break;
       case core::DrawCommandType::kMonoBitmap:
         if (!cmd.bitmap || cmd.w <= 0 || cmd.h <= 0) {

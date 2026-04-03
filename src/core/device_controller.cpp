@@ -15,7 +15,7 @@
 #include "network/wifi_manager.h"
 
 #ifndef JACK_LEI
-#define JACK_LEI false
+#define JACK_LEI true
 #endif
 
 #ifndef COMMUTELIVE_FIRMWARE_VERSION
@@ -1538,7 +1538,7 @@ void DeviceController::render_frame(uint32_t nowMs) {
         deps_.displayEngine->draw_text(cmd.x, cmd.y, cmd.text, cmd.color, cmd.size, cmd.bg);
         break;
       case DrawCommandType::kBadge:
-        gBadgeRenderer.draw_badge(*deps_.displayEngine, cmd.x, cmd.y, cmd.w, cmd.text);
+        gBadgeRenderer.draw_badge(*deps_.displayEngine, cmd.x, cmd.y, cmd.w, cmd.text, cmd.color);
         break;
       case DrawCommandType::kMonoBitmap:
         if (!cmd.bitmap || cmd.w <= 0 || cmd.h <= 0) {

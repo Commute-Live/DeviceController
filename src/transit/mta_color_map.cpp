@@ -13,6 +13,11 @@ constexpr uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
                                (b >> 3));
 }
 
+struct AliasRouteColorEntry {
+  const char *aliases;
+  uint16_t color565;
+};
+
 // Official MTA route family colors encoded as RGB565.
 static constexpr RouteColorEntry kRouteColorTable[] = {
     {"ACE", rgb565(0x00, 0x39, 0xA6)},
@@ -79,6 +84,26 @@ static constexpr RouteColorEntry kSeptaTrolleyColorTable[] = {
 };
 
 static constexpr uint16_t kSeptaBusColor = rgb565(0x00, 0x5D, 0xAA);
+static constexpr uint16_t kCtaBusFallbackColor = rgb565(0x99, 0x99, 0x9C);
+
+static constexpr AliasRouteColorEntry kCtaSubwayColorTable[] = {
+    {"BLUE|BLUELINE", rgb565(0x00, 0xA1, 0xDE)},
+    {"BRN|BROWN|BROWNLINE", rgb565(0x62, 0x36, 0x1B)},
+    {"G|GREEN|GREENLINE", rgb565(0x00, 0x9B, 0x3A)},
+    {"ORG|ORANGE|ORANGELINE", rgb565(0xF9, 0x46, 0x1C)},
+    {"P|PURPLE|PURPLELINE", rgb565(0x52, 0x23, 0x98)},
+    {"PINK|PINKLINE", rgb565(0xE2, 0x7E, 0xA6)},
+    {"R|RED|REDLINE", rgb565(0xC6, 0x0C, 0x30)},
+    {"Y|YELLOW|YELLOWLINE", rgb565(0xF9, 0xE3, 0x00)},
+};
+
+static constexpr AliasRouteColorEntry kCtaBusColorTable[] = {
+    {"100|120|121|125|134|135|136|143|146|147|148|2|26|6|X4|X49|X9", rgb565(0xB7, 0x12, 0x34)},
+    {"12|20|34|4|47|49|53|54|55|60|63|66|72|77|79|81|82|9|95", rgb565(0x41, 0x41, 0x45)},
+    {"J14", rgb565(0x00, 0x65, 0xBD)},
+    {"1|103|106|108|11|111|111A|112|115|119|124|126|15|151|152|155|156|157|165|169|171|172|18|192|201|206|21|22|24|28|29|3|30|31|35|36|37|39|43|44|48|49B|50|51|52|52A|53A|54A|54B|55A|55N|56|57|59|62|62H|63W|65|67|68|7|70|71|73|74|75|76|78|8|80|81W|84|85|85A|86|87|88|8A|90|91|92|93|94|96|97|N5",
+     rgb565(0x99, 0x99, 0x9C)},
+};
 
 char normalize_route_char(const char *routeId) {
   if (!routeId) return '\0';
@@ -90,6 +115,55 @@ char normalize_route_char(const char *routeId) {
     return static_cast<char>(toupper(static_cast<unsigned char>(c)));
   }
   return '\0';
+}
+
+void normalize_route_token(const char *routeId, char *out, size_t outLen) {
+  if (!out || outLen == 0) return;
+  out[0] = '\0';
+  if (!routeId) return;
+
+  size_t j = 0;
+  for (size_t i = 0; routeId[i] != '\0' && j + 1 < outLen; ++i) {
+    const unsigned char c = static_cast<unsigned char>(routeId[i]);
+    if (!isalnum(c)) continue;
+    out[j++] = static_cast<char>(toupper(c));
+  }
+  out[j] = '\0';
+}
+
+bool token_matches_alias_list(const char *routeId, const char *aliases) {
+  if (!aliases) return false;
+
+  char normalized[32];
+  normalize_route_token(routeId, normalized, sizeof(normalized));
+  if (normalized[0] == '\0') {
+    return false;
+  }
+
+  const char *cursor = aliases;
+  while (*cursor != '\0') {
+    const char *sep = strchr(cursor, '|');
+    const size_t aliasLen = sep ? static_cast<size_t>(sep - cursor) : strlen(cursor);
+    if (aliasLen == strlen(normalized) && strncmp(cursor, normalized, aliasLen) == 0) {
+      return true;
+    }
+    if (!sep) break;
+    cursor = sep + 1;
+  }
+
+  return false;
+}
+
+uint16_t color_from_alias_table(const AliasRouteColorEntry *table,
+                                size_t count,
+                                const char *routeId,
+                                uint16_t fallbackColor) {
+  for (size_t i = 0; i < count; ++i) {
+    if (token_matches_alias_list(routeId, table[i].aliases)) {
+      return table[i].color565;
+    }
+  }
+  return fallbackColor;
 }
 
 }  // namespace
@@ -153,6 +227,20 @@ uint16_t MtaColorMap::color_for_provider_route(const char *providerId, const cha
 
     if (strcmp(providerId, "septa-bus") == 0) {
       return kSeptaBusColor;
+    }
+
+    if (strcmp(providerId, "cta-subway") == 0) {
+      return color_from_alias_table(kCtaSubwayColorTable,
+                                    sizeof(kCtaSubwayColorTable) / sizeof(kCtaSubwayColorTable[0]),
+                                    routeId,
+                                    kFallbackColor);
+    }
+
+    if (strcmp(providerId, "cta-bus") == 0) {
+      return color_from_alias_table(kCtaBusColorTable,
+                                    sizeof(kCtaBusColorTable) / sizeof(kCtaBusColorTable[0]),
+                                    routeId,
+                                    kCtaBusFallbackColor);
     }
   }
 

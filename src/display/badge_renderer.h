@@ -12,7 +12,12 @@ class BadgeRenderer final {
   static constexpr uint16_t kAspectXQ8_8 = 256;  // 1.0
   static constexpr uint16_t kAspectYQ8_8 = 256;  // 1.0
 
-  void draw_badge(DisplayEngine &display, int16_t x, int16_t y, int16_t size, const char *routeId) const;
+  void draw_badge(DisplayEngine &display,
+                  int16_t x,
+                  int16_t y,
+                  int16_t size,
+                  const char *routeId,
+                  uint16_t fillColor) const;
 
  private:
   int16_t corrected_radius(int16_t value, uint16_t aspectXQ8_8, uint16_t aspectYQ8_8) const;
