@@ -292,6 +292,14 @@ uint8_t extract_row_display_type(const String &message, uint8_t rowIndex, uint8_
   return clamp_display_type(extract_json_int_field(item, "displayType", fallbackDisplayType));
 }
 
+bool extract_row_scrolling(const String &message, uint8_t rowIndex, bool fallback) {
+  String item;
+  if (!extract_lines_object_at(message, rowIndex, item)) {
+    return fallback;
+  }
+  return extract_json_bool_field(item, "scrolling", fallback);
+}
+
 String extract_row_display_label(const String &message, uint8_t rowIndex) {
   String item;
   if (extract_lines_object_at(message, rowIndex, item)) {
@@ -632,8 +640,7 @@ DeviceController::DeviceController(const Dependencies &deps)
       pendingMqttDisconnectLog_(false),
       pendingRenderMode_(RenderMode::kFull),
       etaDirtyRowMask_(0),
-      scrollState_{},
-      scrollEnabled_(false) {
+      scrollState_{} {
   memset(&renderModel_, 0, sizeof(renderModel_));
   memset(scrollState_, 0, sizeof(scrollState_));
   memset(pendingProvisionToken_, 0, sizeof(pendingProvisionToken_));
@@ -1058,6 +1065,7 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   copy_str(nextModel.rows[0].routeId, sizeof(nextModel.rows[0].routeId),
            parsed.row1.line.length() ? parsed.row1.line.c_str() : "--");
   nextModel.rows[0].displayType = row1DisplayType;
+  nextModel.rows[0].scrollEnabled = extract_row_scrolling(message, 0, scrolling);
   copy_str(nextModel.rows[0].direction, sizeof(nextModel.rows[0].direction),
            row1Direction.c_str());
   copy_str(nextModel.rows[0].destination, sizeof(nextModel.rows[0].destination),
@@ -1074,6 +1082,7 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
     copy_str(nextModel.rows[1].routeId, sizeof(nextModel.rows[1].routeId),
              parsed.row2.line.length() ? parsed.row2.line.c_str() : "--");
     nextModel.rows[1].displayType = row2DisplayType;
+    nextModel.rows[1].scrollEnabled = extract_row_scrolling(message, 1, scrolling);
     copy_str(nextModel.rows[1].direction, sizeof(nextModel.rows[1].direction),
              row2Direction.c_str());
     copy_str(nextModel.rows[1].destination, sizeof(nextModel.rows[1].destination),
@@ -1135,6 +1144,7 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
       copy_str(nextModel.rows[i].routeId, sizeof(nextModel.rows[i].routeId),
                nextModel.rows[0].routeId);
       nextModel.rows[i].displayType = nextModel.rows[0].displayType;
+      nextModel.rows[i].scrollEnabled = nextModel.rows[0].scrollEnabled;
       copy_str(nextModel.rows[i].direction, sizeof(nextModel.rows[i].direction),
                nextModel.rows[0].direction);
       copy_str(nextModel.rows[i].destination, sizeof(nextModel.rows[i].destination),
@@ -1155,7 +1165,6 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
 
   nextModel.hasData = true;
   nextModel.displayType = displayType;
-  nextModel.scrollEnabled = scrolling;
   nextModel.uiState = UiState::kTransit;
   nextModel.updatedAtMs = millis();
 
@@ -1163,11 +1172,9 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   const RenderMode nextRenderMode =
       classify_render_mode(renderModel_, nextModel, runtimeConfig_.display.doubleBuffered, etaDirtyRows);
 
-  // Reset scroll state when destination text or scroll setting changes
-  const bool scrollSettingChanged = scrolling != scrollEnabled_;
-  scrollEnabled_ = scrolling;
+  // Reset scroll state when destination text or per-row scroll setting changes
   for (uint8_t i = 0; i < kMaxTransitRows; ++i) {
-    if (scrollSettingChanged ||
+    if (renderModel_.rows[i].scrollEnabled != nextModel.rows[i].scrollEnabled ||
         strcmp(renderModel_.rows[i].destination, nextModel.rows[i].destination) != 0 ||
         strcmp(renderModel_.rows[i].direction,   nextModel.rows[i].direction)   != 0) {
       reset_scroll_state(i);
@@ -1352,10 +1359,11 @@ void DeviceController::reset_scroll_state(uint8_t rowIndex) {
 }
 
 void DeviceController::tick_scroll(uint32_t nowMs) {
-  if (!scrollEnabled_ || renderModel_.uiState != UiState::kTransit) return;
+  if (renderModel_.uiState != UiState::kTransit) return;
 
   bool anyActive = false;
   for (uint8_t i = 0; i < renderModel_.activeRows; ++i) {
+    if (!renderModel_.rows[i].scrollEnabled) continue;
     RowScrollState &s = scrollState_[i];
 
     // Measure text width on first tick for this row

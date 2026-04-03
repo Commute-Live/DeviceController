@@ -72,7 +72,6 @@ class DeviceController final {
   RenderMode pendingRenderMode_;
   uint8_t etaDirtyRowMask_;
   RowScrollState scrollState_[kMaxTransitRows];
-  bool scrollEnabled_;
   char pendingCrashReportMetadata_[256];
   static DeviceController *activeController_;
 
