@@ -1256,7 +1256,6 @@ void DeviceController::handle_display_blank_command(const String &message,
 
   renderModel_.hasData = false;
   renderModel_.uiState = UiState::kBlank;
-  renderModel_.scrollEnabled = false;
   renderModel_.displayType = kMinDisplayType;
   renderModel_.activeRows = 0;
   renderModel_.updatedAtMs = millis();
@@ -1266,7 +1265,6 @@ void DeviceController::handle_display_blank_command(const String &message,
     clear_row(renderModel_.rows[i]);
     reset_scroll_state(i);
   }
-  scrollEnabled_ = false;
 
   runtimeConfig_.display.brightness = panelBrightness;
   deps_.displayEngine->set_brightness(panelBrightness);
