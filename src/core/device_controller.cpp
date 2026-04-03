@@ -542,6 +542,8 @@ const char *ui_state_name(UiState state) {
       return "kWifiOkNoMqtt";
     case UiState::kConnectedWaitingData:
       return "kConnectedWaitingData";
+    case UiState::kBlank:
+      return "kBlank";
     case UiState::kTransit:
       return "kTransit";
     default:
@@ -1007,6 +1009,11 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
     return;
   }
 
+  if (cmdType == "display_blank") {
+    handle_display_blank_command(message, brightnessPercent, panelBrightness);
+    return;
+  }
+
   String provider = extract_json_string_field(message, "provider");
   if (provider.length() == 0 || !parsing::is_supported_provider_id(provider)) {
     DCTRL_LOGW("MQTT", "Ignoring payload because provider is unsupported provider=%s", provider.c_str());
@@ -1226,6 +1233,43 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   publish_display_state();
 }
 
+void DeviceController::handle_display_blank_command(const String &message,
+                                                    uint8_t brightnessPercent,
+                                                    uint8_t panelBrightness) {
+  const String reason = extract_json_string_field(message, "reason");
+
+  renderModel_.hasData = false;
+  renderModel_.uiState = UiState::kBlank;
+  renderModel_.scrollEnabled = false;
+  renderModel_.displayType = kMinDisplayType;
+  renderModel_.activeRows = 0;
+  renderModel_.updatedAtMs = millis();
+  if (reason == "quiet_hours") {
+    copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "QUIET HOURS");
+    copy_str(renderModel_.statusDetail, sizeof(renderModel_.statusDetail), "Display paused");
+  } else {
+    copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "DISPLAY BLANK");
+    copy_str(renderModel_.statusDetail, sizeof(renderModel_.statusDetail),
+             reason.length() ? reason.c_str() : "Blank command");
+  }
+  for (uint8_t i = 0; i < kMaxTransitRows; ++i) {
+    clear_row(renderModel_.rows[i]);
+    reset_scroll_state(i);
+  }
+  scrollEnabled_ = false;
+
+  runtimeConfig_.display.brightness = panelBrightness;
+  deps_.displayEngine->set_brightness(panelBrightness);
+
+  schedule_full_render();
+  DCTRL_LOGI("MQTT",
+             "Applied display blank reason=%s brightness=%u%% panel=%u",
+             reason.length() ? reason.c_str() : "(none)",
+             static_cast<unsigned>(brightnessPercent),
+             static_cast<unsigned>(panelBrightness));
+  publish_display_state();
+}
+
 void DeviceController::handle_disconnect_wifi_command(const String &message) {
   const String reason = extract_json_string_field(message, "reason");
   const bool clearCredentials = extract_json_bool_field(message, "clearCredentials", false);
@@ -1413,7 +1457,8 @@ void DeviceController::update_ui_state() {
   const bool wifiUp = deps_.networkManager->is_connected();
   const bool mqttUp = deps_.mqttClient->connected();
 
-  if (renderModel_.hasData && wifiUp && mqttUp) {
+  if (renderModel_.uiState == UiState::kBlank && !renderModel_.hasData) {
+  } else if (renderModel_.hasData && wifiUp && mqttUp) {
     renderModel_.uiState = UiState::kTransit;
     copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "TRANSIT");
     copy_str(renderModel_.statusDetail, sizeof(renderModel_.statusDetail), "Live arrivals");
