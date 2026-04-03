@@ -1173,15 +1173,23 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
       classify_render_mode(renderModel_, nextModel, runtimeConfig_.display.doubleBuffered, etaDirtyRows);
 
   // Reset scroll state when destination text or per-row scroll setting changes
+  bool anyScrollReset = false;
   for (uint8_t i = 0; i < kMaxTransitRows; ++i) {
     if (renderModel_.rows[i].scrollEnabled != nextModel.rows[i].scrollEnabled ||
         strcmp(renderModel_.rows[i].destination, nextModel.rows[i].destination) != 0 ||
         strcmp(renderModel_.rows[i].direction,   nextModel.rows[i].direction)   != 0) {
       reset_scroll_state(i);
+      anyScrollReset = true;
     }
   }
 
   renderModel_ = nextModel;
+
+  // If scroll state was reset (e.g. scroll toggled off), force full redraw so text
+  // renders at offset 0 (truncated/cutoff) instead of frozen at mid-scroll position
+  if (anyScrollReset) {
+    schedule_full_render();
+  }
 
   runtimeConfig_.display.brightness = panelBrightness;
   deps_.displayEngine->set_brightness(panelBrightness);
@@ -1389,8 +1397,8 @@ void DeviceController::tick_scroll(uint32_t nowMs) {
     // Advance offset
     s.offset = static_cast<int16_t>(s.offset - 1);
 
-    // When entire text has scrolled off, loop back
-    if (-s.offset >= s.textPixelWidth + kScrollGapPx) {
+    // When end of text reaches right edge of destination zone, pause then reset
+    if (-s.offset >= s.textPixelWidth - s.budgetWidth) {
       s.offset = 0;
       s.pauseUntilMs = nowMs + kScrollLoopPauseMs;
     }
