@@ -35,6 +35,7 @@ class DeviceController final {
     int16_t textPixelWidth; // measured pixel width of destination text
     int16_t budgetWidth;    // available pixel width for destination text
     uint32_t pauseUntilMs; // don't advance offset until this time
+    bool resetPending;      // true when we've reached the end and are pausing before jumping back
     bool active;            // true when text overflows and scrolling is enabled
   };
 

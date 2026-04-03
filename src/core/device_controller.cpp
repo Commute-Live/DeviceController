@@ -39,9 +39,10 @@ constexpr uint32_t kLowHeapWarningEveryMs = 60000;
 constexpr uint32_t kCrashBreadcrumbPersistEveryMs = 30000;
 constexpr uint32_t kLowHeapWarningThresholdBytes = 32768;
 constexpr uint32_t kMinRenderGapMs = 40;
-constexpr uint32_t kScrollStepMs = 50;       // advance 1px every 50ms (~20px/sec)
+constexpr uint32_t kScrollStepMs = 65;       // advance 1px every 65ms (~15px/sec)
 constexpr uint32_t kScrollStartPauseMs = 1500; // pause before first scroll
-constexpr uint32_t kScrollLoopPauseMs = 800;  // pause after text loops back
+constexpr uint32_t kScrollLoopPauseMs = 2500;  // pause at the end before text jumps back
+constexpr int16_t kScrollEtaSafetyGapPx = 4;   // keep scrolled text clear of the ETA column
 constexpr int16_t kScrollGapPx = 16;          // gap between end and restart of text
 constexpr uint8_t kMinDisplayType = 1;
 constexpr uint8_t kMaxDisplayType = 5;
@@ -1407,6 +1408,7 @@ void DeviceController::reset_scroll_state(uint8_t rowIndex) {
   scrollState_[rowIndex].textPixelWidth = 0;
   scrollState_[rowIndex].budgetWidth = 0;
   scrollState_[rowIndex].pauseUntilMs = 0;
+  scrollState_[rowIndex].resetPending = false;
   scrollState_[rowIndex].active = false;
 }
 
@@ -1414,6 +1416,12 @@ void DeviceController::tick_scroll(uint32_t nowMs) {
   if (renderModel_.uiState != UiState::kTransit) return;
 
   bool anyActive = false;
+  bool scrollActivationChanged = false;
+  uint8_t activeScrollRows[kMaxTransitRows];
+  uint8_t activeScrollCount = 0;
+  int8_t masterRowIndex = -1;
+  int16_t maxOverflowPx = -1;
+
   for (uint8_t i = 0; i < renderModel_.activeRows; ++i) {
     if (!renderModel_.rows[i].scrollEnabled) continue;
     RowScrollState &s = scrollState_[i];
@@ -1427,32 +1435,86 @@ void DeviceController::tick_scroll(uint32_t nowMs) {
           : renderModel_.rows[i].direction;
       const display::TextMetrics tm = deps_.displayEngine->measure_text(text, geom.destinationFont);
       s.textPixelWidth = static_cast<int16_t>(tm.width);
-      s.budgetWidth = geom.effectiveDestinationWidth;
+      s.budgetWidth = geom.effectiveDestinationWidth > kScrollEtaSafetyGapPx
+          ? static_cast<int16_t>(geom.effectiveDestinationWidth - kScrollEtaSafetyGapPx)
+          : geom.effectiveDestinationWidth;
       // Only activate scroll if text overflows
       s.active = s.textPixelWidth > s.budgetWidth;
       if (s.active) {
+        scrollActivationChanged = true;
         s.pauseUntilMs = nowMs + kScrollStartPauseMs;
       }
     }
 
     if (!s.active) continue;
-    if (nowMs < s.pauseUntilMs) { anyActive = true; continue; }
-
-    // Advance offset
-    s.offset = static_cast<int16_t>(s.offset - 1);
-
-    // When end of text reaches right edge of destination zone, pause then reset
-    if (-s.offset >= s.textPixelWidth - s.budgetWidth) {
-      s.offset = 0;
-      s.pauseUntilMs = nowMs + kScrollLoopPauseMs;
-    }
 
     anyActive = true;
+    activeScrollRows[activeScrollCount++] = i;
+    const int16_t overflowPx = static_cast<int16_t>(s.textPixelWidth - s.budgetWidth);
+    if (overflowPx > maxOverflowPx) {
+      maxOverflowPx = overflowPx;
+      masterRowIndex = static_cast<int8_t>(i);
+    }
   }
 
-  if (anyActive) {
-    schedule_scroll_render();
+  if (!anyActive || masterRowIndex < 0) {
+    return;
   }
+
+  auto advance_scroll_state = [&](RowScrollState &s) {
+    if (nowMs < s.pauseUntilMs) {
+      return;
+    }
+
+    if (s.resetPending) {
+      s.offset = 0;
+      s.resetPending = false;
+      s.pauseUntilMs = nowMs + kScrollLoopPauseMs;
+      return;
+    }
+
+    s.offset = static_cast<int16_t>(s.offset - 1);
+    if (-s.offset >= s.textPixelWidth - s.budgetWidth) {
+      s.offset = static_cast<int16_t>(s.budgetWidth - s.textPixelWidth);
+      s.resetPending = true;
+      s.pauseUntilMs = nowMs + kScrollLoopPauseMs;
+    }
+  };
+
+  if (activeScrollCount > 1 && scrollActivationChanged) {
+    for (uint8_t idx = 0; idx < activeScrollCount; ++idx) {
+      RowScrollState &s = scrollState_[activeScrollRows[idx]];
+      s.offset = 0;
+      s.pauseUntilMs = nowMs + kScrollStartPauseMs;
+      s.resetPending = false;
+    }
+    schedule_scroll_render();
+    return;
+  }
+
+  RowScrollState &master = scrollState_[masterRowIndex];
+  advance_scroll_state(master);
+
+  if (activeScrollCount > 1) {
+    for (uint8_t idx = 0; idx < activeScrollCount; ++idx) {
+      const uint8_t rowIndex = activeScrollRows[idx];
+      if (rowIndex == static_cast<uint8_t>(masterRowIndex)) continue;
+      RowScrollState &s = scrollState_[rowIndex];
+      const int16_t followerMinOffset = static_cast<int16_t>(s.budgetWidth - s.textPixelWidth);
+      int16_t syncedOffset = master.offset;
+      if (syncedOffset < followerMinOffset) {
+        syncedOffset = followerMinOffset;
+      }
+      if (syncedOffset > 0) {
+        syncedOffset = 0;
+      }
+      s.offset = syncedOffset;
+      s.pauseUntilMs = master.pauseUntilMs;
+      s.resetPending = master.resetPending;
+    }
+  }
+
+  schedule_scroll_render();
 }
 
 void DeviceController::schedule_no_render() {
@@ -1598,7 +1660,10 @@ void DeviceController::render_scroll_updates() {
     // are rendered — no pixels ever bleed into the badge or ETA areas.
     const int16_t charW = static_cast<int16_t>(6 * geom.destinationFont);
     const int16_t clipLeft = geom.destinationX;
-    const int16_t clipRight = static_cast<int16_t>(geom.destinationX + geom.effectiveDestinationWidth);
+    const int16_t clipWidth = geom.effectiveDestinationWidth > kScrollEtaSafetyGapPx
+        ? static_cast<int16_t>(geom.effectiveDestinationWidth - kScrollEtaSafetyGapPx)
+        : geom.effectiveDestinationWidth;
+    const int16_t clipRight = static_cast<int16_t>(geom.destinationX + clipWidth);
     int16_t cx = static_cast<int16_t>(geom.destinationX + s.offset);
     char buf[2] = {0, 0};
     for (const char *p = text; *p; ++p, cx = static_cast<int16_t>(cx + charW)) {
