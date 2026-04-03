@@ -27,6 +27,15 @@ class DeviceController final {
     kNone,
     kFull,
     kEtaOnly,
+    kScrollOnly,
+  };
+
+  struct RowScrollState {
+    int16_t offset;         // current pixel scroll offset (0 = no scroll, negative = scrolled left)
+    int16_t textPixelWidth; // measured pixel width of destination text
+    int16_t budgetWidth;    // available pixel width for destination text
+    uint32_t pauseUntilMs; // don't advance offset until this time
+    bool active;            // true when text overflows and scrolling is enabled
   };
 
   explicit DeviceController(const Dependencies &deps);
@@ -62,6 +71,8 @@ class DeviceController final {
   bool pendingMqttDisconnectLog_;
   RenderMode pendingRenderMode_;
   uint8_t etaDirtyRowMask_;
+  RowScrollState scrollState_[kMaxTransitRows];
+  bool scrollEnabled_;
   char pendingCrashReportMetadata_[256];
   static DeviceController *activeController_;
 
@@ -79,7 +90,11 @@ class DeviceController final {
   static void http_status_handler();
   void schedule_full_render();
   void schedule_eta_render(uint8_t rowMask);
+  void schedule_scroll_render();
   void schedule_no_render();
+  void tick_scroll(uint32_t nowMs);
+  void reset_scroll_state(uint8_t rowIndex);
+  void render_scroll_updates();
   void update_ui_state();
   void render_frame(uint32_t nowMs);
   void render_eta_updates();

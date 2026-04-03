@@ -81,6 +81,7 @@ struct TransitRowModel {
 struct RenderModel {
   UiState uiState;
   bool hasData;
+  bool scrollEnabled;
   uint8_t displayType;
   uint8_t activeRows;
   uint32_t updatedAtMs;

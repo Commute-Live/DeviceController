@@ -39,6 +39,10 @@ constexpr uint32_t kLowHeapWarningEveryMs = 60000;
 constexpr uint32_t kCrashBreadcrumbPersistEveryMs = 30000;
 constexpr uint32_t kLowHeapWarningThresholdBytes = 32768;
 constexpr uint32_t kMinRenderGapMs = 40;
+constexpr uint32_t kScrollStepMs = 50;       // advance 1px every 50ms (~20px/sec)
+constexpr uint32_t kScrollStartPauseMs = 1500; // pause before first scroll
+constexpr uint32_t kScrollLoopPauseMs = 800;  // pause after text loops back
+constexpr int16_t kScrollGapPx = 16;          // gap between end and restart of text
 constexpr uint8_t kMinDisplayType = 1;
 constexpr uint8_t kMaxDisplayType = 5;
 constexpr uint8_t kBrightnessFallbackPercent = JACK_LEI ? 80 : 60;
@@ -627,8 +631,11 @@ DeviceController::DeviceController(const Dependencies &deps)
       pendingWifiDisconnectLog_(false),
       pendingMqttDisconnectLog_(false),
       pendingRenderMode_(RenderMode::kFull),
-      etaDirtyRowMask_(0) {
+      etaDirtyRowMask_(0),
+      scrollState_{},
+      scrollEnabled_(false) {
   memset(&renderModel_, 0, sizeof(renderModel_));
+  memset(scrollState_, 0, sizeof(scrollState_));
   memset(pendingProvisionToken_, 0, sizeof(pendingProvisionToken_));
   memset(pendingProvisionServerUrl_, 0, sizeof(pendingProvisionServerUrl_));
   memset(pendingCrashReportMetadata_, 0, sizeof(pendingCrashReportMetadata_));
@@ -849,6 +856,7 @@ void DeviceController::tick(uint32_t nowMs) {
 
   persist_runtime_breadcrumbs(nowMs);
 
+  tick_scroll(nowMs);
   render_frame(nowMs);
 }
 
@@ -963,6 +971,7 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   const int arrivalsToDisplay = clamp_rows_to_display(extract_json_int_field(message, "arrivalsToDisplay", 1));
   const uint8_t displayType = clamp_display_type(extract_json_int_field(message, "displayType", 1));
   const uint8_t brightnessPercent = parse_brightness_percent(message, kBrightnessFallbackPercent);
+  const bool scrolling = extract_json_bool_field(message, "scrolling", false);
   const uint8_t panelBrightness = brightness_percent_to_panel(brightnessPercent);
   DCTRL_LOGI("MQTT", "Incoming command topic=%s len=%u", core::logging::safe_str(topic), static_cast<unsigned>(len));
   DCTRL_LOGI("MQTT", "Incoming payload=%s", message.c_str());
@@ -1146,12 +1155,25 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
 
   nextModel.hasData = true;
   nextModel.displayType = displayType;
+  nextModel.scrollEnabled = scrolling;
   nextModel.uiState = UiState::kTransit;
   nextModel.updatedAtMs = millis();
 
   uint8_t etaDirtyRows = 0;
   const RenderMode nextRenderMode =
       classify_render_mode(renderModel_, nextModel, runtimeConfig_.display.doubleBuffered, etaDirtyRows);
+
+  // Reset scroll state when destination text or scroll setting changes
+  const bool scrollSettingChanged = scrolling != scrollEnabled_;
+  scrollEnabled_ = scrolling;
+  for (uint8_t i = 0; i < kMaxTransitRows; ++i) {
+    if (scrollSettingChanged ||
+        strcmp(renderModel_.rows[i].destination, nextModel.rows[i].destination) != 0 ||
+        strcmp(renderModel_.rows[i].direction,   nextModel.rows[i].direction)   != 0) {
+      reset_scroll_state(i);
+    }
+  }
+
   renderModel_ = nextModel;
 
   runtimeConfig_.display.brightness = panelBrightness;
@@ -1311,6 +1333,68 @@ void DeviceController::schedule_eta_render(uint8_t rowMask) {
   etaDirtyRowMask_ = static_cast<uint8_t>(etaDirtyRowMask_ | rowMask);
 }
 
+void DeviceController::schedule_scroll_render() {
+  // Only upgrade to scroll render if no higher-priority render is pending
+  if (pendingRenderMode_ == RenderMode::kFull || pendingRenderMode_ == RenderMode::kEtaOnly) {
+    return;
+  }
+  renderDirty_ = true;
+  pendingRenderMode_ = RenderMode::kScrollOnly;
+}
+
+void DeviceController::reset_scroll_state(uint8_t rowIndex) {
+  if (rowIndex >= kMaxTransitRows) return;
+  scrollState_[rowIndex].offset = 0;
+  scrollState_[rowIndex].textPixelWidth = 0;
+  scrollState_[rowIndex].budgetWidth = 0;
+  scrollState_[rowIndex].pauseUntilMs = 0;
+  scrollState_[rowIndex].active = false;
+}
+
+void DeviceController::tick_scroll(uint32_t nowMs) {
+  if (!scrollEnabled_ || renderModel_.uiState != UiState::kTransit) return;
+
+  bool anyActive = false;
+  for (uint8_t i = 0; i < renderModel_.activeRows; ++i) {
+    RowScrollState &s = scrollState_[i];
+
+    // Measure text width on first tick for this row
+    if (s.textPixelWidth == 0) {
+      TransitRowGeometry geom{};
+      if (!deps_.layoutEngine->compute_transit_row_geometry(renderModel_, i, geom)) continue;
+      const char *text = renderModel_.rows[i].destination[0]
+          ? renderModel_.rows[i].destination
+          : renderModel_.rows[i].direction;
+      const display::TextMetrics tm = deps_.displayEngine->measure_text(text, geom.destinationFont);
+      s.textPixelWidth = static_cast<int16_t>(tm.w);
+      s.budgetWidth = geom.effectiveDestinationWidth;
+      // Only activate scroll if text overflows
+      s.active = s.textPixelWidth > s.budgetWidth;
+      if (s.active) {
+        s.pauseUntilMs = nowMs + kScrollStartPauseMs;
+      }
+    }
+
+    if (!s.active) continue;
+    if (nowMs < s.pauseUntilMs) { anyActive = true; continue; }
+
+    // Advance offset
+    s.offset = static_cast<int16_t>(s.offset - 1);
+
+    // When entire text has scrolled off, loop back
+    if (-s.offset >= s.textPixelWidth + kScrollGapPx) {
+      s.offset = 0;
+      s.pauseUntilMs = nowMs + kScrollLoopPauseMs;
+    }
+
+    anyActive = true;
+  }
+
+  if (anyActive) {
+    schedule_scroll_render();
+  }
+}
+
 void DeviceController::schedule_no_render() {
   if (renderDirty_) {
     return;
@@ -1426,6 +1510,43 @@ void DeviceController::render_eta_updates() {
   etaDirtyRowMask_ = 0;
 }
 
+void DeviceController::render_scroll_updates() {
+  for (uint8_t i = 0; i < renderModel_.activeRows && i < kMaxTransitRows; ++i) {
+    const RowScrollState &s = scrollState_[i];
+    if (!s.active) continue;
+
+    TransitRowGeometry geom{};
+    if (!deps_.layoutEngine->compute_transit_row_geometry(renderModel_, i, geom)) {
+      schedule_full_render();
+      return;
+    }
+
+    const TransitRowModel &row = renderModel_.rows[i];
+    const char *text = row.destination[0] ? row.destination : row.direction;
+
+    // Clear the destination zone
+    deps_.displayEngine->fill_rect(
+        geom.destinationX,
+        geom.destinationY,
+        geom.effectiveDestinationWidth,
+        static_cast<int16_t>(8 * geom.destinationFont),
+        kColorBlack);
+
+    // Draw text with scroll offset applied — setTextWrap(false) clips at panel edge
+    deps_.displayEngine->draw_text(
+        static_cast<int16_t>(geom.destinationX + s.offset),
+        geom.destinationY,
+        text,
+        0xFFFF,  // white
+        geom.destinationFont,
+        kColorBlack);
+  }
+
+  deps_.displayEngine->present();
+  renderDirty_ = false;
+  pendingRenderMode_ = RenderMode::kNone;
+}
+
 bool DeviceController::publish_device_log(const char *status,
                                           const char *eventType,
                                           const char *message,
@@ -1519,6 +1640,11 @@ void DeviceController::render_frame(uint32_t nowMs) {
 
   if (pendingRenderMode_ == RenderMode::kEtaOnly) {
     render_eta_updates();
+    return;
+  }
+
+  if (pendingRenderMode_ == RenderMode::kScrollOnly) {
+    render_scroll_updates();
     return;
   }
 
