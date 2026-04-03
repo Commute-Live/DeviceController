@@ -341,8 +341,13 @@ bool LayoutEngine::compute_transit_row_geometry(const RenderModel &model,
   display::RowFrame rowFrame{rowY, out.frame.height};
   const int16_t badgeWidth =
       is_septa_provider(row.providerId) ? max_septa_badge_width(model, fixedBadgeSize) : fixedBadgeSize;
+  // Use actual ETA length so we don't over-reserve space for short values like "5m".
+  // Cap at kEtaChars (3) so "10m" still fits.
+  const uint8_t actualEtaChars = row.eta[0] != '\0'
+      ? static_cast<uint8_t>(strnlen(row.eta, kEtaChars))
+      : kEtaChars;
   out.layout =
-      rowLayout_.compute_row_layout(static_cast<int16_t>(width_), rowFrame, fixedBadgeSize, badgeWidth, rowFont, kEtaChars);
+      rowLayout_.compute_row_layout(static_cast<int16_t>(width_), rowFrame, fixedBadgeSize, badgeWidth, rowFont, actualEtaChars);
 
   out.badgeX = out.layout.badgeX > 0 ? static_cast<int16_t>(out.layout.badgeX + preset->rowXShift) : out.layout.badgeX;
   out.destinationX =
