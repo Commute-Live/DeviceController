@@ -425,6 +425,10 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
 
   const bool transitView = model.hasData && model.uiState == UiState::kTransit;
   if (!transitView) {
+    if (model.uiState == UiState::kBlank) {
+      return;
+    }
+
     const VerticalLayoutResult home = verticalLayout_.compute(height_, 3);
     const uint8_t homeFont = height_ >= 64 ? 2 : 1;
     const int16_t charW = static_cast<int16_t>(6 * homeFont);
