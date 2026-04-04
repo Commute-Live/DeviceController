@@ -105,11 +105,37 @@ static constexpr AliasRouteColorEntry kCtaBusColorTable[] = {
     {"1|103|106|108|11|111|111A|112|115|119|124|126|15|151|152|155|156|157|165|169|171|172|18|192|201|206|21|22|24|28|29|3|30|31|35|36|37|39|43|44|48|49B|50|51|52|52A|53A|54A|54B|55A|55N|56|57|59|62|62H|63W|65|67|68|7|70|71|73|74|75|76|78|8|80|81W|84|85|85A|86|87|88|8A|90|91|92|93|94|96|97|N5",
      rgb565(0x99, 0x99, 0x9C)},
 };
+static constexpr AliasRouteColorEntry kMbtaSubwayColorTable[] = {
+    {"RED|MATTAPAN", rgb565(0xDA, 0x29, 0x1C)},
+    {"ORANGE", rgb565(0xED, 0x8B, 0x00)},
+    {"BLUE", rgb565(0x00, 0x3D, 0xA5)},
+    {"GREEN|GREENB|GREENC|GREEND|GREENE", rgb565(0x00, 0x84, 0x3D)},
+};
+static constexpr AliasRouteColorEntry kMbtaCommuterRailColorTable[] = {
+    {"CRGREENBUSH|CRLOWELL|CAPEFLYER", rgb565(0x16, 0x47, 0xB7)},
+    {"CRHAVERHILL|CRNEWBURYPORT", rgb565(0x1B, 0xA7, 0xE1)},
+    {"CRKINGSTON|CRNEEDHAM", rgb565(0x8C, 0x25, 0x33)},
+    {"CRPROVIDENCE|CRFRANKLIN|CRFOXBORO", rgb565(0x00, 0x9E, 0x5D)},
+    {"CRFAIRMOUNT", rgb565(0xD9, 0x2D, 0x20)},
+    {"CRFITCHBURG", rgb565(0xED, 0x8B, 0x00)},
+    {"CRWORCESTER", rgb565(0x7C, 0x3A, 0xED)},
+    {"CRNEWBEDFORD", rgb565(0xC2, 0x41, 0x0C)},
+};
+static constexpr AliasRouteColorEntry kMbtaFerryColorTable[] = {
+    {"BOATEASTBOSTON|BOATLYNN", rgb565(0x16, 0x47, 0xB7)},
+    {"BOATF1", rgb565(0xED, 0x8B, 0x00)},
+    {"BOATF4", rgb565(0x0E, 0xA5, 0xE9)},
+    {"BOATF6", rgb565(0x00, 0x84, 0x3D)},
+    {"BOATF7", rgb565(0xDA, 0x29, 0x1C)},
+    {"BOATF8", rgb565(0x7C, 0x3A, 0xED)},
+};
 static constexpr uint16_t kSeptaRailBadgeColor = rgb565(0x45, 0x63, 0x7A);
 static constexpr uint16_t kSeptaBroadStreetColor = rgb565(0xF2, 0x61, 0x00);
 static constexpr uint16_t kSeptaTrolleyGreen = rgb565(0x5A, 0x96, 0x0A);
 static constexpr uint16_t kSeptaNhslPurple = rgb565(0x5F, 0x24, 0x9F);
 static constexpr uint16_t kSeptaMediaSharonHillPink = rgb565(0xDC, 0x2E, 0x6B);
+static constexpr uint16_t kMbtaBusColor = rgb565(0x0F, 0x4C, 0xBA);
+static constexpr uint16_t kMbtaFerryFallbackColor = rgb565(0x0E, 0xA5, 0xE9);
 
 char normalize_route_char(const char *routeId) {
   if (!routeId) return '\0';
@@ -135,6 +161,22 @@ void normalize_route_token(const char *routeId, char *out, size_t outLen) {
     out[j++] = static_cast<char>(toupper(c));
   }
   out[j] = '\0';
+}
+
+bool normalized_route_starts_with(const char *routeId, const char *prefix) {
+  char normalized[32];
+  normalize_route_token(routeId, normalized, sizeof(normalized));
+  if (normalized[0] == '\0') return false;
+  const size_t prefixLen = strlen(prefix);
+  return strncmp(normalized, prefix, prefixLen) == 0;
+}
+
+bool is_mbta_bus_route(const char *routeId) {
+  char normalized[32];
+  normalize_route_token(routeId, normalized, sizeof(normalized));
+  if (normalized[0] == '\0') return false;
+  if (normalized[0] >= '0' && normalized[0] <= '9') return true;
+  return strncmp(normalized, "SL", 2) == 0 || strncmp(normalized, "CT", 2) == 0;
 }
 
 bool token_matches_alias_list(const char *routeId, const char *aliases) {
@@ -263,6 +305,28 @@ uint16_t MtaColorMap::color_for_provider_route(const char *providerId, const cha
                                     sizeof(kCtaBusColorTable) / sizeof(kCtaBusColorTable[0]),
                                     routeId,
                                     kCtaBusFallbackColor);
+    }
+
+    if (strcmp(providerId, "mbta") == 0) {
+      if (normalized_route_starts_with(routeId, "BOAT")) {
+        return color_from_alias_table(kMbtaFerryColorTable,
+                                      sizeof(kMbtaFerryColorTable) / sizeof(kMbtaFerryColorTable[0]),
+                                      routeId,
+                                      kMbtaFerryFallbackColor);
+      }
+      if (is_mbta_bus_route(routeId)) {
+        return kMbtaBusColor;
+      }
+      if (normalized_route_starts_with(routeId, "CR") || token_matches_alias_list(routeId, "CAPEFLYER")) {
+        return color_from_alias_table(kMbtaCommuterRailColorTable,
+                                      sizeof(kMbtaCommuterRailColorTable) / sizeof(kMbtaCommuterRailColorTable[0]),
+                                      routeId,
+                                      kFallbackColor);
+      }
+      return color_from_alias_table(kMbtaSubwayColorTable,
+                                    sizeof(kMbtaSubwayColorTable) / sizeof(kMbtaSubwayColorTable[0]),
+                                    routeId,
+                                    kFallbackColor);
     }
   }
 

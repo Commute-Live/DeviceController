@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "display/badge_renderer.h"
 #include "transit/mta_color_map.h"
 
 namespace core {
@@ -23,6 +24,20 @@ constexpr uint8_t kMaxDisplayType = 5;
 constexpr uint8_t kTextSizeTiny = 0;
 constexpr uint8_t kTextSizeTinyPlus = 255;
 constexpr uint8_t kEtaChars = 3;
+
+enum class TransitBadgeStyle : uint8_t {
+  kCircle = 0,
+  kPill = static_cast<uint8_t>(display::RoundedBadgeStyle::kPill),
+  kRail = static_cast<uint8_t>(display::RoundedBadgeStyle::kRail),
+  kBar = 3,
+};
+
+enum class MbtaMode : uint8_t {
+  kTrain,
+  kBus,
+  kCommuterRail,
+  kFerry,
+};
 
 
 struct TransitPresetConfig {
@@ -86,9 +101,42 @@ bool is_septa_provider(const char *providerId) {
           strcmp(providerId, "septa-trolley") == 0);
 }
 
+bool is_septa_rounded_provider(const char *providerId) {
+  return providerId &&
+         (strcmp(providerId, "septa-rail") == 0 || strcmp(providerId, "septa-trolley") == 0);
+}
+
 bool is_nyc_rail_bar_provider(const char *providerId) {
   return providerId &&
          (strcmp(providerId, "mta-lirr") == 0 || strcmp(providerId, "mta-mnr") == 0);
+}
+
+bool is_boston_provider(const char *providerId) {
+  return providerId && strcmp(providerId, "mbta") == 0;
+}
+
+char ascii_upper(char value) {
+  return static_cast<char>(toupper(static_cast<unsigned char>(value)));
+}
+
+bool route_id_equals(const char *routeId, const char *value) {
+  if (!routeId || !value) return false;
+  for (size_t i = 0;; ++i) {
+    const char left = ascii_upper(routeId[i]);
+    const char right = ascii_upper(value[i]);
+    if (left != right) return false;
+    if (left == '\0') return true;
+  }
+}
+
+bool route_id_starts_with(const char *routeId, const char *prefix) {
+  if (!routeId || !prefix) return false;
+  const size_t prefixLen = strlen(prefix);
+  for (size_t i = 0; i < prefixLen; ++i) {
+    if (routeId[i] == '\0') return false;
+    if (ascii_upper(routeId[i]) != ascii_upper(prefix[i])) return false;
+  }
+  return true;
 }
 
 const char *copy_upper_trimmed(const char *src, char *out, size_t outLen) {
@@ -101,6 +149,26 @@ const char *copy_upper_trimmed(const char *src, char *out, size_t outLen) {
     const char c = src[i];
     if (c == ' ' || c == '-' || c == '_') continue;
     out[j++] = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+  }
+  out[j] = '\0';
+  return out;
+}
+
+const char *copy_badge_token(const char *src, char *out, size_t outLen) {
+  if (!out || outLen == 0) return "";
+  out[0] = '\0';
+  if (!src) return out;
+
+  size_t j = 0;
+  for (size_t i = 0; src[i] != '\0' && j + 1 < outLen; ++i) {
+    const unsigned char c = static_cast<unsigned char>(src[i]);
+    if (isalnum(c)) {
+      out[j++] = static_cast<char>(toupper(c));
+      continue;
+    }
+    if (src[i] == '+' || src[i] == '/') {
+      out[j++] = src[i];
+    }
   }
   out[j] = '\0';
   return out;
@@ -157,21 +225,132 @@ const char *septa_badge_text(const TransitRowModel &row, char *out, size_t outLe
   return out;
 }
 
-int16_t septa_badge_width(const TransitRowModel &row, int16_t badgeHeight) {
-  char badgeLabel[8];
-  const char *label = septa_badge_text(row, badgeLabel, sizeof(badgeLabel));
-  const size_t len = strnlen(label, sizeof(badgeLabel));
+const char *mbta_badge_text(const TransitRowModel &row, char *out, size_t outLen) {
+  const char *routeId = row.routeId;
+  if (!routeId || routeId[0] == '\0') {
+    return copy_upper_trimmed("--", out, outLen);
+  }
 
+  if (route_id_equals(routeId, "RED")) return copy_upper_trimmed("RED", out, outLen);
+  if (route_id_equals(routeId, "ORANGE")) return copy_upper_trimmed("ORG", out, outLen);
+  if (route_id_equals(routeId, "BLUE")) return copy_upper_trimmed("BLU", out, outLen);
+  if (route_id_equals(routeId, "GREEN")) return copy_upper_trimmed("GRN", out, outLen);
+  if (route_id_equals(routeId, "GREEN-B")) return copy_upper_trimmed("B", out, outLen);
+  if (route_id_equals(routeId, "GREEN-C")) return copy_upper_trimmed("C", out, outLen);
+  if (route_id_equals(routeId, "GREEN-D")) return copy_upper_trimmed("D", out, outLen);
+  if (route_id_equals(routeId, "GREEN-E")) return copy_upper_trimmed("E", out, outLen);
+  if (route_id_equals(routeId, "MATTAPAN")) return copy_upper_trimmed("MAT", out, outLen);
+
+  if (route_id_equals(routeId, "CAPEFLYER")) return copy_upper_trimmed("CAPE", out, outLen);
+  if (route_id_equals(routeId, "CR-FAIRMOUNT")) return copy_upper_trimmed("FAIR", out, outLen);
+  if (route_id_equals(routeId, "CR-FITCHBURG")) return copy_upper_trimmed("FITCH", out, outLen);
+  if (route_id_equals(routeId, "CR-FOXBORO")) return copy_upper_trimmed("FOXB", out, outLen);
+  if (route_id_equals(routeId, "CR-FRANKLIN")) return copy_upper_trimmed("FRAN", out, outLen);
+  if (route_id_equals(routeId, "CR-GREENBUSH")) return copy_upper_trimmed("GRNB", out, outLen);
+  if (route_id_equals(routeId, "CR-HAVERHILL")) return copy_upper_trimmed("HAVE", out, outLen);
+  if (route_id_equals(routeId, "CR-KINGSTON")) return copy_upper_trimmed("KING", out, outLen);
+  if (route_id_equals(routeId, "CR-LOWELL")) return copy_upper_trimmed("LOWE", out, outLen);
+  if (route_id_equals(routeId, "CR-NEEDHAM")) return copy_upper_trimmed("NEED", out, outLen);
+  if (route_id_equals(routeId, "CR-NEWBEDFORD")) return copy_upper_trimmed("NBED", out, outLen);
+  if (route_id_equals(routeId, "CR-NEWBURYPORT")) return copy_upper_trimmed("NBPT", out, outLen);
+  if (route_id_equals(routeId, "CR-PROVIDENCE")) return copy_upper_trimmed("PROV", out, outLen);
+  if (route_id_equals(routeId, "CR-WORCESTER")) return copy_upper_trimmed("WORC", out, outLen);
+
+  if (route_id_equals(routeId, "BOAT-EASTBOSTON")) return copy_upper_trimmed("EB", out, outLen);
+  if (route_id_equals(routeId, "BOAT-F1")) return copy_upper_trimmed("F1", out, outLen);
+  if (route_id_equals(routeId, "BOAT-F4")) return copy_upper_trimmed("F4", out, outLen);
+  if (route_id_equals(routeId, "BOAT-F6")) return copy_upper_trimmed("F6", out, outLen);
+  if (route_id_equals(routeId, "BOAT-F7")) return copy_upper_trimmed("F7", out, outLen);
+  if (route_id_equals(routeId, "BOAT-F8")) return copy_upper_trimmed("F8", out, outLen);
+  if (route_id_equals(routeId, "BOAT-LYNN")) return copy_upper_trimmed("LYNN", out, outLen);
+
+  return copy_badge_token(routeId, out, outLen);
+}
+
+const char *mta_bus_badge_text(const TransitRowModel &row, char *out, size_t outLen) {
+  if (!out || outLen == 0) return "";
+  out[0] = '\0';
+  if (!row.routeId || row.routeId[0] == '\0') {
+    return copy_upper_trimmed("--", out, outLen);
+  }
+
+  char compact[kMaxRouteIdLen];
+  copy_badge_token(row.routeId, compact, sizeof(compact));
+  const char *sbsPos = strstr(compact, "SBS");
+  if (sbsPos) {
+    const size_t prefixLen = static_cast<size_t>(sbsPos - compact);
+    const size_t copyLen = prefixLen < (outLen - 1) ? prefixLen : (outLen - 1);
+    memcpy(out, compact, copyLen);
+    size_t j = copyLen;
+    if (j + 1 < outLen) {
+      out[j++] = '+';
+    }
+    out[j] = '\0';
+    return out;
+  }
+
+  strncpy(out, compact, outLen - 1);
+  out[outLen - 1] = '\0';
+  return out;
+}
+
+MbtaMode infer_mbta_mode(const TransitRowModel &row) {
+  const char *routeId = row.routeId;
+  if (route_id_starts_with(routeId, "BOAT-")) return MbtaMode::kFerry;
+  if (route_id_equals(routeId, "RED") || route_id_equals(routeId, "ORANGE") ||
+      route_id_equals(routeId, "BLUE") || route_id_equals(routeId, "GREEN") ||
+      route_id_starts_with(routeId, "GREEN-") || route_id_equals(routeId, "MATTAPAN")) {
+    return MbtaMode::kTrain;
+  }
+  if (route_id_starts_with(routeId, "SL") || route_id_starts_with(routeId, "CT")) {
+    return MbtaMode::kBus;
+  }
+  if (routeId && isdigit(static_cast<unsigned char>(routeId[0]))) {
+    return MbtaMode::kBus;
+  }
+  return MbtaMode::kCommuterRail;
+}
+
+TransitBadgeStyle badge_style_for_row(const TransitRowModel &row) {
+  if (is_nyc_rail_bar_provider(row.providerId)) return TransitBadgeStyle::kBar;
+  if (row.providerId && strcmp(row.providerId, "mta-bus") == 0) return TransitBadgeStyle::kPill;
+  if (row.providerId && strcmp(row.providerId, "cta-subway") == 0) return TransitBadgeStyle::kPill;
+  if (row.providerId && strcmp(row.providerId, "njt-rail") == 0) return TransitBadgeStyle::kPill;
+  if (is_septa_rounded_provider(row.providerId)) return TransitBadgeStyle::kPill;
+  if (is_boston_provider(row.providerId)) {
+    const MbtaMode mode = infer_mbta_mode(row);
+    if (mode == MbtaMode::kTrain || mode == MbtaMode::kFerry) return TransitBadgeStyle::kPill;
+    if (mode == MbtaMode::kCommuterRail) return TransitBadgeStyle::kRail;
+  }
+  return TransitBadgeStyle::kCircle;
+}
+
+const char *badge_text_for_row(const TransitRowModel &row, char *out, size_t outLen) {
+  if (is_boston_provider(row.providerId)) return mbta_badge_text(row, out, outLen);
+  if (row.providerId && strcmp(row.providerId, "mta-bus") == 0) return mta_bus_badge_text(row, out, outLen);
+  if (is_septa_provider(row.providerId)) return septa_badge_text(row, out, outLen);
+  return copy_badge_token(row.routeId && row.routeId[0] ? row.routeId : "--", out, outLen);
+}
+
+int16_t rounded_badge_width(TransitBadgeStyle style, const char *label, int16_t badgeHeight) {
+  const size_t len = strnlen(label ? label : "", 8);
   int16_t width = badgeHeight;
+  if (style == TransitBadgeStyle::kPill) {
+    width = static_cast<int16_t>(width + 6);
+  } else if (style == TransitBadgeStyle::kRail) {
+    width = static_cast<int16_t>(width + 4);
+  }
+
   if (len >= 2) width = static_cast<int16_t>(width + 4);
   if (len >= 3) width = static_cast<int16_t>(width + 4);
   if (len >= 4) width = static_cast<int16_t>(width + 4);
+  if (len >= 5) width = static_cast<int16_t>(width + 3);
   if (width < badgeHeight) width = badgeHeight;
-  if (width > 24) width = 24;
+  if (width > 30) width = 30;
   return width;
 }
 
-int16_t max_septa_badge_width(const RenderModel &model, int16_t badgeHeight) {
+int16_t max_rounded_badge_width(const RenderModel &model, int16_t badgeHeight) {
   int16_t width = badgeHeight;
   uint8_t rowCount = model.activeRows;
   if (rowCount < 1) rowCount = 1;
@@ -179,8 +358,11 @@ int16_t max_septa_badge_width(const RenderModel &model, int16_t badgeHeight) {
 
   for (uint8_t i = 0; i < rowCount; ++i) {
     const TransitRowModel &row = model.rows[i];
-    if (!is_septa_provider(row.providerId)) continue;
-    const int16_t candidate = septa_badge_width(row, badgeHeight);
+    const TransitBadgeStyle style = badge_style_for_row(row);
+    if (style != TransitBadgeStyle::kPill && style != TransitBadgeStyle::kRail) continue;
+    char badgeLabel[8];
+    const char *label = badge_text_for_row(row, badgeLabel, sizeof(badgeLabel));
+    const int16_t candidate = rounded_badge_width(style, label, badgeHeight);
     if (candidate > width) width = candidate;
   }
 
@@ -332,6 +514,7 @@ bool LayoutEngine::compute_transit_row_geometry(const RenderModel &model,
   }
 
   const TransitRowModel &row = model.rows[rowIndex];
+  const TransitBadgeStyle badgeStyle = badge_style_for_row(row);
   out.valid = true;
   out.normalizedDisplayType = normalize_display_type(row.displayType);
   out.frame = rowFrames[rowIndex];
@@ -340,7 +523,9 @@ bool LayoutEngine::compute_transit_row_geometry(const RenderModel &model,
       out.frame.yStart > 0 ? static_cast<int16_t>(out.frame.yStart + preset->rowYNudge) : out.frame.yStart;
   display::RowFrame rowFrame{rowY, out.frame.height};
   const int16_t badgeWidth =
-      is_septa_provider(row.providerId) ? max_septa_badge_width(model, fixedBadgeSize) : fixedBadgeSize;
+      (badgeStyle == TransitBadgeStyle::kPill || badgeStyle == TransitBadgeStyle::kRail)
+          ? max_rounded_badge_width(model, fixedBadgeSize)
+          : fixedBadgeSize;
   // Use actual ETA length so we don't over-reserve space for short values like "5m".
   // Cap at kEtaChars (3) so "10m" still fits.
   const uint8_t actualEtaChars = row.eta[0] != '\0'
@@ -659,10 +844,11 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
 
     const uint8_t normalizedDisplayType = rowGeometry.normalizedDisplayType;
     const bool hasRoute = row.routeId[0] != '\0' && strcmp(row.routeId, "--") != 0;
-    const bool isNycRailBar = is_nyc_rail_bar_provider(row.providerId);
-    const bool isSeptaBadge = is_septa_provider(row.providerId);
+    const TransitBadgeStyle badgeStyle = badge_style_for_row(row);
+    char badgeLabel[8];
+    const char *resolvedBadgeLabel = badge_text_for_row(row, badgeLabel, sizeof(badgeLabel));
 
-    if (isNycRailBar) {
+    if (badgeStyle == TransitBadgeStyle::kBar) {
       const int16_t badgeSize = rowGeometry.layout.badgeSize;
       const int16_t barWidth = badgeSize >= 10 ? 8 : 6;
       const int16_t barHeight = badgeSize > 2 ? static_cast<int16_t>(badgeSize - 2) : badgeSize;
@@ -683,9 +869,7 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
       railBar.text = nullptr;
       railBar.bitmap = nullptr;
       out.push(railBar);
-    } else if (isSeptaBadge) {
-      char badgeLabel[8];
-      const char *resolvedBadgeLabel = septa_badge_text(row, badgeLabel, sizeof(badgeLabel));
+    } else if (badgeStyle == TransitBadgeStyle::kPill || badgeStyle == TransitBadgeStyle::kRail) {
       const int16_t badgeY = static_cast<int16_t>(rowGeometry.layout.badgeY + 1);
       const int16_t badgeH =
           rowGeometry.layout.badgeSize > 2 ? static_cast<int16_t>(rowGeometry.layout.badgeSize - 2)
@@ -701,7 +885,7 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
           row.providerId,
           hasRoute ? row.routeId : "");
       badge.bg = kColorBlack;
-      badge.size = rowGeometry.etaFont;
+      badge.size = static_cast<uint8_t>(badgeStyle);
       badge.text = out.copy_text(resolvedBadgeLabel);
       badge.bitmap = nullptr;
       out.push(badge);
@@ -717,7 +901,7 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
           hasRoute ? row.routeId : "");
       badge.bg = kColorBlack;
       badge.size = rowGeometry.etaFont;
-      badge.text = trim_for_width(hasRoute ? row.routeId : "--", 2, out);
+      badge.text = out.copy_text(resolvedBadgeLabel);
       badge.bitmap = nullptr;
       out.push(badge);
     }

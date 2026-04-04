@@ -1,6 +1,7 @@
 #include "display/badge_renderer.h"
 
 #include <ctype.h>
+#include <math.h>
 #include <string.h>
 
 namespace display {
@@ -9,32 +10,8 @@ namespace {
 
 constexpr uint16_t kWhite = 0xFFFF;
 constexpr uint16_t kBlack = 0x0000;
-
-const char *route_text(const char *routeId, char *out, size_t outLen) {
-  if (!out || outLen < 2) return "";
-  out[0] = '\0';
-  if (!routeId) return out;
-
-  size_t j = 0;
-  char first = '\0';
-  for (size_t i = 0; routeId[i] != '\0' && j + 1 < outLen; ++i) {
-    char c = routeId[i];
-    if (c == ' ' || c == '-' || c == '_') continue;
-    c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
-    if (j == 0) {
-      out[j++] = c;
-      first = c;
-      continue;
-    }
-    // Preserve express suffix style from logo branch (e.g. 6X, 7X, FX) only.
-    if (c == 'X' && first != '\0') {
-      out[j++] = c;
-    }
-    break;
-  }
-  out[j] = '\0';
-  return out;
-}
+constexpr uint8_t kTextSizeTiny = 0;
+constexpr uint8_t kTextSizeTinyPlus = 255;
 
 uint16_t badge_text_color(uint16_t fill) {
   const uint8_t r = static_cast<uint8_t>(((fill >> 11) & 0x1F) * 255 / 31);
@@ -88,11 +65,56 @@ void BadgeRenderer::fill_circle_midpoint(DisplayEngine &display,
   }
 }
 
+void BadgeRenderer::fill_rounded_rect(DisplayEngine &display,
+                                      int16_t x,
+                                      int16_t y,
+                                      int16_t w,
+                                      int16_t h,
+                                      int16_t radius,
+                                      uint16_t color) const {
+  if (w <= 0 || h <= 0) return;
+  if (radius < 1) {
+    display.fill_rect(x, y, w, h, color);
+    return;
+  }
+
+  int16_t clampedRadius = radius;
+  if (clampedRadius > (h / 2)) clampedRadius = static_cast<int16_t>(h / 2);
+  if (clampedRadius > (w / 2)) clampedRadius = static_cast<int16_t>(w / 2);
+  if (clampedRadius < 1) {
+    display.fill_rect(x, y, w, h, color);
+    return;
+  }
+
+  const float centerY = (static_cast<float>(h) - 1.0f) * 0.5f;
+  const float effectiveRadius = static_cast<float>(clampedRadius) - 0.25f;
+
+  for (int16_t yy = 0; yy < h; ++yy) {
+    int16_t inset = 0;
+    if (yy < clampedRadius || yy >= static_cast<int16_t>(h - clampedRadius)) {
+      const float dy = fabsf(static_cast<float>(yy) - centerY);
+      float dx = 0.0f;
+      const float inside = effectiveRadius * effectiveRadius - dy * dy;
+      if (inside > 0.0f) {
+        dx = sqrtf(inside);
+      }
+      inset = static_cast<int16_t>(clampedRadius - static_cast<int16_t>(dx + 0.999f));
+      if (inset < 0) inset = 0;
+    }
+
+    const int16_t lineX = static_cast<int16_t>(x + inset);
+    const int16_t lineW = static_cast<int16_t>(w - 2 * inset);
+    if (lineW > 0) {
+      display.draw_hline(lineX, static_cast<int16_t>(y + yy), lineW, color);
+    }
+  }
+}
+
 void BadgeRenderer::draw_badge(DisplayEngine &display,
                                int16_t x,
                                int16_t y,
                                int16_t size,
-                               const char *routeId,
+                               const char *label,
                                uint16_t fillColor) const {
   if (size <= 0) return;
 
@@ -107,26 +129,33 @@ void BadgeRenderer::draw_badge(DisplayEngine &display,
 
   fill_circle_midpoint(display, cx, cy, r, fill);
 
-  const int16_t targetFontHeight = static_cast<int16_t>((badgeSize * 3) / 5);  // 0.6 * badgeSize
-  uint8_t textSize = static_cast<uint8_t>((targetFontHeight + 4) / 8);
-  if (textSize < 1) textSize = 1;
-  if (textSize < 3) ++textSize;  // Requested: one size bigger by default.
+  if (!label || label[0] == '\0') return;
 
-  char textBuf[4];
-  route_text(routeId, textBuf, sizeof(textBuf));
-  if (textBuf[0] == '\0') return;
+  uint8_t textSize = 1;
+  const size_t labelLen = strnlen(label, 8);
+  if (labelLen <= 2 && badgeSize >= 10) {
+    textSize = 2;
+  }
 
-  TextMetrics tm = display.measure_text(textBuf, textSize);
+  TextMetrics tm = display.measure_text(label, textSize);
   const int16_t maxGlyph = static_cast<int16_t>((badgeSize * 3) / 5);
   while (textSize > 1 && (tm.width > maxGlyph || tm.height > maxGlyph)) {
     --textSize;
-    tm = display.measure_text(textBuf, textSize);
+    tm = display.measure_text(label, textSize);
+  }
+  if (tm.width > maxGlyph || tm.height > maxGlyph) {
+    textSize = kTextSizeTinyPlus;
+    tm = display.measure_text(label, textSize);
+    if (tm.width > maxGlyph || tm.height > maxGlyph) {
+      textSize = kTextSizeTiny;
+      tm = display.measure_text(label, textSize);
+    }
   }
 
   // Center using measured glyph bounds relative to cursor origin.
   const int16_t tx = static_cast<int16_t>(cx - (tm.width / 2) - tm.xOffset + 1);
   const int16_t ty = static_cast<int16_t>(cy - (tm.height / 2) - tm.yOffset + 1);
-  display.draw_text_transparent(tx, ty, textBuf, badge_text_color(fill), textSize);
+  display.draw_text_transparent(tx, ty, label, badge_text_color(fill), textSize);
 }
 
 void BadgeRenderer::draw_rect_badge(DisplayEngine &display,
@@ -135,15 +164,21 @@ void BadgeRenderer::draw_rect_badge(DisplayEngine &display,
                                     int16_t w,
                                     int16_t h,
                                     const char *label,
-                                    uint16_t fill) const {
+                                    uint16_t fill,
+                                    RoundedBadgeStyle style) const {
   if (w <= 0 || h <= 0 || !label || label[0] == '\0') return;
 
-  display.fill_rect(x, y, w, h, fill);
+  const bool railStyle = style == RoundedBadgeStyle::kRail;
+  int16_t radius = railStyle ? static_cast<int16_t>(h / 3) : static_cast<int16_t>(h / 2);
+  if (radius < 2) radius = 2;
+  fill_rounded_rect(display, x, y, w, h, radius, fill);
 
-  uint8_t textSize = 1;
   const size_t labelLen = strnlen(label, 8);
-  if (labelLen <= 1 && h >= 10) {
+  uint8_t textSize = kTextSizeTiny;
+  if (labelLen <= 1 && h >= 12) {
     textSize = 2;
+  } else if (labelLen <= 4 && h >= 10 && w >= 20) {
+    textSize = 1;
   }
 
   TextMetrics tm = display.measure_text(label, textSize);
@@ -151,12 +186,16 @@ void BadgeRenderer::draw_rect_badge(DisplayEngine &display,
     --textSize;
     tm = display.measure_text(label, textSize);
   }
+  if (tm.width > static_cast<int16_t>(w - 4) || tm.height > static_cast<int16_t>(h - 4)) {
+    textSize = kTextSizeTiny;
+    tm = display.measure_text(label, textSize);
+  }
 
   const int16_t cx = static_cast<int16_t>(x + (w / 2));
   const int16_t cy = static_cast<int16_t>(y + (h / 2));
   const int16_t tx = static_cast<int16_t>(cx - (tm.width / 2) - tm.xOffset);
   const int16_t ty = static_cast<int16_t>(cy - (tm.height / 2) - tm.yOffset);
-  display.draw_text_transparent(tx, ty, label, badge_text_color(fill), textSize);
+  display.draw_text(tx, ty, label, badge_text_color(fill), textSize, fill);
 }
 
 }  // namespace display

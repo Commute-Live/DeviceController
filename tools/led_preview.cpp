@@ -732,6 +732,16 @@ int run_preview(const PreviewOptions &options) {
       case core::DrawCommandType::kBadge:
         badgeRenderer.draw_badge(display, cmd.x, cmd.y, cmd.w, cmd.text, cmd.color);
         break;
+      case core::DrawCommandType::kRectBadge:
+        badgeRenderer.draw_rect_badge(display,
+                                      cmd.x,
+                                      cmd.y,
+                                      cmd.w,
+                                      cmd.h,
+                                      cmd.text,
+                                      cmd.color,
+                                      static_cast<display::RoundedBadgeStyle>(cmd.size));
+        break;
       case core::DrawCommandType::kMonoBitmap:
         if (!cmd.bitmap || cmd.w <= 0 || cmd.h <= 0) {
           break;

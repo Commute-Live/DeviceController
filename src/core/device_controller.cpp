@@ -1791,7 +1791,14 @@ void DeviceController::render_frame(uint32_t nowMs) {
         gBadgeRenderer.draw_badge(*deps_.displayEngine, cmd.x, cmd.y, cmd.w, cmd.text, cmd.color);
         break;
       case DrawCommandType::kRectBadge:
-        gBadgeRenderer.draw_rect_badge(*deps_.displayEngine, cmd.x, cmd.y, cmd.w, cmd.h, cmd.text, cmd.color);
+        gBadgeRenderer.draw_rect_badge(*deps_.displayEngine,
+                                       cmd.x,
+                                       cmd.y,
+                                       cmd.w,
+                                       cmd.h,
+                                       cmd.text,
+                                       cmd.color,
+                                       static_cast<display::RoundedBadgeStyle>(cmd.size));
         break;
       case DrawCommandType::kMonoBitmap:
         if (!cmd.bitmap || cmd.w <= 0 || cmd.h <= 0) {
