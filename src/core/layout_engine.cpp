@@ -36,7 +36,6 @@ enum class MbtaMode : uint8_t {
   kTrain,
   kBus,
   kCommuterRail,
-  kFerry,
 };
 
 
@@ -256,14 +255,6 @@ const char *mbta_badge_text(const TransitRowModel &row, char *out, size_t outLen
   if (route_id_equals(routeId, "CR-PROVIDENCE")) return copy_upper_trimmed("PROV", out, outLen);
   if (route_id_equals(routeId, "CR-WORCESTER")) return copy_upper_trimmed("WORC", out, outLen);
 
-  if (route_id_equals(routeId, "BOAT-EASTBOSTON")) return copy_upper_trimmed("EB", out, outLen);
-  if (route_id_equals(routeId, "BOAT-F1")) return copy_upper_trimmed("F1", out, outLen);
-  if (route_id_equals(routeId, "BOAT-F4")) return copy_upper_trimmed("F4", out, outLen);
-  if (route_id_equals(routeId, "BOAT-F6")) return copy_upper_trimmed("F6", out, outLen);
-  if (route_id_equals(routeId, "BOAT-F7")) return copy_upper_trimmed("F7", out, outLen);
-  if (route_id_equals(routeId, "BOAT-F8")) return copy_upper_trimmed("F8", out, outLen);
-  if (route_id_equals(routeId, "BOAT-LYNN")) return copy_upper_trimmed("LYNN", out, outLen);
-
   return copy_badge_token(routeId, out, outLen);
 }
 
@@ -296,7 +287,6 @@ const char *mta_bus_badge_text(const TransitRowModel &row, char *out, size_t out
 
 MbtaMode infer_mbta_mode(const TransitRowModel &row) {
   const char *routeId = row.routeId;
-  if (route_id_starts_with(routeId, "BOAT-")) return MbtaMode::kFerry;
   if (route_id_equals(routeId, "RED") || route_id_equals(routeId, "ORANGE") ||
       route_id_equals(routeId, "BLUE") || route_id_equals(routeId, "GREEN") ||
       route_id_starts_with(routeId, "GREEN-") || route_id_equals(routeId, "MATTAPAN")) {
@@ -319,7 +309,7 @@ TransitBadgeStyle badge_style_for_row(const TransitRowModel &row) {
   if (is_septa_rounded_provider(row.providerId)) return TransitBadgeStyle::kPill;
   if (is_boston_provider(row.providerId)) {
     const MbtaMode mode = infer_mbta_mode(row);
-    if (mode == MbtaMode::kTrain || mode == MbtaMode::kFerry) return TransitBadgeStyle::kPill;
+    if (mode == MbtaMode::kTrain) return TransitBadgeStyle::kPill;
     if (mode == MbtaMode::kCommuterRail) return TransitBadgeStyle::kRail;
   }
   return TransitBadgeStyle::kCircle;
