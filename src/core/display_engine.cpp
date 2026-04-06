@@ -11,6 +11,7 @@ namespace core {
 namespace {
 constexpr uint8_t kTextSizeTiny = 0;
 constexpr uint8_t kTextSizeTinyPlus = 255;
+constexpr uint8_t kCanvasRotationQuarterTurns = 2;
 
 const char *shift_driver_name(uint8_t value) {
   switch (value) {
@@ -218,13 +219,14 @@ bool DisplayEngine::begin(const DisplayConfig &config) {
 
   canvas_ = virtualMatrix_;
   matrix_->setBrightness8(config_.brightness);
+  canvas_->setRotation(kCanvasRotationQuarterTurns);
   canvas_->setTextWrap(false);
   canvas_->setTextSize(1);
   canvas_->fillScreen(0);
 
   ready_ = true;
   DCTRL_LOGI("DISPLAY",
-             "Ready total=%ux%u panels=%ux%u brightness=%u serpentine=%s chainMode=%u offsets=(%d,%d) driver=%s line=%s clk=%s lat=%u clkphase=%s",
+             "Ready total=%ux%u panels=%ux%u brightness=%u serpentine=%s chainMode=%u offsets=(%d,%d) rotation=%u driver=%s line=%s clk=%s lat=%u clkphase=%s",
              geometry_.totalWidth,
              geometry_.totalHeight,
              config_.panelCols,
@@ -234,6 +236,7 @@ bool DisplayEngine::begin(const DisplayConfig &config) {
              static_cast<unsigned>(config_.chainMode),
              static_cast<int>(config_.xOffset),
              static_cast<int>(config_.yOffset),
+             static_cast<unsigned>(kCanvasRotationQuarterTurns),
              shift_driver_name(config_.shiftDriver),
              line_driver_name(config_.lineDriver),
              clock_speed_name(config_.clockSpeed),
