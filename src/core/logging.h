@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string.h>
+
 #include <Arduino.h>
 #include <WiFi.h>
 
@@ -11,6 +13,14 @@ inline const char *bool_str(bool value) {
 
 inline const char *safe_str(const char *value) {
   return value ? value : "(null)";
+}
+
+inline bool is_dev_build() {
+#ifdef COMMUTELIVE_VERSION
+  return strcmp(COMMUTELIVE_VERSION, "dev") == 0;
+#else
+  return false;
+#endif
 }
 
 inline const char *wifi_status_name(int status) {

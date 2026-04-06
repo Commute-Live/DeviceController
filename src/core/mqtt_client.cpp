@@ -4,6 +4,13 @@
 #include <stdio.h>
 #include <string.h>
 
+#if __has_include("secrets.h")
+#include "secrets.h"
+#else
+#include "secrets.example.h"
+#warning "Using include/secrets.example.h defaults. Create include/secrets.h for real credentials."
+#endif
+
 #include "core/logging.h"
 
 namespace core {
@@ -60,6 +67,11 @@ const char *mqtt_state_name(int state) {
     default:
       return "MQTT_UNKNOWN";
   }
+}
+
+bool is_verbose_publish_label(const char *label) {
+  const char *safeLabel = core::logging::safe_str(label);
+  return strcmp(safeLabel, "state") == 0 || strcmp(safeLabel, "heartbeat") == 0;
 }
 
 }  // namespace
@@ -375,11 +387,13 @@ bool MqttClient::publish_with_trace(const char *topic, const char *payload, bool
 
   const bool ok = mqtt_.publish(safeTopic, safePayload, retained);
   if (ok) {
-    DCTRL_LOGI("MQTT", "Published %s topic=%s retained=%s payload=%s",
-               core::logging::safe_str(label),
-               safeTopic,
-               core::logging::bool_str(retained),
-               safePayload);
+    if (!is_verbose_publish_label(label) || core::logging::is_dev_build()) {
+      DCTRL_LOGI("MQTT", "Published %s topic=%s retained=%s payload=%s",
+                 core::logging::safe_str(label),
+                 safeTopic,
+                 core::logging::bool_str(retained),
+                 safePayload);
+    }
   } else {
     DCTRL_LOGE("MQTT", "Publish failed %s topic=%s retained=%s payload=%s rc=%d (%s)",
                core::logging::safe_str(label),

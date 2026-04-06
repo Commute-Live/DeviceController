@@ -76,8 +76,6 @@ struct PersistedCachedTransitAssignment {
 static_assert(std::is_trivially_copyable<PersistedCachedTransitAssignment>::value,
               "Persisted transit cache must be trivially copyable");
 
-bool is_dev_build() { return strcmp(COMMUTELIVE_VERSION, "dev") == 0; }
-
 void copy_str(char *dst, size_t dstLen, const char *src) {
   if (dstLen == 0) {
     return;
@@ -1388,47 +1386,55 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   switch (nextRenderMode) {
     case RenderMode::kNone:
       schedule_no_render();
-      DCTRL_LOGI("MQTT", "Applied payload without render change activeRows=%u displayType=%u brightness=%u%% panel=%u",
-                 static_cast<unsigned>(renderModel_.activeRows),
-                 static_cast<unsigned>(renderModel_.displayType),
-                 static_cast<unsigned>(brightnessPercent),
-                 static_cast<unsigned>(panelBrightness));
+      if (core::logging::is_dev_build()) {
+        DCTRL_LOGI("MQTT", "Applied payload without render change activeRows=%u displayType=%u brightness=%u%% panel=%u",
+                   static_cast<unsigned>(renderModel_.activeRows),
+                   static_cast<unsigned>(renderModel_.displayType),
+                   static_cast<unsigned>(brightnessPercent),
+                   static_cast<unsigned>(panelBrightness));
+      }
       break;
     case RenderMode::kEtaOnly:
       schedule_eta_render(etaDirtyRows);
-      DCTRL_LOGI("MQTT",
-                 "Applied payload with ETA-only render rowsMask=0x%02x activeRows=%u displayType=%u brightness=%u%% panel=%u",
-                 static_cast<unsigned>(etaDirtyRows),
-                 static_cast<unsigned>(renderModel_.activeRows),
-                 static_cast<unsigned>(renderModel_.displayType),
-                 static_cast<unsigned>(brightnessPercent),
-                 static_cast<unsigned>(panelBrightness));
+      if (core::logging::is_dev_build()) {
+        DCTRL_LOGI("MQTT",
+                   "Applied payload with ETA-only render rowsMask=0x%02x activeRows=%u displayType=%u brightness=%u%% panel=%u",
+                   static_cast<unsigned>(etaDirtyRows),
+                   static_cast<unsigned>(renderModel_.activeRows),
+                   static_cast<unsigned>(renderModel_.displayType),
+                   static_cast<unsigned>(brightnessPercent),
+                   static_cast<unsigned>(panelBrightness));
+      }
       break;
     case RenderMode::kFull:
     default:
       schedule_full_render();
-      DCTRL_LOGI("MQTT", "Applied payload with full render activeRows=%u displayType=%u brightness=%u%% panel=%u",
-                 static_cast<unsigned>(renderModel_.activeRows),
-                 static_cast<unsigned>(renderModel_.displayType),
-                 static_cast<unsigned>(brightnessPercent),
-                 static_cast<unsigned>(panelBrightness));
+      if (core::logging::is_dev_build()) {
+        DCTRL_LOGI("MQTT", "Applied payload with full render activeRows=%u displayType=%u brightness=%u%% panel=%u",
+                   static_cast<unsigned>(renderModel_.activeRows),
+                   static_cast<unsigned>(renderModel_.displayType),
+                   static_cast<unsigned>(brightnessPercent),
+                   static_cast<unsigned>(panelBrightness));
+      }
       break;
   }
 
-  DCTRL_LOGI("MQTT",
-             "Applied payload displayType=%u brightness=%u%% panel=%u activeRows=%u row1={provider:%s line:%s eta:%s extra:%s} row2={provider:%s line:%s eta:%s extra:%s}",
-             static_cast<unsigned>(renderModel_.displayType),
-             static_cast<unsigned>(brightnessPercent),
-             static_cast<unsigned>(panelBrightness),
-             static_cast<unsigned>(renderModel_.activeRows),
-             renderModel_.rows[0].providerId,
-             renderModel_.rows[0].routeId,
-             renderModel_.rows[0].eta,
-             renderModel_.rows[0].etaExtra,
-             renderModel_.rows[1].providerId,
-             renderModel_.rows[1].routeId,
-             renderModel_.rows[1].eta,
-             renderModel_.rows[1].etaExtra);
+  if (core::logging::is_dev_build()) {
+    DCTRL_LOGI("MQTT",
+               "Applied payload displayType=%u brightness=%u%% panel=%u activeRows=%u row1={provider:%s line:%s eta:%s extra:%s} row2={provider:%s line:%s eta:%s extra:%s}",
+               static_cast<unsigned>(renderModel_.displayType),
+               static_cast<unsigned>(brightnessPercent),
+               static_cast<unsigned>(panelBrightness),
+               static_cast<unsigned>(renderModel_.activeRows),
+               renderModel_.rows[0].providerId,
+               renderModel_.rows[0].routeId,
+               renderModel_.rows[0].eta,
+               renderModel_.rows[0].etaExtra,
+               renderModel_.rows[1].providerId,
+               renderModel_.rows[1].routeId,
+               renderModel_.rows[1].eta,
+               renderModel_.rows[1].etaExtra);
+  }
   publish_display_state();
 }
 
@@ -2031,7 +2037,7 @@ void DeviceController::render_scroll_updates() {
 }
 
 void DeviceController::draw_dev_border() {
-  if (!is_dev_build() || !deps_.displayEngine) {
+  if (!core::logging::is_dev_build() || !deps_.displayEngine) {
     return;
   }
 
@@ -2147,11 +2153,13 @@ void DeviceController::render_frame(uint32_t nowMs) {
     return;
   }
 
-  DCTRL_LOGI("DISPLAY", "Rendering frame uiState=%s activeRows=%u displayType=%u status='%s'",
-             ui_state_name(renderModel_.uiState),
-             static_cast<unsigned>(renderModel_.activeRows),
-             static_cast<unsigned>(renderModel_.displayType),
-             renderModel_.statusLine);
+  if (core::logging::is_dev_build()) {
+    DCTRL_LOGI("DISPLAY", "Rendering frame uiState=%s activeRows=%u displayType=%u status='%s'",
+               ui_state_name(renderModel_.uiState),
+               static_cast<unsigned>(renderModel_.activeRows),
+               static_cast<unsigned>(renderModel_.displayType),
+               renderModel_.statusLine);
+  }
   deps_.layoutEngine->build_transit_layout(renderModel_, drawList_);
   for (size_t i = 0; i < drawList_.count; ++i) {
     const DrawCommand &cmd = drawList_.commands[i];
@@ -2239,7 +2247,9 @@ void DeviceController::publish_display_state() {
            r2Label,
            r2Eta);
 
-  DCTRL_LOGI("MQTT", "Publishing display state payload=%s", payload);
+  if (core::logging::is_dev_build()) {
+    DCTRL_LOGI("MQTT", "Publishing display state payload=%s", payload);
+  }
   deps_.mqttClient->publish_state(payload, false);
 }
 
