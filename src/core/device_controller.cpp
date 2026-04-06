@@ -7,6 +7,7 @@
 #include <esp_system.h>
 #include <stdio.h>
 #include <string.h>
+#include <type_traits>
 
 #include "parsing/payload_parser.h"
 #include "parsing/provider_parser_router.h"
@@ -36,6 +37,7 @@ constexpr uint32_t kTelemetryEveryMs = 30000;
 constexpr uint32_t kDeviceLogHeartbeatEveryMs = 300000;
 constexpr uint32_t kLowHeapWarningEveryMs = 60000;
 constexpr uint32_t kCrashBreadcrumbPersistEveryMs = 30000;
+constexpr uint32_t kStaleEtaAnimEveryMs = 450;
 constexpr uint32_t kLowHeapWarningThresholdBytes = 32768;
 constexpr uint32_t kMinRenderGapMs = 40;
 constexpr uint32_t kScrollStepMs = 65;       // advance 1px every 65ms (~15px/sec)
@@ -49,8 +51,30 @@ constexpr uint8_t kBrightnessFallbackPercent = JACK_LEI ? 80 : 60;
 constexpr uint16_t kColorBlack = 0x0000;
 constexpr uint16_t kColorAmber = 0xFD20;
 constexpr uint16_t kColorOrange = 0xFD20;
+constexpr const char *kTransitCachePrefsNs = "trcache";
+constexpr const char *kTransitCacheDataKey = "data";
+constexpr uint16_t kTransitCacheSchemaVersion = 1;
 display::BadgeRenderer gBadgeRenderer;
 Preferences gDevicePrefs;
+
+struct PersistedCachedTransitRow {
+  char providerId[kMaxProviderIdLen];
+  char routeId[kMaxRouteIdLen];
+  uint8_t displayType;
+  uint8_t scrollEnabled;
+  char direction[kMaxDestinationLen];
+  char destination[kMaxDestinationLen];
+};
+
+struct PersistedCachedTransitAssignment {
+  uint16_t schemaVersion;
+  uint8_t activeRows;
+  uint8_t displayType;
+  PersistedCachedTransitRow rows[kMaxVisibleTransitRows];
+};
+
+static_assert(std::is_trivially_copyable<PersistedCachedTransitAssignment>::value,
+              "Persisted transit cache must be trivially copyable");
 
 bool is_dev_build() { return strcmp(COMMUTELIVE_VERSION, "dev") == 0; }
 
@@ -64,6 +88,79 @@ void copy_str(char *dst, size_t dstLen, const char *src) {
   }
   strncpy(dst, src, dstLen - 1);
   dst[dstLen - 1] = '\0';
+}
+
+bool strings_equal(const char *lhs, const char *rhs);
+
+void clear_cached_row(CachedTransitRow &row) {
+  copy_str(row.providerId, sizeof(row.providerId), "");
+  copy_str(row.routeId, sizeof(row.routeId), "");
+  row.displayType = kMinDisplayType;
+  row.scrollEnabled = false;
+  copy_str(row.direction, sizeof(row.direction), "");
+  copy_str(row.destination, sizeof(row.destination), "");
+}
+
+void clear_cached_assignment(CachedTransitAssignment &assignment) {
+  assignment.activeRows = 0;
+  assignment.displayType = kMinDisplayType;
+  for (uint8_t i = 0; i < kMaxVisibleTransitRows; ++i) {
+    clear_cached_row(assignment.rows[i]);
+  }
+}
+
+void sanitize_cached_assignment(CachedTransitAssignment &assignment) {
+  if (assignment.activeRows < 1) assignment.activeRows = 1;
+  if (assignment.activeRows > kMaxVisibleTransitRows) assignment.activeRows = kMaxVisibleTransitRows;
+  if (assignment.displayType < kMinDisplayType || assignment.displayType > kMaxDisplayType) {
+    assignment.displayType = kMinDisplayType;
+  }
+
+  for (uint8_t i = 0; i < kMaxVisibleTransitRows; ++i) {
+    if (assignment.rows[i].displayType < kMinDisplayType || assignment.rows[i].displayType > kMaxDisplayType) {
+      assignment.rows[i].displayType = assignment.displayType;
+    }
+  }
+}
+
+bool cached_rows_equal(const CachedTransitRow &lhs, const CachedTransitRow &rhs) {
+  return strings_equal(lhs.providerId, rhs.providerId) &&
+         strings_equal(lhs.routeId, rhs.routeId) &&
+         lhs.displayType == rhs.displayType &&
+         lhs.scrollEnabled == rhs.scrollEnabled &&
+         strings_equal(lhs.direction, rhs.direction) &&
+         strings_equal(lhs.destination, rhs.destination);
+}
+
+bool cached_assignments_equal(const CachedTransitAssignment &lhs, const CachedTransitAssignment &rhs) {
+  if (lhs.activeRows != rhs.activeRows || lhs.displayType != rhs.displayType) {
+    return false;
+  }
+
+  for (uint8_t i = 0; i < kMaxVisibleTransitRows; ++i) {
+    if (!cached_rows_equal(lhs.rows[i], rhs.rows[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void copy_cached_row(PersistedCachedTransitRow &dst, const CachedTransitRow &src) {
+  copy_str(dst.providerId, sizeof(dst.providerId), src.providerId);
+  copy_str(dst.routeId, sizeof(dst.routeId), src.routeId);
+  dst.displayType = src.displayType;
+  dst.scrollEnabled = src.scrollEnabled ? 1U : 0U;
+  copy_str(dst.direction, sizeof(dst.direction), src.direction);
+  copy_str(dst.destination, sizeof(dst.destination), src.destination);
+}
+
+void copy_cached_row(CachedTransitRow &dst, const PersistedCachedTransitRow &src) {
+  copy_str(dst.providerId, sizeof(dst.providerId), src.providerId);
+  copy_str(dst.routeId, sizeof(dst.routeId), src.routeId);
+  dst.displayType = src.displayType;
+  dst.scrollEnabled = src.scrollEnabled != 0;
+  copy_str(dst.direction, sizeof(dst.direction), src.direction);
+  copy_str(dst.destination, sizeof(dst.destination), src.destination);
 }
 
 bool extract_json_bool_field(const String &json, const char *field, bool fallbackValue) {
@@ -545,6 +642,8 @@ const char *ui_state_name(UiState state) {
   switch (state) {
     case UiState::kBooting:
       return "kBooting";
+    case UiState::kStaleTransit:
+      return "kStaleTransit";
     case UiState::kSetupMode:
       return "kSetupMode";
     case UiState::kNoWifi:
@@ -634,20 +733,25 @@ DeviceController::DeviceController(const Dependencies &deps)
       lastDeviceLogHeartbeatAtMs_(0),
       lastLowMemoryWarningAtMs_(0),
       lastRenderAtMs_(0),
+      lastStaleEtaAnimAtMs_(0),
       lastWifiDisconnectAtMs_(0),
       lastMqttDisconnectAtMs_(0),
       renderDirty_(true),
       lastMqttConnected_(false),
       bootLogPublished_(false),
+      hasFreshPayload_(false),
+      hasCachedTransitAssignment_(false),
       pendingCrashReport_(false),
       pendingWifiConnectedLog_(false),
       pendingWifiDisconnectLog_(false),
       pendingMqttDisconnectLog_(false),
       pendingRenderMode_(RenderMode::kFull),
       etaDirtyRowMask_(0),
-      scrollState_{} {
+      scrollState_{},
+      cachedTransitAssignment_{} {
   memset(&renderModel_, 0, sizeof(renderModel_));
   memset(scrollState_, 0, sizeof(scrollState_));
+  clear_cached_assignment(cachedTransitAssignment_);
   memset(pendingProvisionToken_, 0, sizeof(pendingProvisionToken_));
   memset(pendingProvisionServerUrl_, 0, sizeof(pendingProvisionServerUrl_));
   memset(pendingCrashReportMetadata_, 0, sizeof(pendingCrashReportMetadata_));
@@ -710,6 +814,14 @@ bool DeviceController::begin() {
              COMMUTELIVE_VERSION,
              static_cast<unsigned long>(bootCount_),
              reset_reason_name(resetReason));
+
+  hasCachedTransitAssignment_ = load_cached_transit_assignment();
+  if (hasCachedTransitAssignment_) {
+    apply_cached_transit_assignment();
+    DCTRL_LOGI("CORE", "Loaded cached transit assignment rows=%u displayType=%u",
+               static_cast<unsigned>(cachedTransitAssignment_.activeRows),
+               static_cast<unsigned>(cachedTransitAssignment_.displayType));
+  }
 
   MqttTopics topics{};
   if (!MqttClient::build_default_topics(runtimeConfig_.deviceId, topics)) {
@@ -792,6 +904,7 @@ void DeviceController::tick(uint32_t nowMs) {
   if (!mqttConnected && lastMqttConnected_) {
     lastMqttDisconnectAtMs_ = nowMs;
     pendingMqttDisconnectLog_ = true;
+    hasFreshPayload_ = false;
   }
 
   if (mqttConnected && !lastMqttConnected_) {
@@ -868,6 +981,7 @@ void DeviceController::tick(uint32_t nowMs) {
 
   persist_runtime_breadcrumbs(nowMs);
 
+  sync_stale_eta_animation(nowMs);
   tick_scroll(nowMs);
   render_frame(nowMs);
 }
@@ -905,6 +1019,7 @@ void DeviceController::handle_network_state(NetworkState state) {
   } else if (state == NetworkState::kDisconnected || state == NetworkState::kApMode) {
     lastWifiDisconnectAtMs_ = millis();
     pendingWifiDisconnectLog_ = true;
+    hasFreshPayload_ = false;
   }
 
   // Only interact with BLE provisioner when it is active (no prior credentials).
@@ -1008,6 +1123,7 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   if (cmdType == "factory_reset") {
     DCTRL_LOGW("CMD", "Factory reset requested; clearing credentials and restarting");
     deps_.mqttClient->disconnect(true);
+    clear_cached_transit_assignment();
     wifi_manager::clear_credentials();
     delay(500);
     ESP.restart();
@@ -1027,8 +1143,6 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   String provider = extract_json_string_field(message, "provider");
   if (provider.length() == 0 || !parsing::is_supported_provider_id(provider)) {
     DCTRL_LOGW("MQTT", "Ignoring payload because provider is unsupported provider=%s", provider.c_str());
-    renderModel_.hasData = false;
-    schedule_full_render();
     return;
   }
 
@@ -1070,6 +1184,9 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   }
 
   RenderModel nextModel = renderModel_;
+  CachedTransitAssignment nextCachedAssignment{};
+  clear_cached_assignment(nextCachedAssignment);
+  nextCachedAssignment.displayType = displayType;
   copy_str(nextModel.rows[0].providerId, sizeof(nextModel.rows[0].providerId),
            row1Provider.c_str());
   copy_str(nextModel.rows[0].routeId, sizeof(nextModel.rows[0].routeId),
@@ -1084,6 +1201,16 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   normalize_eta(parsed.row1.eta, nextModel.rows[0].eta, sizeof(nextModel.rows[0].eta));
   copy_str(nextModel.rows[0].etaExtra, sizeof(nextModel.rows[0].etaExtra),
            row1CompactExtraEtaPreset ? row1EtaExtra : "");
+  copy_str(nextCachedAssignment.rows[0].providerId, sizeof(nextCachedAssignment.rows[0].providerId),
+           nextModel.rows[0].providerId);
+  copy_str(nextCachedAssignment.rows[0].routeId, sizeof(nextCachedAssignment.rows[0].routeId),
+           nextModel.rows[0].routeId);
+  nextCachedAssignment.rows[0].displayType = row1DisplayType;
+  nextCachedAssignment.rows[0].scrollEnabled = nextModel.rows[0].scrollEnabled;
+  copy_str(nextCachedAssignment.rows[0].direction, sizeof(nextCachedAssignment.rows[0].direction),
+           nextModel.rows[0].direction);
+  copy_str(nextCachedAssignment.rows[0].destination, sizeof(nextCachedAssignment.rows[0].destination),
+           nextModel.rows[0].destination);
 
   if (parsed.hasRow2) {
     const String row2Provider = parsed.row2.provider.length() ? parsed.row2.provider : provider;
@@ -1103,6 +1230,17 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
              row2CompactExtraEtaPreset ? row2EtaExtra : "");
 
     nextModel.activeRows = 2;
+    nextCachedAssignment.activeRows = 2;
+    copy_str(nextCachedAssignment.rows[1].providerId, sizeof(nextCachedAssignment.rows[1].providerId),
+             nextModel.rows[1].providerId);
+    copy_str(nextCachedAssignment.rows[1].routeId, sizeof(nextCachedAssignment.rows[1].routeId),
+             nextModel.rows[1].routeId);
+    nextCachedAssignment.rows[1].displayType = row2DisplayType;
+    nextCachedAssignment.rows[1].scrollEnabled = nextModel.rows[1].scrollEnabled;
+    copy_str(nextCachedAssignment.rows[1].direction, sizeof(nextCachedAssignment.rows[1].direction),
+             nextModel.rows[1].direction);
+    copy_str(nextCachedAssignment.rows[1].destination, sizeof(nextCachedAssignment.rows[1].destination),
+             nextModel.rows[1].destination);
     for (uint8_t i = 2; i < kMaxTransitRows; ++i) {
       clear_row(nextModel.rows[i]);
     }
@@ -1168,9 +1306,15 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
     }
 
     nextModel.activeRows = static_cast<uint8_t>(rowsToRender);
+    nextCachedAssignment.activeRows = 1;
     for (int i = rowsToRender; i < static_cast<int>(kMaxTransitRows); ++i) {
       clear_row(nextModel.rows[i]);
     }
+  }
+
+  sanitize_cached_assignment(nextCachedAssignment);
+  if (!hasCachedTransitAssignment_ || !cached_assignments_equal(cachedTransitAssignment_, nextCachedAssignment)) {
+    persist_cached_transit_assignment(nextCachedAssignment);
   }
 
   nextModel.hasData = true;
@@ -1194,6 +1338,7 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   }
 
   renderModel_ = nextModel;
+  hasFreshPayload_ = true;
 
   // If scroll state was reset (e.g. scroll toggled off), force full redraw so text
   // renders at offset 0 (truncated/cutoff) instead of frozen at mid-scroll position
@@ -1256,6 +1401,8 @@ void DeviceController::handle_display_blank_command(const String &message,
                                                     uint8_t panelBrightness) {
   const String reason = extract_json_string_field(message, "reason");
 
+  clear_cached_transit_assignment();
+  hasFreshPayload_ = false;
   renderModel_.hasData = false;
   renderModel_.uiState = UiState::kBlank;
   renderModel_.displayType = kMinDisplayType;
@@ -1294,11 +1441,17 @@ void DeviceController::handle_disconnect_wifi_command(const String &message) {
   deps_.networkManager->disconnect(clearCredentials, restartProvisioning);
 
   if (restartProvisioning) {
+    clear_cached_transit_assignment();
     bleProvisioner_.begin(runtimeConfig_.deviceId, runtimeConfig_.deviceId);
   } else {
     bleProvisioner_.stop();
   }
 
+  if (clearCredentials) {
+    clear_cached_transit_assignment();
+  }
+
+  hasFreshPayload_ = false;
   renderModel_.hasData = false;
   set_default_rows(renderModel_);
   update_ui_state();
@@ -1530,10 +1683,14 @@ void DeviceController::update_ui_state() {
   const bool mqttUp = deps_.mqttClient->connected();
 
   if (renderModel_.uiState == UiState::kBlank && !renderModel_.hasData) {
-  } else if (renderModel_.hasData && wifiUp && mqttUp) {
+  } else if (renderModel_.hasData && wifiUp && mqttUp && hasFreshPayload_) {
     renderModel_.uiState = UiState::kTransit;
     copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "TRANSIT");
     copy_str(renderModel_.statusDetail, sizeof(renderModel_.statusDetail), "Live arrivals");
+  } else if (renderModel_.hasData) {
+    renderModel_.uiState = UiState::kStaleTransit;
+    copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "RESTORING");
+    copy_str(renderModel_.statusDetail, sizeof(renderModel_.statusDetail), "Waiting for live data");
   } else if (deps_.networkManager->setup_mode_active() && !wifiUp) {
     renderModel_.uiState = UiState::kSetupMode;
     copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "SET UP");
@@ -1558,6 +1715,9 @@ void DeviceController::update_ui_state() {
   if (previousState != renderModel_.uiState ||
       strcmp(prevStatus, renderModel_.statusLine) != 0 ||
       strcmp(prevDetail, renderModel_.statusDetail) != 0) {
+    if (renderModel_.uiState == UiState::kStaleTransit) {
+      sync_stale_eta_animation(millis(), true);
+    }
     schedule_full_render();
     DCTRL_LOGI("UI",
                "UI state changed %s -> %s status='%s' detail='%s' wifiUp=%s mqttUp=%s hasData=%s networkState=%s",
@@ -1570,6 +1730,165 @@ void DeviceController::update_ui_state() {
                core::logging::bool_str(renderModel_.hasData),
                network_state_name(deps_.networkManager->state()));
   }
+}
+
+void DeviceController::sync_stale_eta_animation(uint32_t nowMs, bool force) {
+  if (renderModel_.uiState != UiState::kStaleTransit || !renderModel_.hasData || renderModel_.activeRows == 0) {
+    return;
+  }
+
+  if (!force && lastStaleEtaAnimAtMs_ != 0 && nowMs - lastStaleEtaAnimAtMs_ < kStaleEtaAnimEveryMs) {
+    return;
+  }
+
+  uint8_t frame = 0;
+  if (!force && lastStaleEtaAnimAtMs_ != 0) {
+    frame = static_cast<uint8_t>(((nowMs / kStaleEtaAnimEveryMs) % 3U) + 1U);
+  } else {
+    frame = static_cast<uint8_t>(((nowMs / kStaleEtaAnimEveryMs) % 3U) + 1U);
+  }
+
+  char dots[kMaxEtaLen];
+  memset(dots, 0, sizeof(dots));
+  dots[0] = '.';
+  dots[1] = (frame >= 2U) ? '.' : ' ';
+  dots[2] = (frame >= 3U) ? '.' : ' ';
+  dots[3] = '\0';
+
+  bool changed = false;
+  for (uint8_t i = 0; i < renderModel_.activeRows && i < kMaxTransitRows; ++i) {
+    if (!strings_equal(renderModel_.rows[i].eta, dots)) {
+      copy_str(renderModel_.rows[i].eta, sizeof(renderModel_.rows[i].eta), dots);
+      changed = true;
+    }
+    if (renderModel_.rows[i].etaExtra[0] != '\0') {
+      copy_str(renderModel_.rows[i].etaExtra, sizeof(renderModel_.rows[i].etaExtra), "");
+      changed = true;
+    }
+  }
+
+  lastStaleEtaAnimAtMs_ = nowMs;
+  if (changed) {
+    schedule_eta_render(static_cast<uint8_t>((1U << renderModel_.activeRows) - 1U));
+  }
+}
+
+bool DeviceController::load_cached_transit_assignment() {
+  clear_cached_assignment(cachedTransitAssignment_);
+
+  Preferences prefs;
+  if (!prefs.begin(kTransitCachePrefsNs, true)) {
+    return false;
+  }
+
+  const size_t dataLen = prefs.getBytesLength(kTransitCacheDataKey);
+  if (dataLen != sizeof(PersistedCachedTransitAssignment)) {
+    prefs.end();
+    return false;
+  }
+
+  PersistedCachedTransitAssignment persisted{};
+  if (prefs.getBytes(kTransitCacheDataKey, &persisted, sizeof(persisted)) != sizeof(persisted)) {
+    prefs.end();
+    return false;
+  }
+  prefs.end();
+
+  if (persisted.schemaVersion != kTransitCacheSchemaVersion) {
+    return false;
+  }
+
+  cachedTransitAssignment_.activeRows = persisted.activeRows;
+  cachedTransitAssignment_.displayType = persisted.displayType;
+  for (uint8_t i = 0; i < kMaxVisibleTransitRows; ++i) {
+    copy_cached_row(cachedTransitAssignment_.rows[i], persisted.rows[i]);
+  }
+  sanitize_cached_assignment(cachedTransitAssignment_);
+
+  const CachedTransitRow &row0 = cachedTransitAssignment_.rows[0];
+  if (row0.providerId[0] == '\0' && row0.routeId[0] == '\0' && row0.destination[0] == '\0') {
+    clear_cached_assignment(cachedTransitAssignment_);
+    return false;
+  }
+
+  return true;
+}
+
+void DeviceController::apply_cached_transit_assignment() {
+  if (!hasCachedTransitAssignment_) {
+    return;
+  }
+
+  for (uint8_t i = 0; i < kMaxTransitRows; ++i) {
+    clear_row(renderModel_.rows[i]);
+    reset_scroll_state(i);
+  }
+
+  renderModel_.hasData = true;
+  renderModel_.displayType = cachedTransitAssignment_.displayType;
+  renderModel_.activeRows = cachedTransitAssignment_.activeRows;
+  renderModel_.updatedAtMs = 0;
+
+  for (uint8_t i = 0; i < cachedTransitAssignment_.activeRows && i < kMaxVisibleTransitRows; ++i) {
+    const CachedTransitRow &src = cachedTransitAssignment_.rows[i];
+    TransitRowModel &dst = renderModel_.rows[i];
+    copy_str(dst.providerId, sizeof(dst.providerId), src.providerId);
+    copy_str(dst.routeId, sizeof(dst.routeId), src.routeId);
+    dst.displayType = src.displayType;
+    dst.scrollEnabled = src.scrollEnabled;
+    copy_str(dst.direction, sizeof(dst.direction), src.direction);
+    copy_str(dst.destination, sizeof(dst.destination), src.destination);
+    copy_str(dst.eta, sizeof(dst.eta), "--");
+    copy_str(dst.etaExtra, sizeof(dst.etaExtra), "");
+  }
+
+  hasFreshPayload_ = false;
+}
+
+void DeviceController::persist_cached_transit_assignment(const CachedTransitAssignment &assignment) {
+  CachedTransitAssignment next = assignment;
+  sanitize_cached_assignment(next);
+
+  PersistedCachedTransitAssignment persisted{};
+  persisted.schemaVersion = kTransitCacheSchemaVersion;
+  persisted.activeRows = next.activeRows;
+  persisted.displayType = next.displayType;
+  for (uint8_t i = 0; i < kMaxVisibleTransitRows; ++i) {
+    copy_cached_row(persisted.rows[i], next.rows[i]);
+  }
+
+  Preferences prefs;
+  if (!prefs.begin(kTransitCachePrefsNs, false)) {
+    DCTRL_LOGW("CACHE", "Failed to open transit cache namespace for write");
+    return;
+  }
+
+  const size_t written = prefs.putBytes(kTransitCacheDataKey, &persisted, sizeof(persisted));
+  prefs.end();
+  if (written != sizeof(persisted)) {
+    DCTRL_LOGW("CACHE", "Failed to persist transit cache bytes=%u expected=%u",
+               static_cast<unsigned>(written),
+               static_cast<unsigned>(sizeof(persisted)));
+    return;
+  }
+
+  cachedTransitAssignment_ = next;
+  hasCachedTransitAssignment_ = true;
+  DCTRL_LOGI("CACHE", "Persisted transit cache rows=%u displayType=%u",
+             static_cast<unsigned>(cachedTransitAssignment_.activeRows),
+             static_cast<unsigned>(cachedTransitAssignment_.displayType));
+}
+
+void DeviceController::clear_cached_transit_assignment() {
+  Preferences prefs;
+  if (prefs.begin(kTransitCachePrefsNs, false)) {
+    prefs.remove(kTransitCacheDataKey);
+    prefs.end();
+  }
+
+  clear_cached_assignment(cachedTransitAssignment_);
+  hasCachedTransitAssignment_ = false;
+  DCTRL_LOGI("CACHE", "Cleared transit cache");
 }
 
 void DeviceController::render_eta_updates() {

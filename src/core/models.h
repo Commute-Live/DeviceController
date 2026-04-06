@@ -61,6 +61,7 @@ inline bool compute_geometry(const DisplayConfig &cfg, DisplayGeometry &out) {
 
 enum class UiState : uint8_t {
   kBooting,
+  kStaleTransit,
   kSetupMode,
   kNoWifi,
   kWifiOkNoMqtt,

@@ -13,6 +13,21 @@
 #include "core/network_manager.h"
 namespace core {
 
+struct CachedTransitRow {
+  char providerId[kMaxProviderIdLen];
+  char routeId[kMaxRouteIdLen];
+  uint8_t displayType;
+  bool scrollEnabled;
+  char direction[kMaxDestinationLen];
+  char destination[kMaxDestinationLen];
+};
+
+struct CachedTransitAssignment {
+  uint8_t activeRows;
+  uint8_t displayType;
+  CachedTransitRow rows[kMaxVisibleTransitRows];
+};
+
 class DeviceController final {
  public:
   struct Dependencies {
@@ -61,11 +76,14 @@ class DeviceController final {
   uint32_t lastDeviceLogHeartbeatAtMs_;
   uint32_t lastLowMemoryWarningAtMs_;
   uint32_t lastRenderAtMs_;
+  uint32_t lastStaleEtaAnimAtMs_;
   uint32_t lastWifiDisconnectAtMs_;
   uint32_t lastMqttDisconnectAtMs_;
   bool renderDirty_;
   bool lastMqttConnected_;
   bool bootLogPublished_;
+  bool hasFreshPayload_;
+  bool hasCachedTransitAssignment_;
   bool pendingCrashReport_;
   bool pendingWifiConnectedLog_;
   bool pendingWifiDisconnectLog_;
@@ -73,6 +91,7 @@ class DeviceController final {
   RenderMode pendingRenderMode_;
   uint8_t etaDirtyRowMask_;
   RowScrollState scrollState_[kMaxTransitRows];
+  CachedTransitAssignment cachedTransitAssignment_;
   char pendingCrashReportMetadata_[256];
   static DeviceController *activeController_;
 
@@ -98,6 +117,11 @@ class DeviceController final {
   void render_scroll_updates();
   void update_ui_state();
   void render_frame(uint32_t nowMs);
+  void sync_stale_eta_animation(uint32_t nowMs, bool force = false);
+  bool load_cached_transit_assignment();
+  void apply_cached_transit_assignment();
+  void persist_cached_transit_assignment(const CachedTransitAssignment &assignment);
+  void clear_cached_transit_assignment();
   void render_eta_updates();
   void draw_dev_border();
   bool publish_device_log(const char *status,

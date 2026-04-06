@@ -488,7 +488,8 @@ bool LayoutEngine::compute_transit_row_geometry(const RenderModel &model,
                                                 TransitRowGeometry &out) const {
   memset(&out, 0, sizeof(out));
 
-  const bool transitView = model.hasData && model.uiState == UiState::kTransit;
+  const bool transitView =
+      model.hasData && (model.uiState == UiState::kTransit || model.uiState == UiState::kStaleTransit);
   if (!transitView || rowIndex >= kMaxTransitRows) {
     return false;
   }
@@ -598,7 +599,8 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
   bg.bitmap = nullptr;
   out.push(bg);
 
-  const bool transitView = model.hasData && model.uiState == UiState::kTransit;
+  const bool transitView =
+      model.hasData && (model.uiState == UiState::kTransit || model.uiState == UiState::kStaleTransit);
   if (!transitView) {
     if (model.uiState == UiState::kBlank) {
       return;
@@ -991,6 +993,19 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
     } else {
       draw_compact_line(row_label_for_display_type(row), destinationY, destinationFont);
     }
+  }
+
+  if (model.uiState == UiState::kStaleTransit) {
+    DrawCommand staleTag{};
+    staleTag.type = DrawCommandType::kText;
+    staleTag.x = static_cast<int16_t>(width_ > 22 ? width_ - 22 : 0);
+    staleTag.y = 0;
+    staleTag.color = kColorGray;
+    staleTag.bg = kColorBlack;
+    staleTag.size = kTextSizeTiny;
+    staleTag.text = out.copy_text("STALE");
+    staleTag.bitmap = nullptr;
+    out.push(staleTag);
   }
 }
 
