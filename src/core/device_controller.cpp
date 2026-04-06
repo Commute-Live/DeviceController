@@ -14,16 +14,15 @@
 #include "display/badge_renderer.h"
 #include "network/wifi_manager.h"
 
+#if __has_include("secrets.h")
+#include "secrets.h"
+#else
+#include "secrets.example.h"
+#warning "Using include/secrets.example.h defaults. Create include/secrets.h for real credentials."
+#endif
+
 #ifndef JACK_LEI
 #define JACK_LEI true
-#endif
-
-#ifndef COMMUTELIVE_FIRMWARE_VERSION
-#define COMMUTELIVE_FIRMWARE_VERSION "dev"
-#endif
-
-#ifndef COMMUTELIVE_DEVICE_ENV
-#define COMMUTELIVE_DEVICE_ENV "unknown"
 #endif
 
 namespace core {
@@ -49,8 +48,11 @@ constexpr uint8_t kMaxDisplayType = 5;
 constexpr uint8_t kBrightnessFallbackPercent = JACK_LEI ? 80 : 60;
 constexpr uint16_t kColorBlack = 0x0000;
 constexpr uint16_t kColorAmber = 0xFD20;
+constexpr uint16_t kColorOrange = 0xFD20;
 display::BadgeRenderer gBadgeRenderer;
 Preferences gDevicePrefs;
+
+bool is_dev_build() { return strcmp(COMMUTELIVE_VERSION, "dev") == 0; }
 
 void copy_str(char *dst, size_t dstLen, const char *src) {
   if (dstLen == 0) {
@@ -705,7 +707,7 @@ bool DeviceController::begin() {
     bootCount_ = 1;
   }
   DCTRL_LOGI("CORE", "Boot metadata firmware=%s bootCount=%lu resetReason=%s",
-             COMMUTELIVE_FIRMWARE_VERSION,
+             COMMUTELIVE_VERSION,
              static_cast<unsigned long>(bootCount_),
              reset_reason_name(resetReason));
 
@@ -1366,7 +1368,7 @@ void DeviceController::http_status_handler() {
            "{\"deviceId\":\"%s\",\"wifiConnected\":%s,\"firmwareVersion\":\"%s\"}",
            activeController_->runtimeConfig_.deviceId,
            wifiConnected ? "true" : "false",
-           COMMUTELIVE_FIRMWARE_VERSION);
+           COMMUTELIVE_VERSION);
   activeController_->server_.send(200, "application/json", response);
 }
 
@@ -1619,6 +1621,7 @@ void DeviceController::render_eta_updates() {
     }
   }
 
+  draw_dev_border();
   deps_.displayEngine->present();
   renderDirty_ = false;
   pendingRenderMode_ = RenderMode::kNone;
@@ -1666,9 +1669,26 @@ void DeviceController::render_scroll_updates() {
     }
   }
 
+  draw_dev_border();
   deps_.displayEngine->present();
   renderDirty_ = false;
   pendingRenderMode_ = RenderMode::kNone;
+}
+
+void DeviceController::draw_dev_border() {
+  if (!is_dev_build() || !deps_.displayEngine) {
+    return;
+  }
+
+  DisplayEngine &display = *deps_.displayEngine;
+  const DisplayGeometry &geom = display.geometry();
+  if (geom.totalWidth == 0 || geom.totalHeight == 0) {
+    return;
+  }
+
+  for (int16_t y = 0; y < static_cast<int16_t>(geom.totalHeight); ++y) {
+    display.draw_pixel(0, y, kColorOrange);
+  }
 }
 
 bool DeviceController::publish_device_log(const char *status,
@@ -1690,8 +1710,8 @@ bool DeviceController::publish_device_log(const char *status,
   json_escape(core::logging::safe_str(message), safeMessage, sizeof(safeMessage));
   json_escape(core::logging::safe_str(status), safeStatus, sizeof(safeStatus));
   json_escape(core::logging::safe_str(eventType), safeEventType, sizeof(safeEventType));
-  json_escape(COMMUTELIVE_FIRMWARE_VERSION, safeFirmware, sizeof(safeFirmware));
-  json_escape(COMMUTELIVE_DEVICE_ENV, safeEnv, sizeof(safeEnv));
+  json_escape(COMMUTELIVE_VERSION, safeFirmware, sizeof(safeFirmware));
+  json_escape(COMMUTELIVE_VERSION, safeEnv, sizeof(safeEnv));
   json_escape(reset_reason_name(esp_reset_reason()), safeResetReason, sizeof(safeResetReason));
 
   char payload[kMaxPayloadLen + 1];
@@ -1818,6 +1838,7 @@ void DeviceController::render_frame(uint32_t nowMs) {
     }
   }
 
+  draw_dev_border();
   deps_.displayEngine->present();
   renderDirty_ = false;
   pendingRenderMode_ = RenderMode::kNone;

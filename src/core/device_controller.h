@@ -99,6 +99,7 @@ class DeviceController final {
   void update_ui_state();
   void render_frame(uint32_t nowMs);
   void render_eta_updates();
+  void draw_dev_border();
   bool publish_device_log(const char *status,
                           const char *eventType,
                           const char *message,
