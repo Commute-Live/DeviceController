@@ -359,35 +359,15 @@ int16_t max_rounded_badge_width(const RenderModel &model, int16_t badgeHeight) {
   return width;
 }
 
-uint16_t eta_color(const char *eta) {
-  if (!eta || eta[0] == '\0' || strcmp(eta, "--") == 0) {
-    return kColorGray;
+uint16_t transit_service_color(const TransitRowModel &row, UiState uiState) {
+  // Transit color policy:
+  // - white when the device is showing stale data because connectivity broke locally
+  // - yellow when the upstream payload marks the line delayed
+  // - green for non-delayed live service
+  if (uiState == UiState::kStaleTransit) {
+    return kColorWhite;
   }
-  if (strncmp(eta, "DUE", 3) == 0 || strncmp(eta, "NOW", 3) == 0) {
-    return kColorRed;
-  }
-
-  int minutes = 0;
-  bool foundDigit = false;
-  for (const char *p = eta; *p != '\0'; ++p) {
-    if (*p >= '0' && *p <= '9') {
-      foundDigit = true;
-      minutes = (minutes * 10) + (*p - '0');
-    } else if (foundDigit) {
-      break;
-    }
-  }
-
-  if (!foundDigit) {
-    return kColorGray;
-  }
-  if (minutes <= 1) {
-    return kColorRed;
-  }
-  if (minutes <= 5) {
-    return kColorAmber;
-  }
-  return kColorGreen;
+  return row.delayed ? 0xFFE0 : kColorGreen;
 }
 
 void compute_transit_row_frames(const RenderModel &model,
@@ -461,7 +441,9 @@ const char *DrawList::copy_text(const char *text) {
 
 LayoutEngine::LayoutEngine() : width_(128), height_(32) {}
 
-uint16_t LayoutEngine::eta_color_for_text(const char *eta) { return eta_color(eta); }
+uint16_t LayoutEngine::eta_color_for_row(const TransitRowModel &row, UiState uiState) {
+  return transit_service_color(row, uiState);
+}
 
 void LayoutEngine::set_viewport(uint16_t width, uint16_t height) {
   width_ = width;
@@ -902,7 +884,7 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
     eta.type = DrawCommandType::kText;
     eta.x = rowGeometry.etaTextX;
     eta.y = rowGeometry.etaTextY;
-    eta.color = eta_color(row.eta);
+    eta.color = transit_service_color(row, model.uiState);
     eta.bg = kColorBlack;
     eta.size = rowGeometry.etaFont;
     eta.text = trim_for_width(row.eta[0] ? row.eta : "--", kEtaChars, out);
@@ -988,7 +970,11 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
       draw_compact_line(line1, preset45Y, destinationFont);
       if (rowGeometry.hasEtaExtra && row.etaExtra[0] != '\0') {
         // Reserve extra space on the right so bottom ETAs never overlap the main ETA column.
-        draw_compact_line(row.etaExtra, rowGeometry.etaExtraTextY, rowGeometry.etaExtraFont, 3, kColorAmber);
+        draw_compact_line(row.etaExtra,
+                          rowGeometry.etaExtraTextY,
+                          rowGeometry.etaExtraFont,
+                          3,
+                          transit_service_color(row, model.uiState));
       }
     } else {
       draw_compact_line(row_label_for_display_type(row), destinationY, destinationFont);
@@ -1000,7 +986,7 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
     staleTag.type = DrawCommandType::kText;
     staleTag.x = static_cast<int16_t>(width_ > 22 ? width_ - 22 : 0);
     staleTag.y = 0;
-    staleTag.color = kColorGray;
+    staleTag.color = kColorWhite;
     staleTag.bg = kColorBlack;
     staleTag.size = kTextSizeTiny;
     staleTag.text = out.copy_text("STALE");

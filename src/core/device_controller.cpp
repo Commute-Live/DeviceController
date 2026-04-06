@@ -50,7 +50,7 @@ constexpr uint8_t kMaxDisplayType = 5;
 constexpr uint8_t kBrightnessFallbackPercent = JACK_LEI ? 80 : 60;
 constexpr uint16_t kColorBlack = 0x0000;
 constexpr uint16_t kColorAmber = 0xFD20;
-constexpr uint16_t kColorOrange = 0xFD20;
+constexpr uint16_t kColorOrange = 0xA320;
 constexpr const char *kTransitCachePrefsNs = "trcache";
 constexpr const char *kTransitCacheDataKey = "data";
 constexpr uint16_t kTransitCacheSchemaVersion = 1;
@@ -255,6 +255,8 @@ void set_default_rows(RenderModel &model) {
   copy_str(model.rows[0].providerId, sizeof(model.rows[0].providerId), "");
   copy_str(model.rows[0].routeId, sizeof(model.rows[0].routeId), "--");
   model.rows[0].displayType = kMinDisplayType;
+  model.rows[0].scrollEnabled = false;
+  model.rows[0].delayed = false;
   copy_str(model.rows[0].direction, sizeof(model.rows[0].direction), "");
   copy_str(model.rows[0].destination, sizeof(model.rows[0].destination), "Waiting data");
   copy_str(model.rows[0].eta, sizeof(model.rows[0].eta), "--");
@@ -264,6 +266,8 @@ void set_default_rows(RenderModel &model) {
     copy_str(model.rows[i].providerId, sizeof(model.rows[i].providerId), "");
     copy_str(model.rows[i].routeId, sizeof(model.rows[i].routeId), "");
     model.rows[i].displayType = kMinDisplayType;
+    model.rows[i].scrollEnabled = false;
+    model.rows[i].delayed = false;
     copy_str(model.rows[i].direction, sizeof(model.rows[i].direction), "");
     copy_str(model.rows[i].destination, sizeof(model.rows[i].destination), "");
     copy_str(model.rows[i].eta, sizeof(model.rows[i].eta), "");
@@ -417,6 +421,42 @@ String extract_row_display_label(const String &message, uint8_t rowIndex) {
   return "";
 }
 
+bool string_implies_delay(const String &value) {
+  String normalized = value;
+  normalized.trim();
+  normalized.toLowerCase();
+  return normalized == "delayed" ||
+         normalized == "delay" ||
+         normalized == "late" ||
+         normalized == "suspended" ||
+         normalized == "service change" ||
+         normalized == "service advisory";
+}
+
+bool line_object_is_delayed(const String &lineObject) {
+  return extract_json_bool_field(lineObject, "delayed", false) ||
+         extract_json_bool_field(lineObject, "isDelayed", false) ||
+         extract_json_bool_field(lineObject, "hasDelay", false) ||
+         string_implies_delay(extract_json_string_field(lineObject, "status")) ||
+         string_implies_delay(extract_json_string_field(lineObject, "serviceStatus"));
+}
+
+bool extract_row_delayed(const String &message, uint8_t rowIndex) {
+  String item;
+  if (extract_lines_object_at(message, rowIndex, item)) {
+    return line_object_is_delayed(item);
+  }
+
+  if (rowIndex == 0) {
+    return extract_json_bool_field(message, "delayed", false) ||
+           extract_json_bool_field(message, "isDelayed", false) ||
+           extract_json_bool_field(message, "hasDelay", false) ||
+           string_implies_delay(extract_json_string_field(message, "status")) ||
+           string_implies_delay(extract_json_string_field(message, "serviceStatus"));
+  }
+  return false;
+}
+
 int extract_eta_values_from_line_object(const String &lineObject, String outEtas[], int maxCount) {
   if (maxCount <= 0) return 0;
   const int compactEtaCount = extract_json_string_array_field(lineObject, "etas", outEtas, maxCount);
@@ -495,6 +535,8 @@ void clear_row(TransitRowModel &row) {
   copy_str(row.providerId, sizeof(row.providerId), "");
   copy_str(row.routeId, sizeof(row.routeId), "");
   row.displayType = kMinDisplayType;
+  row.scrollEnabled = false;
+  row.delayed = false;
   copy_str(row.direction, sizeof(row.direction), "");
   copy_str(row.destination, sizeof(row.destination), "");
   copy_str(row.eta, sizeof(row.eta), "");
@@ -526,6 +568,8 @@ bool rows_equal(const TransitRowModel &lhs, const TransitRowModel &rhs) {
   return strings_equal(lhs.providerId, rhs.providerId) &&
          strings_equal(lhs.routeId, rhs.routeId) &&
          lhs.displayType == rhs.displayType &&
+         lhs.scrollEnabled == rhs.scrollEnabled &&
+         lhs.delayed == rhs.delayed &&
          strings_equal(lhs.direction, rhs.direction) &&
          strings_equal(lhs.destination, rhs.destination) &&
          strings_equal(lhs.eta, rhs.eta) &&
@@ -541,7 +585,8 @@ bool row_layout_fields_equal(const TransitRowModel &lhs, const TransitRowModel &
 }
 
 bool row_eta_fields_equal(const TransitRowModel &lhs, const TransitRowModel &rhs) {
-  return strings_equal(lhs.eta, rhs.eta) &&
+  return lhs.delayed == rhs.delayed &&
+         strings_equal(lhs.eta, rhs.eta) &&
          strings_equal(lhs.etaExtra, rhs.etaExtra);
 }
 
@@ -1156,6 +1201,8 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   const String row2Direction = extract_row_direction_label(message, 1);
   const String row1DisplayLabel = extract_row_display_label(message, 0);
   const String row2DisplayLabel = extract_row_display_label(message, 1);
+  const bool row1Delayed = extract_row_delayed(message, 0);
+  const bool row2Delayed = extract_row_delayed(message, 1);
   const uint8_t row1DisplayType = extract_row_display_type(message, 0, displayType);
   const uint8_t row2DisplayType = extract_row_display_type(message, 1, displayType);
   char row1EtaExtra[kMaxDestinationLen];
@@ -1193,6 +1240,7 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
            parsed.row1.line.length() ? parsed.row1.line.c_str() : "--");
   nextModel.rows[0].displayType = row1DisplayType;
   nextModel.rows[0].scrollEnabled = extract_row_scrolling(message, 0, scrolling);
+  nextModel.rows[0].delayed = row1Delayed;
   copy_str(nextModel.rows[0].direction, sizeof(nextModel.rows[0].direction),
            row1Direction.c_str());
   copy_str(nextModel.rows[0].destination, sizeof(nextModel.rows[0].destination),
@@ -1220,6 +1268,7 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
              parsed.row2.line.length() ? parsed.row2.line.c_str() : "--");
     nextModel.rows[1].displayType = row2DisplayType;
     nextModel.rows[1].scrollEnabled = extract_row_scrolling(message, 1, scrolling);
+    nextModel.rows[1].delayed = row2Delayed;
     copy_str(nextModel.rows[1].direction, sizeof(nextModel.rows[1].direction),
              row2Direction.c_str());
     copy_str(nextModel.rows[1].destination, sizeof(nextModel.rows[1].destination),
@@ -1293,6 +1342,7 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
                nextModel.rows[0].routeId);
       nextModel.rows[i].displayType = nextModel.rows[0].displayType;
       nextModel.rows[i].scrollEnabled = nextModel.rows[0].scrollEnabled;
+      nextModel.rows[i].delayed = nextModel.rows[0].delayed;
       copy_str(nextModel.rows[i].direction, sizeof(nextModel.rows[i].direction),
                nextModel.rows[0].direction);
       copy_str(nextModel.rows[i].destination, sizeof(nextModel.rows[i].destination),
@@ -1918,7 +1968,7 @@ void DeviceController::render_eta_updates() {
     deps_.displayEngine->draw_text(geometry.etaTextX,
                                    geometry.etaTextY,
                                    etaText,
-                                   LayoutEngine::eta_color_for_text(row.eta),
+                                   LayoutEngine::eta_color_for_row(row, renderModel_.uiState),
                                    geometry.etaFont,
                                    kColorBlack);
 
@@ -1933,7 +1983,7 @@ void DeviceController::render_eta_updates() {
         deps_.displayEngine->draw_text(geometry.etaExtraTextX,
                                        geometry.etaExtraTextY,
                                        etaExtraText,
-                                       kColorAmber,
+                                       LayoutEngine::eta_color_for_row(row, renderModel_.uiState),
                                        geometry.etaExtraFont,
                                        kColorBlack);
       }

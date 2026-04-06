@@ -87,7 +87,7 @@ class LayoutEngine final {
  public:
   LayoutEngine();
 
-  static uint16_t eta_color_for_text(const char *eta);
+  static uint16_t eta_color_for_row(const TransitRowModel &row, UiState uiState);
 
   void set_viewport(uint16_t width, uint16_t height);
   void build_transit_layout(const RenderModel &model, DrawList &out);

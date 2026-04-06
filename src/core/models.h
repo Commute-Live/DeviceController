@@ -75,6 +75,7 @@ struct TransitRowModel {
   char routeId[kMaxRouteIdLen];
   uint8_t displayType;
   bool scrollEnabled;
+  bool delayed;
   char direction[kMaxDestinationLen];
   char destination[kMaxDestinationLen];
   char eta[kMaxEtaLen];
