@@ -362,7 +362,7 @@ int16_t max_rounded_badge_width(const RenderModel &model, int16_t badgeHeight) {
 uint16_t transit_service_color(const TransitRowModel &row, UiState uiState) {
   // Transit color policy:
   // - white when the device is showing stale data because connectivity broke locally
-  // - yellow when the upstream payload marks the line delayed
+  // - yellow when the upstream payload sets status="delayed"
   // - green for non-delayed live service
   if (uiState == UiState::kStaleTransit) {
     return kColorWhite;

@@ -421,24 +421,11 @@ String extract_row_display_label(const String &message, uint8_t rowIndex) {
   return "";
 }
 
-bool string_implies_delay(const String &value) {
-  String normalized = value;
-  normalized.trim();
-  normalized.toLowerCase();
-  return normalized == "delayed" ||
-         normalized == "delay" ||
-         normalized == "late" ||
-         normalized == "suspended" ||
-         normalized == "service change" ||
-         normalized == "service advisory";
-}
-
 bool line_object_is_delayed(const String &lineObject) {
-  return extract_json_bool_field(lineObject, "delayed", false) ||
-         extract_json_bool_field(lineObject, "isDelayed", false) ||
-         extract_json_bool_field(lineObject, "hasDelay", false) ||
-         string_implies_delay(extract_json_string_field(lineObject, "status")) ||
-         string_implies_delay(extract_json_string_field(lineObject, "serviceStatus"));
+  String status = extract_json_string_field(lineObject, "status");
+  status.trim();
+  status.toLowerCase();
+  return status == "delayed";
 }
 
 bool extract_row_delayed(const String &message, uint8_t rowIndex) {
@@ -448,11 +435,10 @@ bool extract_row_delayed(const String &message, uint8_t rowIndex) {
   }
 
   if (rowIndex == 0) {
-    return extract_json_bool_field(message, "delayed", false) ||
-           extract_json_bool_field(message, "isDelayed", false) ||
-           extract_json_bool_field(message, "hasDelay", false) ||
-           string_implies_delay(extract_json_string_field(message, "status")) ||
-           string_implies_delay(extract_json_string_field(message, "serviceStatus"));
+    String status = extract_json_string_field(message, "status");
+    status.trim();
+    status.toLowerCase();
+    return status == "delayed";
   }
   return false;
 }
