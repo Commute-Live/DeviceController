@@ -92,6 +92,39 @@ void copy_str(char *dst, size_t dstLen, const char *src) {
 
 bool strings_equal(const char *lhs, const char *rhs);
 
+bool is_stale_eta_animation_text(const char *eta) {
+  if (!eta || eta[0] != '.') {
+    return false;
+  }
+
+  for (const char *p = eta; *p != '\0'; ++p) {
+    if (*p != '.' && *p != ' ') {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool is_stale_eta_animation_render(const RenderModel &model, uint8_t rowMask) {
+  if (model.uiState != UiState::kStaleTransit || rowMask == 0) {
+    return false;
+  }
+
+  for (uint8_t i = 0; i < model.activeRows && i < kMaxTransitRows; ++i) {
+    if ((rowMask & static_cast<uint8_t>(1U << i)) == 0) {
+      continue;
+    }
+
+    const TransitRowModel &row = model.rows[i];
+    if (!is_stale_eta_animation_text(row.eta) || row.etaExtra[0] != '\0') {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 void clear_cached_row(CachedTransitRow &row) {
   copy_str(row.providerId, sizeof(row.providerId), "");
   copy_str(row.routeId, sizeof(row.routeId), "");
@@ -1975,10 +2008,12 @@ void DeviceController::clear_cached_transit_assignment() {
 }
 
 void DeviceController::render_eta_updates() {
-  DCTRL_LOGI("DISPLAY", "Rendering ETA-only update rowsMask=0x%02x activeRows=%u displayType=%u",
-             static_cast<unsigned>(etaDirtyRowMask_),
-             static_cast<unsigned>(renderModel_.activeRows),
-             static_cast<unsigned>(renderModel_.displayType));
+  if (!is_stale_eta_animation_render(renderModel_, etaDirtyRowMask_)) {
+    DCTRL_LOGI("DISPLAY", "Rendering ETA-only update rowsMask=0x%02x activeRows=%u displayType=%u",
+               static_cast<unsigned>(etaDirtyRowMask_),
+               static_cast<unsigned>(renderModel_.activeRows),
+               static_cast<unsigned>(renderModel_.displayType));
+  }
 
   char etaText[kMaxEtaLen];
   char etaExtraText[kMaxDestinationLen];
