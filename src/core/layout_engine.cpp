@@ -340,6 +340,7 @@ MbtaMode infer_mbta_mode(const TransitRowModel &row) {
 
 TransitBadgeStyle badge_style_for_row(const TransitRowModel &row) {
   if (is_nyc_rail_bar_provider(row.providerId)) return TransitBadgeStyle::kPill;
+  if (row.providerId && strcmp(row.providerId, "mta-subway") == 0) return TransitBadgeStyle::kPill;
   if (row.providerId && strcmp(row.providerId, "mta-bus") == 0) return TransitBadgeStyle::kPill;
   if (row.providerId && strcmp(row.providerId, "cta-subway") == 0) return TransitBadgeStyle::kPill;
   if (row.providerId && strcmp(row.providerId, "njt-rail") == 0) return TransitBadgeStyle::kPill;
