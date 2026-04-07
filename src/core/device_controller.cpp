@@ -1143,7 +1143,7 @@ void DeviceController::handle_network_state(NetworkState state) {
       bleProvisioningStartedAtMs_ = 0;
       bleShutdownAtMs_ = millis() + kBleSuccessNotifyDrainMs;
     }
-
+    // If we have a pending provision token, call the server to register this device.
     if (pendingProvisionToken_[0] != '\0') {
       const bool ok = call_provision_api(pendingProvisionServerUrl_, runtimeConfig_.deviceId, pendingProvisionToken_);
       memset(pendingProvisionToken_,     0, sizeof(pendingProvisionToken_));

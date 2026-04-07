@@ -12,7 +12,6 @@ namespace {
 constexpr uint32_t kRetryBaseMs = 1000;
 constexpr uint32_t kRetryMaxMs = 60000;
 constexpr uint32_t kRetryJitterMs = 750;
-constexpr uint8_t kRecoveryApAttemptThreshold = 3;
 constexpr int kUnknownWifiStatus = 999;
 
 uint32_t bounded_backoff(uint8_t attempt) {
@@ -33,13 +32,7 @@ uint32_t bounded_backoff(uint8_t attempt) {
 }
 
 bool has_explicit_bootstrap_wifi(const NetworkConfig &config) {
-  if (config.ssid[0] == '\0') {
-    return false;
-  }
-  if (config.username[0] != '\0') {
-    return true;
-  }
-  return strcmp(config.ssid, config.apSsid) != 0 || strcmp(config.password, config.apPassword) != 0;
+  return config.ssid[0] != '\0';
 }
 
 const char *network_state_name(NetworkState state) {
@@ -64,16 +57,13 @@ NetworkManager::NetworkManager()
       state_(NetworkState::kDisconnected),
       autoReconnectEnabled_(true),
       hasSavedCredentials_(false),
-      recoveryApEnabled_(false),
       savedSsid_(),
       savedPassword_(),
       savedUsername_(),
       nextRetryAtMs_(0),
       connectingStartMs_(0),
       lastNoCredLogMs_(0),
-      nextRecoveryActionAtMs_(0),
       retryCount_(0),
-      recoveryApRetryCount_(0),
       lastWifiStatus_(kUnknownWifiStatus),
       callback_(nullptr),
       callbackCtx_(nullptr) {}
@@ -83,9 +73,6 @@ bool NetworkManager::begin(const NetworkConfig &config) {
   autoReconnectEnabled_ = true;
   retryCount_ = 0;
   nextRetryAtMs_ = 0;
-  recoveryApEnabled_ = false;
-  nextRecoveryActionAtMs_ = 0;
-  recoveryApRetryCount_ = 0;
   lastWifiStatus_ = kUnknownWifiStatus;
 
   DCTRL_LOGI("WIFI",
@@ -96,7 +83,7 @@ bool NetworkManager::begin(const NetworkConfig &config) {
              config_.apSsid[0] ? config_.apSsid : "(none)",
              static_cast<unsigned>(strlen(config_.apPassword)));
 
-  WiFi.mode(WIFI_AP_STA);
+  WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(false);
   WiFi.disconnect();
   delay(100);
@@ -143,9 +130,11 @@ bool NetworkManager::begin(const NetworkConfig &config) {
     return true;
   }
 
-  DCTRL_LOGW("WIFI", "Initial blocking station connect failed; enabling recovery AP");
-  if (!enable_recovery_ap()) {
-    schedule_recovery_ap_retry(millis());
+  transition_to(NetworkState::kDisconnected);
+  if (hasSavedCredentials_) {
+    DCTRL_LOGW("WIFI", "Initial blocking station connect failed; retries will continue in STA mode");
+  } else {
+    DCTRL_LOGW("WIFI", "No saved WiFi credentials; waiting for BLE provisioning");
   }
   return false;
 }
@@ -153,12 +142,11 @@ bool NetworkManager::begin(const NetworkConfig &config) {
 void NetworkManager::tick(uint32_t nowMs) {
   const int wifiStatus = WiFi.status();
   if (wifiStatus != lastWifiStatus_) {
-    DCTRL_LOGI("WIFI", "Observed status=%s (%d) state=%s retryCount=%u recoveryAp=%s",
+    DCTRL_LOGI("WIFI", "Observed status=%s (%d) state=%s retryCount=%u",
                core::logging::wifi_status_name(wifiStatus),
                wifiStatus,
                network_state_name(state_),
-               static_cast<unsigned>(retryCount_),
-               core::logging::bool_str(recoveryApEnabled_));
+               static_cast<unsigned>(retryCount_));
     lastWifiStatus_ = wifiStatus;
   }
 
@@ -166,7 +154,6 @@ void NetworkManager::tick(uint32_t nowMs) {
     retryCount_ = 0;
     connectingStartMs_ = 0;
     if (state_ != NetworkState::kConnected) {
-      recoveryApEnabled_ = false;
       transition_to(NetworkState::kConnected);
       DCTRL_LOGI("WIFI", "Station connected ssid=%s ip=%s gateway=%s rssi=%d",
                  WiFi.SSID().c_str(),
@@ -194,43 +181,20 @@ void NetworkManager::tick(uint32_t nowMs) {
                static_cast<unsigned long>(waitMs),
                static_cast<unsigned>(retryCount_),
                core::logging::wifi_status_name(WiFi.status()));
-    if (!recoveryApEnabled_ && retryCount_ >= kRecoveryApAttemptThreshold) {
-      if (!enable_recovery_ap()) {
-        schedule_recovery_ap_retry(nowMs);
-      }
-    }
     return;
   }
 
   if (!autoReconnectEnabled_) {
-    if (recoveryApEnabled_) {
-      transition_to(NetworkState::kApMode);
-    } else if (nextRecoveryActionAtMs_ != 0 && nowMs >= nextRecoveryActionAtMs_) {
-      if (!enable_recovery_ap()) {
-        schedule_recovery_ap_retry(nowMs);
-      }
-    } else {
-      transition_to(NetworkState::kDisconnected);
-    }
+    transition_to(NetworkState::kDisconnected);
     return;
   }
 
   if (!hasSavedCredentials_) {
     if (nowMs - lastNoCredLogMs_ >= 10000) {
-      DCTRL_LOGW("WIFI", "No credentials available; staying in recovery AP mode");
+      DCTRL_LOGW("WIFI", "No credentials available; BLE provisioning is waiting for WiFi credentials");
       lastNoCredLogMs_ = nowMs;
     }
-    if (recoveryApEnabled_) {
-      transition_to(NetworkState::kApMode);
-      return;
-    }
-    if (nowMs < nextRecoveryActionAtMs_) {
-      transition_to(NetworkState::kDisconnected);
-      return;
-    }
-    if (!enable_recovery_ap()) {
-      schedule_recovery_ap_retry(nowMs);
-    }
+    transition_to(NetworkState::kDisconnected);
     return;
   }
 
@@ -253,8 +217,6 @@ void NetworkManager::disconnect(bool clearCredentials, bool restartProvisioning)
   connectingStartMs_ = 0;
   retryCount_ = 0;
   nextRetryAtMs_ = 0;
-  nextRecoveryActionAtMs_ = 0;
-  recoveryApRetryCount_ = 0;
 
   DCTRL_LOGI("WIFI", "Manual disconnect requested clearCredentials=%s restartProvisioning=%s currentState=%s ssid=%s",
              core::logging::bool_str(clearCredentials),
@@ -271,14 +233,8 @@ void NetworkManager::disconnect(bool clearCredentials, bool restartProvisioning)
   }
 
   WiFi.setAutoReconnect(false);
+  WiFi.mode(WIFI_STA);
   WiFi.disconnect(false, clearCredentials);
-
-  if (restartProvisioning) {
-    if (!enable_recovery_ap()) {
-      schedule_recovery_ap_retry(millis());
-    }
-    return;
-  }
 
   transition_to(NetworkState::kDisconnected);
 }
@@ -291,9 +247,8 @@ void NetworkManager::request_reconnect() {
   connectingStartMs_ = 0;
   retryCount_ = 0;
   nextRetryAtMs_ = 0;
-  nextRecoveryActionAtMs_ = 0;
-  recoveryApRetryCount_ = 0;
   WiFi.setAutoReconnect(false);
+  WiFi.mode(WIFI_STA);
   WiFi.disconnect(false, false);
   transition_to(NetworkState::kConnecting);
 }
@@ -304,9 +259,6 @@ void NetworkManager::set_credentials(const char *ssid, const char *password, con
   savedUsername_ = username ? username : "";
   autoReconnectEnabled_ = true;
   hasSavedCredentials_ = savedSsid_.length() > 0;
-  recoveryApEnabled_ = false;
-  nextRecoveryActionAtMs_ = 0;
-  recoveryApRetryCount_ = 0;
   DCTRL_LOGI("WIFI", "Updating credentials ssid=%s passwordLen=%u enterprise=%s",
              savedSsid_.c_str(),
              static_cast<unsigned>(savedPassword_.length()),
@@ -327,7 +279,7 @@ NetworkState NetworkManager::state() const { return state_; }
 bool NetworkManager::is_connected() const { return WiFi.status() == WL_CONNECTED; }
 
 bool NetworkManager::setup_mode_active() const {
-  return state_ == NetworkState::kApMode || recoveryApEnabled_;
+  return WiFi.status() != WL_CONNECTED && (!hasSavedCredentials_ || !autoReconnectEnabled_);
 }
 
 void NetworkManager::transition_to(NetworkState next) {
@@ -336,11 +288,10 @@ void NetworkManager::transition_to(NetworkState next) {
   }
   const NetworkState previous = state_;
   state_ = next;
-  DCTRL_LOGI("WIFI", "State transition %s -> %s wifi=%s recoveryAp=%s",
+  DCTRL_LOGI("WIFI", "State transition %s -> %s wifi=%s",
              network_state_name(previous),
              network_state_name(state_),
-             core::logging::wifi_status_name(WiFi.status()),
-             core::logging::bool_str(recoveryApEnabled_));
+             core::logging::wifi_status_name(WiFi.status()));
   if (callback_) {
     callback_(state_, callbackCtx_);
   }
@@ -362,43 +313,6 @@ bool NetworkManager::connect_station_now() {
     DCTRL_LOGW("WIFI", "Blocking station connect failed ssid=%s", savedSsid_.c_str());
   }
   return connected;
-}
-
-bool NetworkManager::enable_recovery_ap() {
-  if (recoveryApEnabled_) {
-    transition_to(NetworkState::kApMode);
-    return true;
-  }
-
-  const char *apSsid = config_.apSsid[0] ? config_.apSsid : "commutelive-setup";
-  const char *apPassword = config_.apPassword[0] ? config_.apPassword : "commutelive-setup";
-
-  DCTRL_LOGI("WIFI", "Enabling recovery AP ssid=%s passwordLen=%u",
-             apSsid,
-             static_cast<unsigned>(strlen(apPassword)));
-  if (wifi_manager::start_ap(apSsid, apPassword)) {
-    recoveryApEnabled_ = true;
-    nextRecoveryActionAtMs_ = 0;
-    recoveryApRetryCount_ = 0;
-    transition_to(NetworkState::kApMode);
-    DCTRL_LOGI("WIFI", "Recovery AP enabled ssid=%s apIp=%s",
-               apSsid,
-               WiFi.softAPIP().toString().c_str());
-    return true;
-  } else {
-    transition_to(NetworkState::kDisconnected);
-    DCTRL_LOGE("WIFI", "Failed to enable recovery AP ssid=%s", apSsid);
-    return false;
-  }
-}
-
-void NetworkManager::schedule_recovery_ap_retry(uint32_t nowMs) {
-  recoveryApRetryCount_++;
-  const uint32_t waitMs = bounded_backoff(recoveryApRetryCount_ - 1);
-  nextRecoveryActionAtMs_ = nowMs + waitMs;
-  DCTRL_LOGW("WIFI", "Recovery AP unavailable; retryInMs=%lu attempt=%u",
-             static_cast<unsigned long>(waitMs),
-             static_cast<unsigned>(recoveryApRetryCount_));
 }
 
 }  // namespace core

@@ -5,8 +5,6 @@
 
 namespace wifi_manager {
 
-bool start_ap(const char *apSsid, const char *apPassword);
-
 void save_credentials(const String &ssid, const String &password, const String &user = "");
 bool load_credentials(String &ssid, String &password, String &user);
 void clear_credentials();
