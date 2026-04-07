@@ -84,6 +84,7 @@ static constexpr RouteColorEntry kSeptaTrolleyColorTable[] = {
     {"D1", rgb565(0xDC, 0x2E, 0x6B)},  // Route 101
     {"D2", rgb565(0xDC, 0x2E, 0x6B)},  // Route 102
 };
+static constexpr uint16_t kMtaBusColor = rgb565(0x00, 0x39, 0xA6);   // MTA institutional blue
 static constexpr uint16_t kSeptaBusColor = rgb565(0x00, 0x5D, 0xAA);
 static constexpr uint16_t kCtaBusFallbackColor = rgb565(0x99, 0x99, 0x9C);
 
@@ -249,6 +250,10 @@ uint16_t MtaColorMap::color_for_provider_route(const char *providerId, const cha
         return kSeptaMediaSharonHillPink;
       }
       return kSeptaBusColor;
+    }
+
+    if (strcmp(providerId, "mta-bus") == 0) {
+      return kMtaBusColor;
     }
 
     if (strcmp(providerId, "cta-subway") == 0) {

@@ -173,16 +173,8 @@ bool connect_station(const char *ssid, const char *password, const char *usernam
 
 static int fresh_scan_networks() {
   DCTRL_LOGI("WIFI", "Starting fresh network scan");
-  WiFi.setAutoReconnect(false);
-  WiFi.disconnect(true, true);
-  delay(200);
-  WiFi.mode(WIFI_AP_STA);
   WiFi.scanDelete();
-  delay(50);
-
   int n = WiFi.scanNetworks(false, true);
-
-  WiFi.setAutoReconnect(true);
   DCTRL_LOGI("WIFI", "Finished network scan count=%d", n);
   return n;
 }

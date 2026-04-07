@@ -80,17 +80,6 @@ const char *row_label_for_display_type(const TransitRowModel &row) {
   return row.destination[0] ? row.destination : "-";
 }
 
-bool is_septa_provider(const char *providerId) {
-  return providerId &&
-         (strcmp(providerId, "septa-rail") == 0 || strcmp(providerId, "septa-bus") == 0 ||
-          strcmp(providerId, "septa-trolley") == 0);
-}
-
-bool is_nyc_rail_bar_provider(const char *providerId) {
-  return providerId &&
-         (strcmp(providerId, "mta-lirr") == 0 || strcmp(providerId, "mta-mnr") == 0);
-}
-
 const char *copy_upper_trimmed(const char *src, char *out, size_t outLen) {
   if (!out || outLen == 0) return "";
   out[0] = '\0';
@@ -106,84 +95,112 @@ const char *copy_upper_trimmed(const char *src, char *out, size_t outLen) {
   return out;
 }
 
-const char *septa_badge_text(const TransitRowModel &row, char *out, size_t outLen) {
-  const char *routeId = row.routeId;
-  if (!routeId || routeId[0] == '\0') {
-    return copy_upper_trimmed("--", out, outLen);
+// ---------------------------------------------------------------------------
+// Badge config — the single place that knows how to render each provider.
+//
+// To add a new provider: add a case in resolve_badge_config() only.
+// Everything else (width calculation, rendering) is generic.
+// ---------------------------------------------------------------------------
+
+enum class BadgeShape : uint8_t {
+  kCircle,  // filled circle, route letter inside (subway, CTA, MBTA, …)
+  kRect,    // filled rectangle, label inside (bus, commuter rail, SEPTA, …)
+};
+
+struct BadgeConfig {
+  BadgeShape shape;
+  char label[8];  // display label; for kRect this is the resolved text
+};
+
+void resolve_badge_config(const TransitRowModel &row, BadgeConfig &out) {
+  out = {};
+  const char *pid = row.providerId ? row.providerId : "";
+  const char *rid = row.routeId[0] ? row.routeId : "--";
+
+  // --- SEPTA (rect badge, label derived from route ID) ---
+  if (strcmp(pid, "septa-rail") == 0 || strcmp(pid, "septa-bus") == 0 ||
+      strcmp(pid, "septa-trolley") == 0) {
+    out.shape = BadgeShape::kRect;
+    if (!row.routeId[0]) { copy_upper_trimmed("--", out.label, sizeof(out.label)); return; }
+    char compact[kMaxRouteIdLen];
+    copy_upper_trimmed(rid, compact, sizeof(compact));
+    if (strcmp(pid, "septa-rail") == 0) {
+      strncpy(out.label, compact, sizeof(out.label) - 1);
+      return;
+    }
+    // septa-bus / septa-trolley: map internal route IDs to short display labels
+    if (strcmp(compact, "G1") == 0)                                          { copy_upper_trimmed("G",  out.label, sizeof(out.label)); return; }
+    if (strcmp(compact, "TBUS") == 0)                                        { copy_upper_trimmed("T",  out.label, sizeof(out.label)); return; }
+    if (strcmp(compact, "T5BUS") == 0)                                       { copy_upper_trimmed("T5", out.label, sizeof(out.label)); return; }
+    if (strcmp(compact, "D1BUS") == 0 || strcmp(compact, "D1") == 0)         { copy_upper_trimmed("D1", out.label, sizeof(out.label)); return; }
+    if (strcmp(compact, "D2BUS") == 0 || strcmp(compact, "D2") == 0)         { copy_upper_trimmed("D2", out.label, sizeof(out.label)); return; }
+    if (strcmp(compact, "M1") == 0 || strcmp(compact, "M1BUS") == 0)         { copy_upper_trimmed("M",  out.label, sizeof(out.label)); return; }
+    if (strcmp(compact, "L1") == 0 || strcmp(compact, "L1OWL") == 0)         { copy_upper_trimmed("L",  out.label, sizeof(out.label)); return; }
+    if (strcmp(compact, "B1") == 0 || strcmp(compact, "B2") == 0 ||
+        strcmp(compact, "B3") == 0 || strcmp(compact, "B1OWL") == 0)         { copy_upper_trimmed("B",  out.label, sizeof(out.label)); return; }
+    strncpy(out.label, compact, sizeof(out.label) - 1);
+    return;
   }
 
-  char compact[kMaxRouteIdLen];
-  copy_upper_trimmed(routeId, compact, sizeof(compact));
+  // --- MTA commuter rail (rect badge, branch abbreviation) ---
+  if (strcmp(pid, "mta-lirr") == 0) {
+    out.shape = BadgeShape::kRect;
+    if (strcmp(rid, "1") == 0)  { strncpy(out.label, "BAB", sizeof(out.label) - 1); return; }
+    if (strcmp(rid, "2") == 0)  { strncpy(out.label, "HEM", sizeof(out.label) - 1); return; }
+    if (strcmp(rid, "3") == 0)  { strncpy(out.label, "OYS", sizeof(out.label) - 1); return; }
+    if (strcmp(rid, "4") == 0)  { strncpy(out.label, "RON", sizeof(out.label) - 1); return; }
+    if (strcmp(rid, "5") == 0)  { strncpy(out.label, "MON", sizeof(out.label) - 1); return; }
+    if (strcmp(rid, "6") == 0)  { strncpy(out.label, "LNB", sizeof(out.label) - 1); return; }
+    if (strcmp(rid, "7") == 0)  { strncpy(out.label, "FAR", sizeof(out.label) - 1); return; }
+    if (strcmp(rid, "8") == 0)  { strncpy(out.label, "WHM", sizeof(out.label) - 1); return; }
+    if (strcmp(rid, "9") == 0)  { strncpy(out.label, "PWS", sizeof(out.label) - 1); return; }
+    if (strcmp(rid, "10") == 0) { strncpy(out.label, "PJF", sizeof(out.label) - 1); return; }
+    if (strcmp(rid, "12") == 0) { strncpy(out.label, "CTZ", sizeof(out.label) - 1); return; }
+    if (strcmp(rid, "13") == 0) { strncpy(out.label, "GRN", sizeof(out.label) - 1); return; }
+    strncpy(out.label, "LIR", sizeof(out.label) - 1);
+    return;
+  }
+  if (strcmp(pid, "mta-mnr") == 0)  { out.shape = BadgeShape::kRect; strncpy(out.label, "MNR",  sizeof(out.label) - 1); return; }
 
-  if (strcmp(row.providerId, "septa-rail") == 0) {
-    strncpy(out, compact, outLen - 1);
-    out[outLen - 1] = '\0';
-    return out;
-  }
-
-  if (strcmp(compact, "G1") == 0) {
-    return copy_upper_trimmed("G", out, outLen);
-  }
-  if (strcmp(compact, "TBUS") == 0) {
-    return copy_upper_trimmed("T", out, outLen);
-  }
-  if (strcmp(compact, "T5BUS") == 0) {
-    return copy_upper_trimmed("T5", out, outLen);
-  }
-  if (strcmp(compact, "D1BUS") == 0 || strcmp(compact, "D1") == 0) {
-    return copy_upper_trimmed("D1", out, outLen);
-  }
-  if (strcmp(compact, "D2BUS") == 0 || strcmp(compact, "D2") == 0) {
-    return copy_upper_trimmed("D2", out, outLen);
-  }
-  if (strcmp(compact, "M1") == 0 || strcmp(compact, "M1BUS") == 0) {
-    return copy_upper_trimmed("M", out, outLen);
-  }
-  if (strcmp(compact, "L1") == 0 || strcmp(compact, "L1OWL") == 0) {
-    return copy_upper_trimmed("L", out, outLen);
-  }
-  if (strcmp(compact, "B1") == 0 || strcmp(compact, "B2") == 0 || strcmp(compact, "B3") == 0 ||
-      strcmp(compact, "B1OWL") == 0) {
-    return copy_upper_trimmed("B", out, outLen);
-  }
-  if (compact[0] == 'T' && isdigit(static_cast<unsigned char>(compact[1])) && compact[2] == '\0') {
-    strncpy(out, compact, outLen - 1);
-    out[outLen - 1] = '\0';
-    return out;
+  // --- MTA bus (rect badge, route ID up to 4 chars) ---
+  if (strcmp(pid, "mta-bus") == 0) {
+    out.shape = BadgeShape::kRect;
+    copy_upper_trimmed(rid, out.label, sizeof(out.label));
+    if (strnlen(out.label, sizeof(out.label)) > 4) out.label[4] = '\0';
+    return;
   }
 
-  strncpy(out, compact, outLen - 1);
-  out[outLen - 1] = '\0';
-  return out;
+  // --- Default: circle badge (mta-subway, cta-subway, mbta, njt-rail, …) ---
+  out.shape = BadgeShape::kCircle;
+  strncpy(out.label, rid, sizeof(out.label) - 1);
+  out.label[sizeof(out.label) - 1] = '\0';
 }
 
-int16_t septa_badge_width(const TransitRowModel &row, int16_t badgeHeight) {
-  char badgeLabel[8];
-  const char *label = septa_badge_text(row, badgeLabel, sizeof(badgeLabel));
-  const size_t len = strnlen(label, sizeof(badgeLabel));
-
-  int16_t width = badgeHeight;
-  if (len >= 2) width = static_cast<int16_t>(width + 4);
-  if (len >= 3) width = static_cast<int16_t>(width + 4);
-  if (len >= 4) width = static_cast<int16_t>(width + 4);
+// Width for a single badge given its resolved config.
+// All rectangular badges share the same box width so providers like LIRR,
+// MNR, buses, and SEPTA render with the same visual footprint.
+int16_t badge_config_width(const BadgeConfig &cfg, int16_t badgeHeight) {
+  if (cfg.shape == BadgeShape::kCircle) return badgeHeight;
+  int16_t width = static_cast<int16_t>(badgeHeight + 8);
   if (width < badgeHeight) width = badgeHeight;
-  if (width > 24) width = 24;
+  if (width > 28) width = 28;
   return width;
 }
 
-int16_t max_septa_badge_width(const RenderModel &model, int16_t badgeHeight) {
+// Maximum rect badge width across all rows — keeps all rect badges the same
+// width on a single screen regardless of provider.
+int16_t max_rect_badge_width(const RenderModel &model, int16_t badgeHeight) {
   int16_t width = badgeHeight;
   uint8_t rowCount = model.activeRows;
   if (rowCount < 1) rowCount = 1;
   if (rowCount > kMaxTransitRows) rowCount = kMaxTransitRows;
-
   for (uint8_t i = 0; i < rowCount; ++i) {
-    const TransitRowModel &row = model.rows[i];
-    if (!is_septa_provider(row.providerId)) continue;
-    const int16_t candidate = septa_badge_width(row, badgeHeight);
+    BadgeConfig cfg;
+    resolve_badge_config(model.rows[i], cfg);
+    if (cfg.shape != BadgeShape::kRect) continue;
+    const int16_t candidate = badge_config_width(cfg, badgeHeight);
     if (candidate > width) width = candidate;
   }
-
   return width;
 }
 
@@ -228,34 +245,60 @@ void compute_transit_row_frames(const RenderModel &model,
   rowCount = model.activeRows;
   if (rowCount < 1) rowCount = 1;
   if (rowCount > kMaxTransitRows) rowCount = kMaxTransitRows;
+  const uint8_t sizingRowCount = (rowCount == 1) ? 2 : rowCount;
 
   preset = &transit_preset_config(model.displayType);
-  const int16_t topMargin = (rowCount == 3) ? preset->topMarginThreeRow : preset->topMarginTwoRow;
-  const int16_t betweenMargin = (rowCount == 3) ? preset->betweenMarginThreeRow : preset->betweenMarginTwoRow;
-  const int16_t bottomMargin = (rowCount == 3) ? preset->bottomMarginThreeRow : preset->bottomMarginTwoRow;
+  const int16_t topMargin = (sizingRowCount == 3) ? preset->topMarginThreeRow : preset->topMarginTwoRow;
+  const int16_t betweenMargin = (sizingRowCount == 3) ? preset->betweenMarginThreeRow : preset->betweenMarginTwoRow;
+  const int16_t bottomMargin = (sizingRowCount == 3) ? preset->bottomMarginThreeRow : preset->bottomMarginTwoRow;
   const int16_t totalHeight = static_cast<int16_t>(height);
-  const int16_t totalGap = static_cast<int16_t>(topMargin + bottomMargin + (rowCount - 1) * betweenMargin);
+  const int16_t totalGap =
+      static_cast<int16_t>(topMargin + bottomMargin + (sizingRowCount - 1) * betweenMargin);
   const int16_t drawable = static_cast<int16_t>(totalHeight - totalGap);
-  int16_t blockH = rowCount > 0 ? static_cast<int16_t>(drawable / rowCount) : 0;
+  int16_t blockH = sizingRowCount > 0 ? static_cast<int16_t>(drawable / sizingRowCount) : 0;
 
   if (blockH <= 0) {
     VerticalLayoutEngine verticalLayout;
-    const VerticalLayoutResult layout = verticalLayout.compute(height, rowCount);
-    for (uint8_t i = 0; i < rowCount; ++i) {
-      out[i] = layout.rows[i];
+    const VerticalLayoutResult layout = verticalLayout.compute(height, sizingRowCount);
+    blockH = layout.rows[0].height > 0 ? layout.rows[0].height : 1;
+    if (rowCount == 1) {
+      int16_t centeredStart = static_cast<int16_t>((totalHeight - blockH) / 2);
+      if (centeredStart > 0) {
+        centeredStart = static_cast<int16_t>(centeredStart - preset->rowYNudge);
+      }
+      if (centeredStart < 0) centeredStart = 0;
+      if (centeredStart + blockH > totalHeight) {
+        centeredStart = static_cast<int16_t>(totalHeight - blockH);
+      }
+      out[0] = {centeredStart, blockH};
+    } else {
+      for (uint8_t i = 0; i < rowCount; ++i) {
+        out[i] = layout.rows[i];
+      }
     }
-    blockH = out[0].height > 0 ? out[0].height : 1;
   } else {
-    for (uint8_t i = 0; i < rowCount; ++i) {
-      out[i] = {
-          static_cast<int16_t>(topMargin + i * (blockH + betweenMargin)),
-          blockH,
-      };
+    if (rowCount == 1) {
+      int16_t centeredStart = static_cast<int16_t>((totalHeight - blockH) / 2);
+      if (centeredStart > 0) {
+        centeredStart = static_cast<int16_t>(centeredStart - preset->rowYNudge);
+      }
+      if (centeredStart < 0) centeredStart = 0;
+      if (centeredStart + blockH > totalHeight) {
+        centeredStart = static_cast<int16_t>(totalHeight - blockH);
+      }
+      out[0] = {centeredStart, blockH};
+    } else {
+      for (uint8_t i = 0; i < rowCount; ++i) {
+        out[i] = {
+            static_cast<int16_t>(topMargin + i * (blockH + betweenMargin)),
+            blockH,
+        };
+      }
     }
   }
 
   int16_t targetRadius = static_cast<int16_t>((blockH - 1) / 2);
-  if (rowCount == 3) {
+  if (sizingRowCount == 3) {
     targetRadius = 4;
   }
   if (targetRadius < 1) targetRadius = 1;
@@ -339,8 +382,11 @@ bool LayoutEngine::compute_transit_row_geometry(const RenderModel &model,
   const int16_t rowY =
       out.frame.yStart > 0 ? static_cast<int16_t>(out.frame.yStart + preset->rowYNudge) : out.frame.yStart;
   display::RowFrame rowFrame{rowY, out.frame.height};
-  const int16_t badgeWidth =
-      is_septa_provider(row.providerId) ? max_septa_badge_width(model, fixedBadgeSize) : fixedBadgeSize;
+  BadgeConfig badgeCfg;
+  resolve_badge_config(row, badgeCfg);
+  const int16_t badgeWidth = (badgeCfg.shape == BadgeShape::kRect)
+      ? max_rect_badge_width(model, fixedBadgeSize)
+      : fixedBadgeSize;
   // Use actual ETA length so we don't over-reserve space for short values like "5m".
   // Cap at kEtaChars (3) so "10m" still fits.
   const uint8_t actualEtaChars = row.eta[0] != '\0'
@@ -400,6 +446,29 @@ bool LayoutEngine::compute_transit_row_geometry(const RenderModel &model,
           static_cast<int16_t>((out.frame.yStart + out.frame.height) - out.etaExtraClearY);
       if (out.etaExtraClearH < 1) {
         out.etaExtraClearH = 1;
+      }
+    }
+  }
+
+  // Rect badges read slightly better with a small horizontal nudge toward the
+  // panel edge. Keep the row text aligned by moving the badge and destination
+  // zone together, but do not shift vertically or the badge will sit too high
+  // against the label/ETA baseline.
+  BadgeConfig badgeCfgGeom;
+  resolve_badge_config(row, badgeCfgGeom);
+  if (badgeCfgGeom.shape == BadgeShape::kRect) {
+    out.badgeX = static_cast<int16_t>(out.badgeX - 1);
+    out.destinationX = static_cast<int16_t>(out.destinationX - 1);
+    if (model.activeRows == 2) {
+      const int16_t visualBadgeH =
+          fixedBadgeSize > 3 ? static_cast<int16_t>(fixedBadgeSize - 3) : fixedBadgeSize;
+      const int16_t totalGap =
+          static_cast<int16_t>(height_) - static_cast<int16_t>(2 * visualBadgeH);
+      if (visualBadgeH > 0 && totalGap >= 0) {
+        const int16_t evenGap = static_cast<int16_t>(totalGap / 3);
+        const int16_t desiredBadgeY = static_cast<int16_t>(
+            evenGap + static_cast<int16_t>(rowIndex) * (visualBadgeH + evenGap));
+        out.layout.badgeY = static_cast<int16_t>(desiredBadgeY - 1);
       }
     }
   }
@@ -659,50 +728,31 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
 
     const uint8_t normalizedDisplayType = rowGeometry.normalizedDisplayType;
     const bool hasRoute = row.routeId[0] != '\0' && strcmp(row.routeId, "--") != 0;
-    const bool isNycRailBar = is_nyc_rail_bar_provider(row.providerId);
-    const bool isSeptaBadge = is_septa_provider(row.providerId);
+    BadgeConfig badgeCfg;
+    resolve_badge_config(row, badgeCfg);
 
-    if (isNycRailBar) {
-      const int16_t badgeSize = rowGeometry.layout.badgeSize;
-      const int16_t barWidth = badgeSize >= 10 ? 8 : 6;
-      const int16_t barHeight = badgeSize > 2 ? static_cast<int16_t>(badgeSize - 2) : badgeSize;
-      const int16_t barX = static_cast<int16_t>(rowGeometry.badgeX + ((badgeSize - barWidth) / 2));
-      const int16_t barY = static_cast<int16_t>(rowGeometry.layout.badgeY + ((badgeSize - barHeight) / 2));
-
-      DrawCommand railBar{};
-      railBar.type = DrawCommandType::kFillRect;
-      railBar.x = barX;
-      railBar.y = barY;
-      railBar.w = barWidth;
-      railBar.h = barHeight;
-      railBar.color = transit::MtaColorMap::color_for_provider_route(
-          row.providerId,
-          hasRoute ? row.routeId : "");
-      railBar.bg = kColorBlack;
-      railBar.size = 1;
-      railBar.text = nullptr;
-      railBar.bitmap = nullptr;
-      out.push(railBar);
-    } else if (isSeptaBadge) {
-      char badgeLabel[8];
-      const char *resolvedBadgeLabel = septa_badge_text(row, badgeLabel, sizeof(badgeLabel));
+    if (badgeCfg.shape == BadgeShape::kRect) {
+      const int16_t badgeX = static_cast<int16_t>(rowGeometry.badgeX + 1);
       const int16_t badgeY = static_cast<int16_t>(rowGeometry.layout.badgeY + 1);
+      const int16_t badgeW =
+          rowGeometry.layout.badgeWidth > 1
+              ? static_cast<int16_t>(rowGeometry.layout.badgeWidth - 1)
+              : rowGeometry.layout.badgeWidth;
       const int16_t badgeH =
-          rowGeometry.layout.badgeSize > 2 ? static_cast<int16_t>(rowGeometry.layout.badgeSize - 2)
-                                           : rowGeometry.layout.badgeSize;
-
+          rowGeometry.layout.badgeSize > 3
+              ? static_cast<int16_t>(rowGeometry.layout.badgeSize - 3)
+              : rowGeometry.layout.badgeSize;
       DrawCommand badge{};
       badge.type = DrawCommandType::kRectBadge;
-      badge.x = rowGeometry.badgeX;
+      badge.x = badgeX;
       badge.y = badgeY;
-      badge.w = rowGeometry.layout.badgeWidth;
+      badge.w = badgeW;
       badge.h = badgeH;
       badge.color = transit::MtaColorMap::color_for_provider_route(
-          row.providerId,
-          hasRoute ? row.routeId : "");
+          row.providerId, hasRoute ? row.routeId : "");
       badge.bg = kColorBlack;
       badge.size = rowGeometry.etaFont;
-      badge.text = out.copy_text(resolvedBadgeLabel);
+      badge.text = out.copy_text(badgeCfg.label);
       badge.bitmap = nullptr;
       out.push(badge);
     } else {
@@ -713,8 +763,7 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
       badge.w = rowGeometry.layout.badgeSize;
       badge.h = rowGeometry.layout.badgeSize;
       badge.color = transit::MtaColorMap::color_for_provider_route(
-          row.providerId,
-          hasRoute ? row.routeId : "");
+          row.providerId, hasRoute ? row.routeId : "");
       badge.bg = kColorBlack;
       badge.size = rowGeometry.etaFont;
       badge.text = trim_for_width(hasRoute ? row.routeId : "--", 2, out);

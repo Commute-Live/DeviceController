@@ -1,6 +1,7 @@
 #include "core/mqtt_client.h"
 
 #include <WiFi.h>
+#include <lwip/sockets.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -90,7 +91,8 @@ bool MqttClient::begin(const MqttConfig &config, const MqttTopics &topics) {
 
   mqtt_.setServer(config_.host, config_.port);
   const bool bufferOk = mqtt_.setBufferSize(kMaxMqttPacketLen);
-  mqtt_.setKeepAlive(30);
+  mqtt_.setKeepAlive(60);
+  mqtt_.setSocketTimeout(5);
 
   activeInstance_ = this;
   mqtt_.setCallback(&MqttClient::global_on_message);
@@ -222,6 +224,16 @@ bool MqttClient::ensure_connected(uint32_t nowMs) {
   }
 
   if (ok) {
+    // Socket exists now — enable TCP keepalive to detect silent NAT deaths.
+    int keepAlive = 1;
+    wifiClient_.setSocketOption(SOL_SOCKET, SO_KEEPALIVE, &keepAlive, sizeof(keepAlive));
+    int keepIdle = 60;
+    int keepIntvl = 15;
+    int keepCnt = 4;
+    wifiClient_.setOption(TCP_KEEPIDLE, &keepIdle);
+    wifiClient_.setOption(TCP_KEEPINTVL, &keepIntvl);
+    wifiClient_.setOption(TCP_KEEPCNT, &keepCnt);
+
     connected_ = true;
     retryCount_ = 0;
     nextRetryAtMs_ = nowMs;

@@ -4,6 +4,10 @@
 
 namespace display {
 
+// Size value that selects the TomThumb tiny bitmap font.
+// Pass as the `size` argument to draw_text / measure_text.
+static constexpr uint8_t kTextSizeTiny = 0;
+
 struct TextMetrics {
   int16_t xOffset;
   int16_t yOffset;

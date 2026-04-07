@@ -321,6 +321,19 @@ void DisplayEngine::draw_text_transparent(int16_t x, int16_t y, const char *text
   }
   const LogicalPoint p = with_offset(x, y);
   canvas_->setTextWrap(false);
+  if (size == kTextSizeTiny || size == kTextSizeTinyPlus) {
+    canvas_->setFont(&TomThumb);
+    canvas_->setTextSize(1);
+    canvas_->setTextColor(color);
+    canvas_->setCursor(p.x, p.y);
+    canvas_->print(text);
+    if (size == kTextSizeTinyPlus) {
+      canvas_->setCursor(static_cast<int16_t>(p.x + 1), p.y);
+      canvas_->print(text);
+    }
+    canvas_->setFont();
+    return;
+  }
   canvas_->setTextSize(size);
   canvas_->setTextColor(color);
   canvas_->setCursor(p.x, p.y);

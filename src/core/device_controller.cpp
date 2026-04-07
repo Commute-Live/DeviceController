@@ -37,6 +37,8 @@ constexpr uint32_t kTelemetryEveryMs = 30000;
 constexpr uint32_t kDeviceLogHeartbeatEveryMs = 300000;
 constexpr uint32_t kLowHeapWarningEveryMs = 60000;
 constexpr uint32_t kCrashBreadcrumbPersistEveryMs = 30000;
+constexpr uint32_t kMqttUiGraceMs = 15000;
+constexpr uint32_t kInitialMqttConnectBudgetMs = 2000;
 constexpr uint32_t kLowHeapWarningThresholdBytes = 32768;
 constexpr uint32_t kMinRenderGapMs = 40;
 constexpr uint32_t kScrollStepMs = 65;       // advance 1px every 65ms (~15px/sec)
@@ -634,6 +636,7 @@ DeviceController::DeviceController(const Dependencies &deps)
       lastRenderAtMs_(0),
       lastWifiDisconnectAtMs_(0),
       lastMqttDisconnectAtMs_(0),
+      mqttUiGraceUntilMs_(0),
       renderDirty_(true),
       lastMqttConnected_(false),
       bootLogPublished_(false),
@@ -641,6 +644,7 @@ DeviceController::DeviceController(const Dependencies &deps)
       pendingWifiConnectedLog_(false),
       pendingWifiDisconnectLog_(false),
       pendingMqttDisconnectLog_(false),
+      pendingReconnectLogs_(false),
       pendingRenderMode_(RenderMode::kFull),
       etaDirtyRowMask_(0),
       scrollState_{} {
@@ -736,6 +740,17 @@ bool DeviceController::begin() {
     static_cast<DeviceController *>(ctx)->bleScanPending_ = true;
   }, this);
   deps_.networkManager->begin(runtimeConfig_.network);
+  mqttUiGraceUntilMs_ = millis() + kMqttUiGraceMs;
+  if (deps_.networkManager->is_connected()) {
+    const uint32_t connectDeadlineMs = millis() + kInitialMqttConnectBudgetMs;
+    while (!deps_.mqttClient->connected() && millis() < connectDeadlineMs) {
+      deps_.mqttClient->tick(millis());
+      if (deps_.mqttClient->connected()) {
+        break;
+      }
+      delay(50);
+    }
+  }
   server_.begin();
   DCTRL_LOGI("HTTP", "Core API ready routes=/connect,/device-info,/heartbeat,/status");
 
@@ -784,41 +799,46 @@ void DeviceController::tick(uint32_t nowMs) {
   deps_.networkManager->tick(nowMs);
   deps_.mqttClient->tick(nowMs);
   const bool mqttConnected = deps_.mqttClient->connected();
-  server_.handleClient();
-  update_ui_state();
 
   if (!mqttConnected && lastMqttConnected_) {
     lastMqttDisconnectAtMs_ = nowMs;
     pendingMqttDisconnectLog_ = true;
+    mqttUiGraceUntilMs_ = nowMs + kMqttUiGraceMs;
   }
 
+  server_.handleClient();
+  update_ui_state();
+
   if (mqttConnected && !lastMqttConnected_) {
+    // Publish only the critical "online" log on the reconnect tick.
+    // Remaining logs are deferred to subsequent ticks so mqtt_.loop()
+    // runs between publishes and the broker isn't flooded immediately.
+    publish_device_log("info", "mqtt_connected", "MQTT connected");
+    pendingReconnectLogs_ = true;
+  }
+  if (mqttConnected && pendingReconnectLogs_) {
+    // Drain one deferred log per tick to avoid publish storms.
     if (pendingWifiConnectedLog_) {
       publish_device_log("info", "wifi_connected", "WiFi connected");
       pendingWifiConnectedLog_ = false;
-    }
-
-    if (pendingMqttDisconnectLog_) {
+    } else if (pendingMqttDisconnectLog_) {
       char metadata[128];
       snprintf(metadata, sizeof(metadata),
                "{\"disconnect_duration_ms\":%lu}",
                static_cast<unsigned long>(nowMs - lastMqttDisconnectAtMs_));
       publish_device_log("warn", "mqtt_disconnected", "MQTT connection recovered after disconnect", metadata);
       pendingMqttDisconnectLog_ = false;
-    }
-
-    publish_device_log("info", "mqtt_connected", "MQTT connected");
-
-    if (!bootLogPublished_) {
-      if (pendingCrashReport_) {
-        publish_device_log("error",
-                           "crash_reboot",
-                           "Device restarted after crash",
-                           pendingCrashReportMetadata_[0] ? pendingCrashReportMetadata_ : "{}");
-        pendingCrashReport_ = false;
-      }
+    } else if (!bootLogPublished_ && pendingCrashReport_) {
+      publish_device_log("error",
+                         "crash_reboot",
+                         "Device restarted after crash",
+                         pendingCrashReportMetadata_[0] ? pendingCrashReportMetadata_ : "{}");
+      pendingCrashReport_ = false;
+    } else if (!bootLogPublished_) {
       publish_device_log("info", "boot", "Device boot completed");
       bootLogPublished_ = true;
+    } else {
+      pendingReconnectLogs_ = false;
     }
   }
   lastMqttConnected_ = mqttConnected;
@@ -891,6 +911,7 @@ void DeviceController::handle_network_state(NetworkState state) {
              core::logging::bool_str(deps_.mqttClient->connected()),
              core::logging::bool_str(deps_.networkManager->setup_mode_active()));
   if (state == NetworkState::kConnected) {
+    mqttUiGraceUntilMs_ = millis() + kMqttUiGraceMs;
     pendingWifiConnectedLog_ = true;
     if (pendingWifiDisconnectLog_) {
       char metadata[160];
@@ -1524,11 +1545,13 @@ void DeviceController::update_ui_state() {
   copy_str(prevStatus, sizeof(prevStatus), renderModel_.statusLine);
   copy_str(prevDetail, sizeof(prevDetail), renderModel_.statusDetail);
 
+  const uint32_t nowMs = millis();
   const bool wifiUp = deps_.networkManager->is_connected();
   const bool mqttUp = deps_.mqttClient->connected();
+  const bool mqttInGrace = !mqttUp && nowMs < mqttUiGraceUntilMs_;
 
   if (renderModel_.uiState == UiState::kBlank && !renderModel_.hasData) {
-  } else if (renderModel_.hasData && wifiUp && mqttUp) {
+  } else if (renderModel_.hasData && wifiUp && (mqttUp || mqttInGrace)) {
     renderModel_.uiState = UiState::kTransit;
     copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "TRANSIT");
     copy_str(renderModel_.statusDetail, sizeof(renderModel_.statusDetail), "Live arrivals");
@@ -1544,9 +1567,15 @@ void DeviceController::update_ui_state() {
     copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "NO WIFI");
     copy_str(renderModel_.statusDetail, sizeof(renderModel_.statusDetail), "Trying reconnect");
   } else if (!mqttUp) {
-    renderModel_.uiState = UiState::kWifiOkNoMqtt;
-    copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "WIFI OK");
-    copy_str(renderModel_.statusDetail, sizeof(renderModel_.statusDetail), "MQTT offline");
+    if (mqttInGrace) {
+      renderModel_.uiState = UiState::kConnectedWaitingData;
+      copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "CONNECTING");
+      copy_str(renderModel_.statusDetail, sizeof(renderModel_.statusDetail), "Syncing live data");
+    } else {
+      renderModel_.uiState = UiState::kWifiOkNoMqtt;
+      copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "WIFI OK");
+      copy_str(renderModel_.statusDetail, sizeof(renderModel_.statusDetail), "MQTT offline");
+    }
   } else {
     renderModel_.uiState = UiState::kConnectedWaitingData;
     copy_str(renderModel_.statusLine, sizeof(renderModel_.statusLine), "ADD A LINE");

@@ -63,6 +63,7 @@ class DeviceController final {
   uint32_t lastRenderAtMs_;
   uint32_t lastWifiDisconnectAtMs_;
   uint32_t lastMqttDisconnectAtMs_;
+  uint32_t mqttUiGraceUntilMs_;
   bool renderDirty_;
   bool lastMqttConnected_;
   bool bootLogPublished_;
@@ -70,6 +71,7 @@ class DeviceController final {
   bool pendingWifiConnectedLog_;
   bool pendingWifiDisconnectLog_;
   bool pendingMqttDisconnectLog_;
+  bool pendingReconnectLogs_;
   RenderMode pendingRenderMode_;
   uint8_t etaDirtyRowMask_;
   RowScrollState scrollState_[kMaxTransitRows];

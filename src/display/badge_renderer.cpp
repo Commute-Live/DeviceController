@@ -88,6 +88,32 @@ void BadgeRenderer::fill_circle_midpoint(DisplayEngine &display,
   }
 }
 
+void BadgeRenderer::fill_rounded_rect(DisplayEngine &display,
+                                      int16_t x,
+                                      int16_t y,
+                                      int16_t w,
+                                      int16_t h,
+                                      uint16_t color) const {
+  if (w <= 0 || h <= 0) {
+    return;
+  }
+
+  // On a low-res matrix, a 1px radius reads best: keep the body solid and
+  // clip only the four corners.
+  if (w < 3 || h < 3) {
+    display.fill_rect(x, y, w, h, color);
+    return;
+  }
+
+  display.fill_rect(static_cast<int16_t>(x + 1), y, static_cast<int16_t>(w - 2), h, color);
+  display.fill_rect(x, static_cast<int16_t>(y + 1), 1, static_cast<int16_t>(h - 2), color);
+  display.fill_rect(static_cast<int16_t>(x + w - 1),
+                    static_cast<int16_t>(y + 1),
+                    1,
+                    static_cast<int16_t>(h - 2),
+                    color);
+}
+
 void BadgeRenderer::draw_badge(DisplayEngine &display,
                                int16_t x,
                                int16_t y,
@@ -138,7 +164,7 @@ void BadgeRenderer::draw_rect_badge(DisplayEngine &display,
                                     uint16_t fill) const {
   if (w <= 0 || h <= 0 || !label || label[0] == '\0') return;
 
-  display.fill_rect(x, y, w, h, fill);
+  fill_rounded_rect(display, x, y, w, h, fill);
 
   uint8_t textSize = 1;
   const size_t labelLen = strnlen(label, 8);
@@ -151,12 +177,43 @@ void BadgeRenderer::draw_rect_badge(DisplayEngine &display,
     --textSize;
     tm = display.measure_text(label, textSize);
   }
+  // If still too wide at size 1, drop to tiny font so longer labels shrink to
+  // fit the same box as shorter ones.
+  if (textSize == 1 && (tm.width > static_cast<int16_t>(w - 2) || tm.height > static_cast<int16_t>(h - 2))) {
+    textSize = kTextSizeTiny;
+    tm = display.measure_text(label, textSize);
+  }
 
   const int16_t cx = static_cast<int16_t>(x + (w / 2));
   const int16_t cy = static_cast<int16_t>(y + (h / 2));
-  const int16_t tx = static_cast<int16_t>(cx - (tm.width / 2) - tm.xOffset);
   const int16_t ty = static_cast<int16_t>(cy - (tm.height / 2) - tm.yOffset);
-  display.draw_text_transparent(tx, ty, label, badge_text_color(fill), textSize);
+  const uint16_t textColor = badge_text_color(fill);
+
+  // For fixed 3-letter rail labels like BAB/HEM/RON, slot each glyph into a
+  // fixed 21x11 grid: 2px side padding, 2px top/bottom padding, 5px glyph
+  // columns, and 1px gaps between glyphs.
+  if (textSize == kTextSizeTiny && labelLen == 3 && w >= 19) {
+    constexpr int16_t kGlyphSlotW = 5;
+    constexpr int16_t kGlyphGapW = 1;
+    constexpr int16_t kGlyphContentH = 7;
+    const int16_t totalGlyphW = static_cast<int16_t>(3 * kGlyphSlotW + 2 * kGlyphGapW);
+    const int16_t startX = static_cast<int16_t>(x + ((w - totalGlyphW) / 2));
+    const int16_t topY = static_cast<int16_t>(y + ((h - kGlyphContentH) / 2));
+    for (int16_t i = 0; i < 3; ++i) {
+      char glyph[2]{label[i], '\0'};
+      TextMetrics glyphMetrics = display.measure_text(glyph, textSize);
+      const int16_t slotX = static_cast<int16_t>(startX + i * (kGlyphSlotW + kGlyphGapW));
+      const int16_t slotCenterX = static_cast<int16_t>(slotX + (kGlyphSlotW / 2));
+      const int16_t glyphX =
+          static_cast<int16_t>(slotCenterX - (glyphMetrics.width / 2) - glyphMetrics.xOffset + 1);
+      const int16_t glyphY = static_cast<int16_t>(topY - glyphMetrics.yOffset + 1);
+      display.draw_text_transparent(glyphX, glyphY, glyph, textColor, textSize);
+    }
+    return;
+  }
+
+  const int16_t tx = static_cast<int16_t>(cx - (tm.width / 2) - tm.xOffset);
+  display.draw_text_transparent(tx, ty, label, textColor, textSize);
 }
 
 }  // namespace display

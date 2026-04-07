@@ -29,6 +29,12 @@ class BadgeRenderer final {
  private:
   int16_t corrected_radius(int16_t value, uint16_t aspectXQ8_8, uint16_t aspectYQ8_8) const;
   void fill_circle_midpoint(DisplayEngine &display, int16_t cx, int16_t cy, int16_t r, uint16_t color) const;
+  void fill_rounded_rect(DisplayEngine &display,
+                         int16_t x,
+                         int16_t y,
+                         int16_t w,
+                         int16_t h,
+                         uint16_t color) const;
 };
 
 }  // namespace display
