@@ -1383,21 +1383,26 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
 
   // Reset scroll state when destination text or per-row scroll setting changes
   bool anyScrollReset = false;
+  bool scrollTurnedOff = false;
   for (uint8_t i = 0; i < kMaxTransitRows; ++i) {
     if (renderModel_.rows[i].scrollEnabled != nextModel.rows[i].scrollEnabled ||
         strcmp(renderModel_.rows[i].destination, nextModel.rows[i].destination) != 0 ||
         strcmp(renderModel_.rows[i].direction,   nextModel.rows[i].direction)   != 0) {
       reset_scroll_state(i);
       anyScrollReset = true;
+      // Track if scroll is being turned off so we can force a full redraw to clear
+      // any frozen mid-scroll position. When turning ON, the scroll renderer handles
+      // the first frame itself — no full redraw needed (avoids the one-frame flicker).
+      if (renderModel_.rows[i].scrollEnabled && !nextModel.rows[i].scrollEnabled) {
+        scrollTurnedOff = true;
+      }
     }
   }
 
   renderModel_ = nextModel;
   hasFreshPayload_ = true;
 
-  // If scroll state was reset (e.g. scroll toggled off), force full redraw so text
-  // renders at offset 0 (truncated/cutoff) instead of frozen at mid-scroll position
-  if (anyScrollReset) {
+  if (anyScrollReset && scrollTurnedOff) {
     schedule_full_render();
   }
 
@@ -1643,8 +1648,15 @@ void DeviceController::tick_scroll(uint32_t nowMs) {
       const char *text = renderModel_.rows[i].destination[0]
           ? renderModel_.rows[i].destination
           : renderModel_.rows[i].direction;
-      const display::TextMetrics tm = deps_.displayEngine->measure_text(text, geom.destinationFont);
-      s.textPixelWidth = static_cast<int16_t>(tm.width);
+      // Measure width using the same spacing as the scroll renderer:
+      // charW (6px) per non-space, spaceW (charW-2 = 4px) per space.
+      const int16_t charW = static_cast<int16_t>(6 * geom.destinationFont);
+      const int16_t spaceW = static_cast<int16_t>(charW > 2 ? charW - 2 : 1);
+      int16_t measuredW = 0;
+      for (const char *p = text; *p; ++p) {
+        measuredW = static_cast<int16_t>(measuredW + (*p == ' ' ? spaceW : charW));
+      }
+      s.textPixelWidth = measuredW;
       s.budgetWidth = geom.effectiveDestinationWidth > kScrollEtaSafetyGapPx
           ? static_cast<int16_t>(geom.effectiveDestinationWidth - kScrollEtaSafetyGapPx)
           : geom.effectiveDestinationWidth;
@@ -2032,30 +2044,59 @@ void DeviceController::render_scroll_updates() {
     const TransitRowModel &row = renderModel_.rows[i];
     const char *text = row.destination[0] ? row.destination : row.direction;
 
-    // Clear only the destination zone (badge and ETA are untouched)
-    deps_.displayEngine->fill_rect(
-        geom.destinationX,
-        geom.destinationY,
-        geom.effectiveDestinationWidth,
-        static_cast<int16_t>(8 * geom.destinationFont),
-        kColorBlack);
-
-    // Draw characters one-by-one, strictly clipped to the destination zone.
-    // Only characters fully within [destinationX, destinationX + effectiveDestinationWidth)
-    // are rendered — no pixels ever bleed into the badge or ETA areas.
+    // Draw characters one-by-one with black background, clipped to destination zone.
+    // Each character slot is filled (char or black) in a single pass — no separate
+    // fill_rect clear step — to avoid the brief all-black frame that causes flicker.
     const int16_t charW = static_cast<int16_t>(6 * geom.destinationFont);
+    const int16_t charH = static_cast<int16_t>(8 * geom.destinationFont);
+    const int16_t spaceW = static_cast<int16_t>(charW > 2 ? charW - 2 : 1);
     const int16_t clipLeft = geom.destinationX;
     const int16_t clipWidth = geom.effectiveDestinationWidth > kScrollEtaSafetyGapPx
         ? static_cast<int16_t>(geom.effectiveDestinationWidth - kScrollEtaSafetyGapPx)
         : geom.effectiveDestinationWidth;
     const int16_t clipRight = static_cast<int16_t>(geom.destinationX + clipWidth);
+
+    // Scan for the first visible character to determine how much leading black to fill.
+    // This clears ghost pixels when a character has just scrolled past clipLeft.
     int16_t cx = static_cast<int16_t>(geom.destinationX + s.offset);
+    {
+      int16_t scanCx = cx;
+      int16_t firstVisibleX = clipRight;
+      for (const char *p = text; *p && scanCx < clipRight; ++p) {
+        const int16_t adv = (*p == ' ') ? spaceW : charW;
+        if (*p != ' ' && scanCx >= clipLeft) { firstVisibleX = scanCx; break; }
+        scanCx = static_cast<int16_t>(scanCx + adv);
+      }
+      if (firstVisibleX > clipLeft) {
+        deps_.displayEngine->fill_rect(clipLeft, geom.destinationY,
+                                       static_cast<int16_t>(firstVisibleX - clipLeft), charH, kColorBlack);
+      }
+    }
+
     char buf[2] = {0, 0};
-    for (const char *p = text; *p; ++p, cx = static_cast<int16_t>(cx + charW)) {
-      if (cx < clipLeft) continue;           // starts left of zone — skip
-      if (cx + charW > clipRight) break;     // extends past right of zone — done
+    for (const char *p = text; *p; ++p) {
+      if (*p == ' ') {
+        const int16_t gapX = cx < clipLeft ? clipLeft : cx;
+        const int16_t gapEnd = static_cast<int16_t>(cx + spaceW);
+        if (gapX < clipRight && gapEnd > clipLeft) {
+          const int16_t gapW = static_cast<int16_t>((gapEnd < clipRight ? gapEnd : clipRight) - gapX);
+          if (gapW > 0) deps_.displayEngine->fill_rect(gapX, geom.destinationY, gapW, charH, kColorBlack);
+        }
+        cx = static_cast<int16_t>(cx + spaceW);
+        continue;
+      }
+      if (cx < clipLeft) { cx = static_cast<int16_t>(cx + charW); continue; }
+      if (cx >= clipRight) break;
       buf[0] = *p;
       deps_.displayEngine->draw_text(cx, geom.destinationY, buf, 0xFFFF, geom.destinationFont, kColorBlack);
+      cx = static_cast<int16_t>(cx + charW);
+    }
+
+    // Fill any trailing gap (after last text char) with black.
+    if (cx < clipRight) {
+      deps_.displayEngine->fill_rect(cx < clipLeft ? clipLeft : cx, geom.destinationY,
+                                     static_cast<int16_t>(clipRight - (cx < clipLeft ? clipLeft : cx)),
+                                     charH, kColorBlack);
     }
   }
 

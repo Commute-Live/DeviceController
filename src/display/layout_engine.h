@@ -23,7 +23,7 @@ struct RowLayout {
 
 class LayoutEngine final {
  public:
-  static constexpr int16_t kOuterMargin = 2;
+  static constexpr int16_t kOuterMargin = 1;
   static constexpr int16_t kInnerGap = 2;
 
   RowLayout compute_row_layout(int16_t totalWidth,

@@ -17,6 +17,9 @@ bool is_supported_provider_id(const String &provider) {
          p == "mta-lirr" ||
          p == "mta-mnr" ||
          p == "mta-bus" ||
+         p == "mbta-subway" ||
+         p == "mbta-bus" ||
+         p == "mbta-rail" ||
          p == "njt-rail" ||
          p == "njt-bus" ||
          p == "cta-bus" ||
@@ -47,7 +50,7 @@ bool parse_provider_payload(const String &provider, const String &message, Provi
   if (p == "mta-bus" || p == "cta-bus") {
     return parse_mta_bus_payload(message, out);
   }
-  if (p == "mbta") {
+  if (p == "mbta" || p == "mbta-subway" || p == "mbta-bus" || p == "mbta-rail") {
     return parse_mbta_payload(message, out);
   }
   if (p == "septa-rail") {

@@ -109,7 +109,14 @@ bool is_nyc_rail_bar_provider(const char *providerId) {
 }
 
 bool is_boston_provider(const char *providerId) {
-  return providerId && strcmp(providerId, "mbta") == 0;
+  return providerId &&
+         (strcmp(providerId, "mbta") == 0 || strcmp(providerId, "mbta-subway") == 0 ||
+          strcmp(providerId, "mbta-bus") == 0 || strcmp(providerId, "mbta-rail") == 0);
+}
+
+bool is_njt_provider(const char *providerId) {
+  return providerId &&
+         (strcmp(providerId, "njt-rail") == 0 || strcmp(providerId, "njt-bus") == 0);
 }
 
 char ascii_upper(char value) {
@@ -311,6 +318,22 @@ const char *mta_mnr_badge_text(const TransitRowModel &row, char *out, size_t out
   return copy_upper_trimmed("MNR", out, outLen);
 }
 
+const char *njt_badge_text(const TransitRowModel &row, char *out, size_t outLen) {
+  const char *routeId = row.routeId;
+  if (!routeId || routeId[0] == '\0') {
+    return copy_upper_trimmed("NJT", out, outLen);
+  }
+
+  char compact[kMaxRouteIdLen];
+  copy_badge_token(routeId, compact, sizeof(compact));
+  if (compact[0] == '\0') {
+    return copy_upper_trimmed("NJT", out, outLen);
+  }
+  strncpy(out, compact, outLen - 1);
+  out[outLen - 1] = '\0';
+  return out;
+}
+
 const char *truncate_badge_label(const char *src, char *out, size_t outLen, size_t maxChars) {
   if (!out || outLen == 0) return "";
   out[0] = '\0';
@@ -342,6 +365,7 @@ TransitBadgeStyle badge_style_for_row(const TransitRowModel &row) {
   if (is_nyc_rail_bar_provider(row.providerId)) return TransitBadgeStyle::kPill;
   if (row.providerId && strcmp(row.providerId, "mta-bus") == 0) return TransitBadgeStyle::kPill;
   if (row.providerId && strcmp(row.providerId, "cta-subway") == 0) return TransitBadgeStyle::kPill;
+  if (row.providerId && strcmp(row.providerId, "cta-bus") == 0) return TransitBadgeStyle::kPill;
   if (row.providerId && strcmp(row.providerId, "njt-rail") == 0) return TransitBadgeStyle::kPill;
   if (is_septa_rounded_provider(row.providerId)) return TransitBadgeStyle::kPill;
   if (is_boston_provider(row.providerId)) {
@@ -364,6 +388,8 @@ const char *badge_text_for_row(const TransitRowModel &row, char *out, size_t out
     label = mbta_badge_text(row, rawLabel, sizeof(rawLabel));
   } else if (row.providerId && strcmp(row.providerId, "mta-bus") == 0) {
     label = mta_bus_badge_text(row, rawLabel, sizeof(rawLabel));
+  } else if (is_njt_provider(row.providerId)) {
+    label = njt_badge_text(row, rawLabel, sizeof(rawLabel));
   } else if (is_septa_provider(row.providerId)) {
     label = septa_badge_text(row, rawLabel, sizeof(rawLabel));
   } else {
@@ -866,11 +892,13 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
     char badgeLabel[8];
     const char *resolvedBadgeLabel = badge_text_for_row(row, badgeLabel, sizeof(badgeLabel));
 
+    const int16_t rowYShift = (i > 0) ? 1 : 0;
+
     if (badgeStyle == TransitBadgeStyle::kPill) {
       constexpr int16_t kVisualPillW = 21;
       constexpr int16_t kVisualPillH = 11;
       const int16_t badgeX = static_cast<int16_t>(rowGeometry.badgeX + 1);
-      const int16_t badgeY = static_cast<int16_t>(rowGeometry.layout.badgeY + 1);
+      const int16_t badgeY = static_cast<int16_t>(rowGeometry.layout.badgeY + 1 + rowYShift);
       const int16_t badgeW =
           rowGeometry.layout.badgeWidth > 1
               ? static_cast<int16_t>(rowGeometry.layout.badgeWidth - 1)

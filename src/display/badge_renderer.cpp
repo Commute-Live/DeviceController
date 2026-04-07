@@ -172,35 +172,23 @@ void BadgeRenderer::draw_rect_badge(DisplayEngine &display,
   int16_t radius = (w >= 10 && h >= 8) ? 1 : 0;
   fill_rounded_rect(display, x, y, w, h, radius, fill);
 
-  const size_t labelLen = strnlen(label, 8);
-  uint8_t textSize = kTextSizeTiny;
-  if (labelLen <= 1 && h >= 12) {
-    textSize = 2;
-  } else if (labelLen <= 3 && h >= 11 && w >= 21) {
-    textSize = 1;
-  } else if (labelLen <= 4 && h >= 10 && w >= 20) {
-    textSize = 1;
-  }
+  // Label is always 1-3 chars; truncate defensively.
+  char truncated[4];
+  size_t labelLen = strnlen(label, 8);
+  if (labelLen > 3) labelLen = 3;
+  memcpy(truncated, label, labelLen);
+  truncated[labelLen] = '\0';
+  label = truncated;
 
+  // Always use textSize=1 (5x7 font) — label is always 1-3 chars, fits in 21x11.
+  const uint8_t textSize = 1;
   TextMetrics tm = display.measure_text(label, textSize);
-  while (textSize > 1 && (tm.width > static_cast<int16_t>(w - 4) || tm.height > static_cast<int16_t>(h - 4))) {
-    --textSize;
-    tm = display.measure_text(label, textSize);
-  }
-  if (tm.width > static_cast<int16_t>(w - 4) || tm.height > static_cast<int16_t>(h - 4)) {
-    textSize = kTextSizeTiny;
-    tm = display.measure_text(label, textSize);
-  }
 
   const uint16_t textColor = badge_text_color(fill);
   const int16_t cx = static_cast<int16_t>(x + (w / 2));
   const int16_t cy = static_cast<int16_t>(y + (h / 2));
-  int16_t tx = static_cast<int16_t>(cx - (tm.width / 2) - tm.xOffset);
-  int16_t ty = static_cast<int16_t>(cy - (tm.height / 2) - tm.yOffset);
-  if (labelLen == 3 && textSize == 1 && w >= 21 && h >= 11) {
-    tx = static_cast<int16_t>(tx + 1);
-    ty = static_cast<int16_t>(ty + 1);
-  }
+  const int16_t tx = static_cast<int16_t>(cx - (tm.width / 2) - tm.xOffset + 1);
+  const int16_t ty = static_cast<int16_t>(cy - (tm.height / 2) - tm.yOffset + 1);
   display.draw_text(tx, ty, label, textColor, textSize, fill);
 }
 

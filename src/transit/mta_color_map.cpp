@@ -87,6 +87,8 @@ static constexpr RouteColorEntry kSeptaTrolleyColorTable[] = {
 static constexpr uint16_t kMtaBusColor = rgb565(0x00, 0x39, 0xA6);   // MTA institutional blue
 static constexpr uint16_t kSeptaBusColor = rgb565(0x00, 0x5D, 0xAA);
 static constexpr uint16_t kCtaBusFallbackColor = rgb565(0x99, 0x99, 0x9C);
+static constexpr uint16_t kNjtRailColor = rgb565(0x1F, 0x5A, 0xA6);
+static constexpr uint16_t kNjtBusColor = rgb565(0x6D, 0x20, 0x8F);
 
 static constexpr AliasRouteColorEntry kCtaSubwayColorTable[] = {
     {"BLUE|BLUELINE", rgb565(0x00, 0xA1, 0xDE)},
@@ -312,7 +314,8 @@ uint16_t MtaColorMap::color_for_provider_route(const char *providerId, const cha
                                     kCtaBusFallbackColor);
     }
 
-    if (strcmp(providerId, "mbta") == 0) {
+    if (strcmp(providerId, "mbta") == 0 || strcmp(providerId, "mbta-subway") == 0 ||
+        strcmp(providerId, "mbta-bus") == 0 || strcmp(providerId, "mbta-rail") == 0) {
       if (normalized_route_starts_with(routeId, "BOAT")) {
         return color_from_alias_table(kMbtaFerryColorTable,
                                       sizeof(kMbtaFerryColorTable) / sizeof(kMbtaFerryColorTable[0]),
@@ -332,6 +335,14 @@ uint16_t MtaColorMap::color_for_provider_route(const char *providerId, const cha
                                     sizeof(kMbtaSubwayColorTable) / sizeof(kMbtaSubwayColorTable[0]),
                                     routeId,
                                     kFallbackColor);
+    }
+
+    if (strcmp(providerId, "njt-rail") == 0) {
+      return kNjtRailColor;
+    }
+
+    if (strcmp(providerId, "njt-bus") == 0) {
+      return kNjtBusColor;
     }
   }
 
