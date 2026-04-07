@@ -121,6 +121,9 @@ void BleProvisioner::stop() {
   if (adv) {
     adv->stop();
   }
+  if (!advertising_) {
+    return;
+  }
   advertising_ = false;
   DCTRL_LOGI("BLE", "Advertising stopped");
 }
