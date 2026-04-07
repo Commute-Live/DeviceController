@@ -1,4 +1,4 @@
-#include "parsing/providers/boston/mbta_payload_parser.h"
+#include "parsing/providers/new_jersey/njt_rail_payload_parser.h"
 
 #include "parsing/payload_parser.h"
 
@@ -19,23 +19,22 @@ static String first_eta_from_message(const String &message) {
   String e1 = eta_value(eta1);
   String e2 = eta_value(eta2);
   String e3 = eta_value(eta3);
-  if (e1 != "--") return e1;
-  if (e2 != "--") return e2;
-  if (e3 != "--") return e3;
+  bool sawDue = false;
+  if (e1 == "DUE") sawDue = true;
+  else if (e1 != "--") return e1;
+  if (e2 == "DUE") sawDue = true;
+  else if (e2 != "--") return e2;
+  if (e3 == "DUE") sawDue = true;
+  else if (e3 != "--") return e3;
+  if (sawDue) return "DUE";
   return "--";
 }
 
-bool parse_mbta_payload(const String &message, ProviderPayload &out) {
+bool parse_njt_rail_payload(const String &message, ProviderPayload &out) {
   out = {};
 
   String provider = extract_json_string_field(message, "provider");
-  if (provider.length() == 0) provider = "mbta";
-  String direction = extract_json_string_field(message, "direction");
-  String directionLabel = extract_json_string_field(message, "destination");
-  if (directionLabel.length() == 0) {
-    directionLabel = extract_json_string_field(message, "directionLabel");
-  }
-  String stop = extract_json_string_field(message, "stop");
+  if (provider.length() == 0) provider = "njt-rail";
 
   String line1;
   String provider1;
@@ -64,14 +63,12 @@ bool parse_mbta_payload(const String &message, ProviderPayload &out) {
   String line = extract_json_string_field(message, "line");
   if (line.length() == 0) return false;
 
-  String label = directionLabel.length() ? directionLabel : stop;
-  if (label.length() == 0) {
-    // MBTA feeds frequently use 0/1 for direction ids.
-    if (direction == "0") label = "Outbound";
-    else if (direction == "1") label = "Inbound";
-    else if (direction == "N") label = "Northbound";
-    else if (direction == "S") label = "Southbound";
+  String directionLabel = extract_json_string_field(message, "destination");
+  if (directionLabel.length() == 0) {
+    directionLabel = extract_json_string_field(message, "directionLabel");
   }
+  String stop = extract_json_string_field(message, "stop");
+  String label = directionLabel.length() ? directionLabel : stop;
   if (label.length() == 0) label = line;
 
   out.hasRow1 = true;
