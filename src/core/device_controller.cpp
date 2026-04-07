@@ -40,7 +40,6 @@ constexpr uint32_t kCrashBreadcrumbPersistEveryMs = 30000;
 constexpr uint32_t kStaleEtaAnimEveryMs = 450;
 constexpr uint32_t kMqttUiGraceMs = 15000;
 constexpr uint32_t kInitialMqttConnectBudgetMs = 2000;
-constexpr uint32_t kBleProvisioningJoinTimeoutMs = 15000;
 constexpr uint32_t kBleSuccessNotifyDrainMs = 750;
 constexpr uint32_t kLowHeapWarningThresholdBytes = 32768;
 constexpr uint32_t kMinRenderGapMs = 40;
@@ -94,11 +93,7 @@ void copy_str(char *dst, size_t dstLen, const char *src) {
 
 bool strings_equal(const char *lhs, const char *rhs);
 
-const char *ble_provision_failure_reason(NetworkState state, int wifiStatus, bool timedOut) {
-  if (timedOut || state == NetworkState::kApMode) {
-    return "timeout";
-  }
-
+const char *ble_provision_failure_reason(int wifiStatus) {
   switch (wifiStatus) {
     case WL_NO_SSID_AVAIL:
       return "no_ssid";
@@ -1154,21 +1149,26 @@ void DeviceController::handle_network_state(NetworkState state) {
         Serial.println("[PROVISION] Success");
       }
     }
+  } else if (state == NetworkState::kConnecting && bleProvisioningInFlight_) {
+    DCTRL_LOGI("BLE", "BLE provisioning still in progress; notifying connecting for deviceId=%s",
+               runtimeConfig_.deviceId);
+    notify_ble_provision_status("connecting");
   } else if ((state == NetworkState::kDisconnected || state == NetworkState::kApMode) && bleProvisioningInFlight_) {
-    const uint32_t nowMs = millis();
-    const bool timedOut =
-        bleProvisioningStartedAtMs_ != 0 &&
-        nowMs - bleProvisioningStartedAtMs_ >= kBleProvisioningJoinTimeoutMs;
-    const char *reason = ble_provision_failure_reason(state, WiFi.status(), timedOut);
-    DCTRL_LOGW("BLE", "Notifying BLE status failed for deviceId=%s reason=%s state=%s",
-               runtimeConfig_.deviceId,
-               reason,
-               network_state_name(state));
-    notify_ble_provision_status("failed", reason);
-    bleProvisioningInFlight_ = false;
-    bleProvisioningStartedAtMs_ = 0;
-    memset(pendingProvisionToken_, 0, sizeof(pendingProvisionToken_));
-    memset(pendingProvisionServerUrl_, 0, sizeof(pendingProvisionServerUrl_));
+    if (deps_.networkManager->will_retry_connection()) {
+      DCTRL_LOGI("BLE", "WiFi attempt ended but retries remain; keeping BLE status connecting for deviceId=%s",
+                 runtimeConfig_.deviceId);
+    } else {
+      const char *reason = ble_provision_failure_reason(WiFi.status());
+      DCTRL_LOGW("BLE", "Notifying BLE status failed for deviceId=%s reason=%s state=%s",
+                 runtimeConfig_.deviceId,
+                 reason,
+                 network_state_name(state));
+      notify_ble_provision_status("failed", reason);
+      bleProvisioningInFlight_ = false;
+      bleProvisioningStartedAtMs_ = 0;
+      memset(pendingProvisionToken_, 0, sizeof(pendingProvisionToken_));
+      memset(pendingProvisionServerUrl_, 0, sizeof(pendingProvisionServerUrl_));
+    }
   }
   update_ui_state();
 }

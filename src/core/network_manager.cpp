@@ -282,6 +282,10 @@ bool NetworkManager::setup_mode_active() const {
   return WiFi.status() != WL_CONNECTED && (!hasSavedCredentials_ || !autoReconnectEnabled_);
 }
 
+bool NetworkManager::will_retry_connection() const {
+  return autoReconnectEnabled_ && hasSavedCredentials_;
+}
+
 void NetworkManager::transition_to(NetworkState next) {
   if (state_ == next) {
     return;

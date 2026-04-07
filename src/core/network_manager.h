@@ -38,6 +38,7 @@ class NetworkManager final {
   NetworkState state() const;
   bool is_connected() const;
   bool setup_mode_active() const;
+  bool will_retry_connection() const;
 
  private:
   NetworkConfig config_;
