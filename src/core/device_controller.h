@@ -68,6 +68,9 @@ class DeviceController final {
   ble::BleProvisioner bleProvisioner_;
   char pendingProvisionToken_[48];
   char pendingProvisionServerUrl_[128];
+  bool bleProvisioningInFlight_;
+  uint32_t bleProvisioningStartedAtMs_;
+  uint32_t bleShutdownAtMs_;
   volatile bool bleScanPending_;
   uint32_t bootCount_;
   uint32_t lastBreadcrumbPersistAtMs_;
@@ -132,6 +135,8 @@ class DeviceController final {
                           const char *metadataJson = nullptr);
   void persist_runtime_breadcrumbs(uint32_t nowMs, bool force = false);
   void publish_display_state();
+  void notify_ble_provision_status(const char *status, const char *reason = nullptr);
+  void maybe_stop_ble_after_success(uint32_t nowMs);
   bool call_provision_api(const char *serverUrl, const char *deviceId, const char *token);
 };
 

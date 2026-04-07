@@ -40,6 +40,8 @@ constexpr uint32_t kCrashBreadcrumbPersistEveryMs = 30000;
 constexpr uint32_t kStaleEtaAnimEveryMs = 450;
 constexpr uint32_t kMqttUiGraceMs = 15000;
 constexpr uint32_t kInitialMqttConnectBudgetMs = 2000;
+constexpr uint32_t kBleProvisioningJoinTimeoutMs = 15000;
+constexpr uint32_t kBleSuccessNotifyDrainMs = 750;
 constexpr uint32_t kLowHeapWarningThresholdBytes = 32768;
 constexpr uint32_t kMinRenderGapMs = 40;
 constexpr uint32_t kScrollStepMs = 65;       // advance 1px every 65ms (~15px/sec)
@@ -91,6 +93,25 @@ void copy_str(char *dst, size_t dstLen, const char *src) {
 }
 
 bool strings_equal(const char *lhs, const char *rhs);
+
+const char *ble_provision_failure_reason(NetworkState state, int wifiStatus, bool timedOut) {
+  if (timedOut || state == NetworkState::kApMode) {
+    return "timeout";
+  }
+
+  switch (wifiStatus) {
+    case WL_NO_SSID_AVAIL:
+      return "no_ssid";
+    case WL_CONNECT_FAILED:
+      return "auth_error";
+    case WL_CONNECTION_LOST:
+      return "connection_lost";
+    case WL_DISCONNECTED:
+      return "disconnected";
+    default:
+      return "connect_failed";
+  }
+}
 
 bool is_stale_eta_animation_text(const char *eta) {
   if (!eta || eta[0] != '.') {
@@ -790,6 +811,10 @@ DeviceController::DeviceController(const Dependencies &deps)
       renderModel_{},
       drawList_{},
       server_(80),
+      bleProvisioningInFlight_(false),
+      bleProvisioningStartedAtMs_(0),
+      bleShutdownAtMs_(0),
+      bleScanPending_(false),
       bootCount_(0),
       lastBreadcrumbPersistAtMs_(0),
       lastHeartbeatAtMs_(0),
@@ -905,10 +930,13 @@ bool DeviceController::begin() {
   activeController_ = this;
   setup_http_routes();
   // Always start BLE so the user can re-provision even if stale credentials exist.
-  // Advertising stops automatically once WiFi connects successfully.
+  // Advertising stops shortly after an explicit BLE "connected" status notification.
   // Use deviceId as the BLE name so the app can get the ID directly from the scan
   // without needing to read the STATUS characteristic (which is unreliable on iOS).
   bleProvisioner_.begin(runtimeConfig_.deviceId, runtimeConfig_.deviceId);
+  bleProvisioningInFlight_ = false;
+  bleProvisioningStartedAtMs_ = 0;
+  bleShutdownAtMs_ = 0;
   bleScanPending_ = false;
   bleProvisioner_.set_scan_callback([](void *ctx) {
     // Do NOT run the scan here — this runs in the NimBLE host task (tiny stack).
@@ -966,14 +994,16 @@ void DeviceController::tick(uint32_t nowMs) {
                static_cast<unsigned>(strlen(creds.password)),
                core::logging::bool_str(creds.username[0] != '\0'),
                creds.token[0] != '\0' ? "yes" : "no");
-    bleProvisioner_.notify_status("{\"status\":\"connecting\"}");
+    bleProvisioningInFlight_ = true;
+    bleProvisioningStartedAtMs_ = millis();
+    bleShutdownAtMs_ = 0;
+    notify_ble_provision_status("connecting");
     deps_.mqttClient->disconnect(true);
     deps_.networkManager->set_credentials(creds.ssid, creds.password, creds.username);
-    // BLE provisioner is no longer needed after credentials arrive.
-    bleProvisioner_.stop();
   }
   deps_.networkManager->tick(nowMs);
   deps_.mqttClient->tick(nowMs);
+  maybe_stop_ble_after_success(nowMs);
   const bool mqttConnected = deps_.mqttClient->connected();
 
   if (!mqttConnected && lastMqttConnected_) {
@@ -1105,33 +1135,73 @@ void DeviceController::handle_network_state(NetworkState state) {
     hasFreshPayload_ = false;
   }
 
-  // Only interact with BLE provisioner when it is active (no prior credentials).
-  // Once credentials arrive, tick() stops the provisioner so these are no-ops.
   if (state == NetworkState::kConnected) {
-    // If we have a pending provision token, call the server to register this device.
+    if (bleProvisioningInFlight_) {
+      DCTRL_LOGI("BLE", "Notifying BLE status connected for deviceId=%s", runtimeConfig_.deviceId);
+      notify_ble_provision_status("connected");
+      bleProvisioningInFlight_ = false;
+      bleProvisioningStartedAtMs_ = 0;
+      bleShutdownAtMs_ = millis() + kBleSuccessNotifyDrainMs;
+    }
+
     if (pendingProvisionToken_[0] != '\0') {
       const bool ok = call_provision_api(pendingProvisionServerUrl_, runtimeConfig_.deviceId, pendingProvisionToken_);
       memset(pendingProvisionToken_,     0, sizeof(pendingProvisionToken_));
       memset(pendingProvisionServerUrl_, 0, sizeof(pendingProvisionServerUrl_));
       if (!ok) {
-        Serial.println("[PROVISION] Failed — notifying BLE");
-        bleProvisioner_.notify_status("{\"status\":\"failed\"}");
-        update_ui_state();
-        return;
+        DCTRL_LOGW("PROVISION", "Provision API failed after WiFi connected; BLE status remains connected");
+      } else {
+        Serial.println("[PROVISION] Success");
       }
-      Serial.println("[PROVISION] Success");
     }
-    char buf[128];
-    snprintf(buf, sizeof(buf),
-             "{\"status\":\"connected\",\"deviceId\":\"%s\"}",
-             runtimeConfig_.deviceId);
-    DCTRL_LOGI("BLE", "Notifying BLE status connected for deviceId=%s", runtimeConfig_.deviceId);
-    bleProvisioner_.notify_status(buf);
-  } else if (state == NetworkState::kDisconnected) {
-    DCTRL_LOGW("BLE", "Notifying BLE status failed because WiFi disconnected");
-    bleProvisioner_.notify_status("{\"status\":\"failed\"}");
+  } else if ((state == NetworkState::kDisconnected || state == NetworkState::kApMode) && bleProvisioningInFlight_) {
+    const uint32_t nowMs = millis();
+    const bool timedOut =
+        bleProvisioningStartedAtMs_ != 0 &&
+        nowMs - bleProvisioningStartedAtMs_ >= kBleProvisioningJoinTimeoutMs;
+    const char *reason = ble_provision_failure_reason(state, WiFi.status(), timedOut);
+    DCTRL_LOGW("BLE", "Notifying BLE status failed for deviceId=%s reason=%s state=%s",
+               runtimeConfig_.deviceId,
+               reason,
+               network_state_name(state));
+    notify_ble_provision_status("failed", reason);
+    bleProvisioningInFlight_ = false;
+    bleProvisioningStartedAtMs_ = 0;
+    memset(pendingProvisionToken_, 0, sizeof(pendingProvisionToken_));
+    memset(pendingProvisionServerUrl_, 0, sizeof(pendingProvisionServerUrl_));
   }
   update_ui_state();
+}
+
+void DeviceController::notify_ble_provision_status(const char *status, const char *reason) {
+  if (!status || status[0] == '\0') {
+    return;
+  }
+
+  char payload[192];
+  if (reason && reason[0] != '\0') {
+    snprintf(payload, sizeof(payload),
+             "{\"status\":\"%s\",\"deviceId\":\"%s\",\"reason\":\"%s\"}",
+             status,
+             runtimeConfig_.deviceId,
+             reason);
+  } else {
+    snprintf(payload, sizeof(payload),
+             "{\"status\":\"%s\",\"deviceId\":\"%s\"}",
+             status,
+             runtimeConfig_.deviceId);
+  }
+  bleProvisioner_.notify_status(payload);
+}
+
+void DeviceController::maybe_stop_ble_after_success(uint32_t nowMs) {
+  if (bleShutdownAtMs_ == 0 || static_cast<int32_t>(nowMs - bleShutdownAtMs_) < 0) {
+    return;
+  }
+
+  DCTRL_LOGI("BLE", "Stopping BLE after connected notification drain period elapsed");
+  bleProvisioner_.stop();
+  bleShutdownAtMs_ = 0;
 }
 
 bool DeviceController::call_provision_api(const char *serverUrl, const char *deviceId, const char *token) {
@@ -1540,6 +1610,9 @@ void DeviceController::handle_disconnect_wifi_command(const String &message) {
 
   deps_.mqttClient->disconnect(true);
   deps_.networkManager->disconnect(clearCredentials, restartProvisioning);
+  bleProvisioningInFlight_ = false;
+  bleProvisioningStartedAtMs_ = 0;
+  bleShutdownAtMs_ = 0;
 
   if (restartProvisioning) {
     clear_cached_transit_assignment();

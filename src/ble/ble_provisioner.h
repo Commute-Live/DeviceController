@@ -24,9 +24,11 @@ struct BleCredentials {
 // App writes JSON to PROVISION: {"ssid":"...","password":"...","username":"...","token":"...","server_url":"..."}
 // Or: {"action":"scan"} to request a WiFi network scan (results on WIFI_SCAN characteristic)
 // Device notifies STATUS when WiFi result is known:
-//   {"status":"connecting"}
+//   {"status":"ready","deviceId":"esp32-XXXX"}
+//   {"status":"connecting","deviceId":"esp32-XXXX"}
 //   {"status":"connected","deviceId":"esp32-XXXX"}
-//   {"status":"failed"}
+//   {"status":"failed","deviceId":"esp32-XXXX"}
+//   {"status":"failed","deviceId":"esp32-XXXX","reason":"auth_error"}
 class ProvisionServerCallbacks;
 
 class BleProvisioner {
