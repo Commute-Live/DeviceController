@@ -1108,6 +1108,9 @@ void DeviceController::handle_network_state(NetworkState state) {
   // Only interact with BLE provisioner when it is active (no prior credentials).
   // Once credentials arrive, tick() stops the provisioner so these are no-ops.
   if (state == NetworkState::kConnected) {
+    if (bleProvisioner_.is_advertising()) {
+      bleProvisioner_.stop();
+    }
     // If we have a pending provision token, call the server to register this device.
     if (pendingProvisionToken_[0] != '\0') {
       const bool ok = call_provision_api(pendingProvisionServerUrl_, runtimeConfig_.deviceId, pendingProvisionToken_);

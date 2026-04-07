@@ -12,23 +12,6 @@ namespace wifi_manager {
 
 static Preferences prefs;
 
-bool start_ap(const char *apSsid, const char *apPassword) {
-  DCTRL_LOGI("WIFI", "Starting soft AP ssid=%s passwordLen=%u",
-             core::logging::safe_str(apSsid),
-             static_cast<unsigned>(apPassword ? strlen(apPassword) : 0));
-  WiFi.mode(WIFI_AP_STA);
-
-  bool success = WiFi.softAP(apSsid, apPassword);
-  if (success) {
-    DCTRL_LOGI("WIFI", "Soft AP started ssid=%s apIp=%s", core::logging::safe_str(apSsid),
-               WiFi.softAPIP().toString().c_str());
-  } else {
-    DCTRL_LOGE("WIFI", "Soft AP start failed ssid=%s", core::logging::safe_str(apSsid));
-  }
-
-  return success;
-}
-
 void save_credentials(const String &ssid, const String &password, const String &user) {
   prefs.begin("wifi", false);
   prefs.putString("ssid", ssid);
@@ -64,7 +47,7 @@ void begin_station(const char *ssid, const char *password, const char *username)
              core::logging::safe_str(ssid),
              static_cast<unsigned>(password ? strlen(password) : 0),
              core::logging::bool_str(username && strlen(username) > 0));
-  WiFi.mode(WIFI_AP_STA);
+  WiFi.mode(WIFI_STA);
   WiFi.disconnect(false, false);
   delay(100);
 
@@ -125,7 +108,7 @@ bool connect_station(const char *ssid, const char *password, const char *usernam
              core::logging::safe_str(ssid),
              static_cast<unsigned>(password ? strlen(password) : 0),
              core::logging::bool_str(username && strlen(username) > 0));
-  WiFi.mode(WIFI_AP_STA);
+  WiFi.mode(WIFI_STA);
   WiFi.disconnect(true, true);
   delay(100);
 
@@ -194,7 +177,7 @@ bool handle_connect_request(WebServer &server, String &connectedSsid, String &co
              static_cast<unsigned>(homePassword.length()),
              core::logging::bool_str(homeUser.length() > 0));
 
-  WiFi.mode(WIFI_AP_STA);
+  WiFi.mode(WIFI_STA);
   int networkCount = fresh_scan_networks();
 
   if (networkCount == 0) {
