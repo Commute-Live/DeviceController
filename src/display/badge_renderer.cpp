@@ -10,7 +10,6 @@ namespace {
 
 constexpr uint16_t kWhite = 0xFFFF;
 constexpr uint16_t kBlack = 0x0000;
-constexpr uint8_t kTextSizeTiny = 0;
 constexpr uint8_t kTextSizeTinyPlus = 255;
 
 uint16_t badge_text_color(uint16_t fill) {
@@ -168,9 +167,9 @@ void BadgeRenderer::draw_rect_badge(DisplayEngine &display,
                                     RoundedBadgeStyle style) const {
   if (w <= 0 || h <= 0 || !label || label[0] == '\0') return;
 
-  const bool railStyle = style == RoundedBadgeStyle::kRail;
-  int16_t radius = railStyle ? static_cast<int16_t>(h / 3) : static_cast<int16_t>(h / 2);
-  if (radius < 2) radius = 2;
+  (void)style;
+  // Keep the shared 21x11 badge box, but only soften the corners slightly.
+  int16_t radius = (w >= 10 && h >= 8) ? 1 : 0;
   fill_rounded_rect(display, x, y, w, h, radius, fill);
 
   const size_t labelLen = strnlen(label, 8);
@@ -191,11 +190,32 @@ void BadgeRenderer::draw_rect_badge(DisplayEngine &display,
     tm = display.measure_text(label, textSize);
   }
 
+  const uint16_t textColor = badge_text_color(fill);
+  if (textSize == kTextSizeTiny && labelLen == 3 && w >= 21 && h >= 11) {
+    constexpr int16_t kGlyphSlotW = 5;
+    constexpr int16_t kGlyphGapW = 1;
+    constexpr int16_t kGlyphContentH = 7;
+    const int16_t totalGlyphW = static_cast<int16_t>(3 * kGlyphSlotW + 2 * kGlyphGapW);
+    const int16_t startX = static_cast<int16_t>(x + ((w - totalGlyphW) / 2));
+    const int16_t topY = static_cast<int16_t>(y + ((h - kGlyphContentH) / 2));
+    for (int16_t i = 0; i < 3; ++i) {
+      char glyph[2]{label[i], '\0'};
+      TextMetrics glyphMetrics = display.measure_text(glyph, textSize);
+      const int16_t slotX = static_cast<int16_t>(startX + i * (kGlyphSlotW + kGlyphGapW));
+      const int16_t slotCenterX = static_cast<int16_t>(slotX + (kGlyphSlotW / 2));
+      const int16_t glyphX =
+          static_cast<int16_t>(slotCenterX - (glyphMetrics.width / 2) - glyphMetrics.xOffset);
+      const int16_t glyphY = static_cast<int16_t>(topY - glyphMetrics.yOffset);
+      display.draw_text_transparent(glyphX, glyphY, glyph, textColor, textSize);
+    }
+    return;
+  }
+
   const int16_t cx = static_cast<int16_t>(x + (w / 2));
   const int16_t cy = static_cast<int16_t>(y + (h / 2));
   const int16_t tx = static_cast<int16_t>(cx - (tm.width / 2) - tm.xOffset);
   const int16_t ty = static_cast<int16_t>(cy - (tm.height / 2) - tm.yOffset);
-  display.draw_text(tx, ty, label, badge_text_color(fill), textSize, fill);
+  display.draw_text(tx, ty, label, textColor, textSize, fill);
 }
 
 }  // namespace display
