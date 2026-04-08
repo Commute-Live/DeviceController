@@ -83,10 +83,7 @@ bool NetworkManager::begin(const NetworkConfig &config) {
              config_.apSsid[0] ? config_.apSsid : "(none)",
              static_cast<unsigned>(strlen(config_.apPassword)));
 
-  WiFi.mode(WIFI_STA);
-  WiFi.setAutoReconnect(false);
-  WiFi.disconnect();
-  delay(100);
+  wifi_manager::reset_station_state(false);
 
   if (has_explicit_bootstrap_wifi(config_)) {
     savedSsid_ = config_.ssid;
@@ -170,7 +167,7 @@ void NetworkManager::tick(uint32_t nowMs) {
       return;
     }
     connectingStartMs_ = 0;
-    WiFi.disconnect(false, false);
+    wifi_manager::reset_station_state(false);
     transition_to(NetworkState::kDisconnected);
     retryCount_++;
     const uint32_t waitMs = bounded_backoff(retryCount_);
@@ -232,9 +229,7 @@ void NetworkManager::disconnect(bool clearCredentials, bool restartProvisioning)
     wifi_manager::clear_credentials();
   }
 
-  WiFi.setAutoReconnect(false);
-  WiFi.mode(WIFI_STA);
-  WiFi.disconnect(false, clearCredentials);
+  wifi_manager::reset_station_state(clearCredentials);
 
   transition_to(NetworkState::kDisconnected);
 }
@@ -247,13 +242,11 @@ void NetworkManager::request_reconnect() {
   connectingStartMs_ = 0;
   retryCount_ = 0;
   nextRetryAtMs_ = 0;
-  WiFi.setAutoReconnect(false);
-  WiFi.mode(WIFI_STA);
-  WiFi.disconnect(false, false);
+  wifi_manager::reset_station_state(false);
   transition_to(NetworkState::kConnecting);
 }
 
-void NetworkManager::set_credentials(const char *ssid, const char *password, const char *username) {
+void NetworkManager::set_credentials(const char *ssid, const char *password, const char *username, bool reconnectNow) {
   savedSsid_ = ssid ? ssid : "";
   savedPassword_ = password ? password : "";
   savedUsername_ = username ? username : "";
@@ -266,7 +259,20 @@ void NetworkManager::set_credentials(const char *ssid, const char *password, con
   if (hasSavedCredentials_) {
     wifi_manager::save_credentials(savedSsid_, savedPassword_, savedUsername_);
   }
-  request_reconnect();
+  retryCount_ = 0;
+  nextRetryAtMs_ = millis();
+  connectingStartMs_ = 0;
+
+  if (reconnectNow) {
+    request_reconnect();
+    return;
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    transition_to(NetworkState::kConnected);
+  } else {
+    transition_to(NetworkState::kDisconnected);
+  }
 }
 
 void NetworkManager::set_state_callback(StateCallback callback, void *ctx) {

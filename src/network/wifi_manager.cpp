@@ -12,6 +12,308 @@ namespace wifi_manager {
 
 static Preferences prefs;
 
+namespace {
+
+constexpr uint8_t kProvisioningConnectAttempts = 3;
+constexpr uint32_t kProvisioningRetryDelayMs = 200;
+
+enum class StationAuthMode : uint8_t {
+  kPersonal = 0,
+  kEnterprise = 1,
+};
+
+int fresh_scan_networks();
+void ensure_wifi_event_handler();
+bool failure_status_is_auth_related(int wifiStatus, int disconnectReason);
+int failure_priority(int wifiStatus, int disconnectReason);
+void emit_provisioning_progress(ProvisioningProgressCallback progressCb,
+                                const char *phase,
+                                int wifiStatus,
+                                uint8_t attempt,
+                                uint8_t totalAttempts,
+                                void *progressCtx);
+
+volatile int gLastDisconnectReason = WIFI_REASON_UNSPECIFIED;
+bool gWifiEventHandlerRegistered = false;
+
+void clear_enterprise_credentials() {
+  esp_wifi_sta_wpa2_ent_disable();
+  esp_wifi_sta_wpa2_ent_clear_identity();
+  esp_wifi_sta_wpa2_ent_clear_username();
+  esp_wifi_sta_wpa2_ent_clear_password();
+  esp_wifi_sta_wpa2_ent_clear_new_password();
+  esp_wifi_sta_wpa2_ent_clear_ca_cert();
+  esp_wifi_sta_wpa2_ent_clear_cert_key();
+}
+
+const char *station_auth_mode_name(StationAuthMode mode) {
+  switch (mode) {
+    case StationAuthMode::kPersonal:
+      return "personal";
+    case StationAuthMode::kEnterprise:
+      return "enterprise";
+    default:
+      return "unknown";
+  }
+}
+
+const char *wifi_auth_mode_name(wifi_auth_mode_t authMode) {
+  switch (authMode) {
+    case WIFI_AUTH_OPEN:
+      return "OPEN";
+    case WIFI_AUTH_WEP:
+      return "WEP";
+    case WIFI_AUTH_WPA_PSK:
+      return "WPA_PSK";
+    case WIFI_AUTH_WPA2_PSK:
+      return "WPA2_PSK";
+    case WIFI_AUTH_WPA2_ENTERPRISE:
+      return "WPA2_ENTERPRISE";
+    default:
+      return "OTHER";
+  }
+}
+
+void on_wifi_event(arduino_event_id_t event, arduino_event_info_t info) {
+  if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+    gLastDisconnectReason = info.wifi_sta_disconnected.reason;
+    DCTRL_LOGW("WIFI", "STA disconnected ssid=%s reason=%d (%s)",
+               reinterpret_cast<const char *>(info.wifi_sta_disconnected.ssid),
+               static_cast<int>(info.wifi_sta_disconnected.reason),
+               WiFi.disconnectReasonName(static_cast<wifi_err_reason_t>(info.wifi_sta_disconnected.reason)));
+  } else if (event == ARDUINO_EVENT_WIFI_STA_CONNECTED || event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+    gLastDisconnectReason = WIFI_REASON_UNSPECIFIED;
+  }
+}
+
+void ensure_wifi_event_handler() {
+  if (gWifiEventHandlerRegistered) {
+    return;
+  }
+  WiFi.onEvent(on_wifi_event, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+  WiFi.onEvent(on_wifi_event, ARDUINO_EVENT_WIFI_STA_CONNECTED);
+  WiFi.onEvent(on_wifi_event, ARDUINO_EVENT_WIFI_STA_GOT_IP);
+  gWifiEventHandlerRegistered = true;
+}
+
+void reset_last_disconnect_reason() {
+  gLastDisconnectReason = WIFI_REASON_UNSPECIFIED;
+}
+
+bool failure_status_is_auth_related(int wifiStatus, int disconnectReason) {
+  if (wifiStatus == WL_CONNECT_FAILED) {
+    return true;
+  }
+
+  switch (disconnectReason) {
+    case WIFI_REASON_AUTH_FAIL:
+    case WIFI_REASON_802_1X_AUTH_FAILED:
+    case WIFI_REASON_HANDSHAKE_TIMEOUT:
+    case WIFI_REASON_ASSOC_FAIL:
+    case WIFI_REASON_CONNECTION_FAIL:
+    case WIFI_REASON_AKMP_INVALID:
+    case WIFI_REASON_BAD_CIPHER_OR_AKM:
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+      return true;
+    default:
+      return false;
+  }
+}
+
+int failure_priority(int wifiStatus, int disconnectReason) {
+  if (failure_status_is_auth_related(wifiStatus, disconnectReason)) {
+    return 3;
+  }
+  if (wifiStatus == WL_CONNECTION_LOST ||
+      disconnectReason == WIFI_REASON_BEACON_TIMEOUT ||
+      disconnectReason == WIFI_REASON_TIMEOUT) {
+    return 2;
+  }
+  if (wifiStatus == WL_NO_SSID_AVAIL || disconnectReason == WIFI_REASON_NO_AP_FOUND) {
+    return 1;
+  }
+  return 0;
+}
+
+void emit_provisioning_progress(ProvisioningProgressCallback progressCb,
+                                const char *phase,
+                                int wifiStatus,
+                                uint8_t attempt,
+                                uint8_t totalAttempts,
+                                void *progressCtx) {
+  if (!progressCb || !phase || phase[0] == '\0') {
+    return;
+  }
+  progressCb(phase, wifiStatus, attempt, totalAttempts, progressCtx);
+}
+
+bool scan_for_ssid(const char *ssid,
+                   wifi_auth_mode_t *authModeOut,
+                   int *rssiOut,
+                   int *channelOut,
+                   ProvisioningProgressCallback progressCb,
+                   uint8_t attempt,
+                   uint8_t totalAttempts,
+                   void *progressCtx) {
+  if (!ssid || ssid[0] == '\0') {
+    return false;
+  }
+
+  emit_provisioning_progress(progressCb, "scanning", WL_IDLE_STATUS, attempt, totalAttempts, progressCtx);
+  const int networkCount = fresh_scan_networks();
+  if (networkCount <= 0) {
+    WiFi.scanDelete();
+    return false;
+  }
+
+  for (int i = 0; i < networkCount; ++i) {
+    if (strcmp(WiFi.SSID(i).c_str(), ssid) != 0) {
+      continue;
+    }
+
+    if (authModeOut) {
+      *authModeOut = static_cast<wifi_auth_mode_t>(WiFi.encryptionType(i));
+    }
+    if (rssiOut) {
+      *rssiOut = WiFi.RSSI(i);
+    }
+    if (channelOut) {
+      *channelOut = WiFi.channel(i);
+    }
+
+    DCTRL_LOGI("WIFI", "Resolved target ssid=%s auth=%s rssi=%d channel=%d",
+               ssid,
+               wifi_auth_mode_name(static_cast<wifi_auth_mode_t>(WiFi.encryptionType(i))),
+               WiFi.RSSI(i),
+               WiFi.channel(i));
+    WiFi.scanDelete();
+    return true;
+  }
+
+  DCTRL_LOGW("WIFI", "Target ssid=%s not present in fresh scan before connect", ssid);
+  WiFi.scanDelete();
+  return false;
+}
+
+StationAuthMode resolve_station_auth_mode(const char *ssid,
+                                          const char *username,
+                                          ProvisioningProgressCallback progressCb,
+                                          uint8_t attempt,
+                                          uint8_t totalAttempts,
+                                          void *progressCtx) {
+  const bool hasUsername = username && username[0] != '\0';
+  if (!hasUsername) {
+    return StationAuthMode::kPersonal;
+  }
+
+  wifi_auth_mode_t authMode = WIFI_AUTH_OPEN;
+  int rssi = 0;
+  int channel = 0;
+  if (!scan_for_ssid(ssid, &authMode, &rssi, &channel, progressCb, attempt, totalAttempts, progressCtx)) {
+    DCTRL_LOGW("WIFI",
+               "Username was provided for ssid=%s but the SSID was not visible during auth detection; keeping enterprise mode",
+               core::logging::safe_str(ssid));
+    return StationAuthMode::kEnterprise;
+  }
+
+  if (authMode == WIFI_AUTH_WPA2_ENTERPRISE) {
+    DCTRL_LOGI("WIFI", "SSID=%s confirmed as enterprise auth=%s rssi=%d channel=%d",
+               core::logging::safe_str(ssid),
+               wifi_auth_mode_name(authMode),
+               rssi,
+               channel);
+    return StationAuthMode::kEnterprise;
+  }
+
+  DCTRL_LOGW("WIFI",
+             "Username was provided for ssid=%s but scan shows auth=%s rssi=%d channel=%d; using personal WPA/WPA2 mode",
+             core::logging::safe_str(ssid),
+             wifi_auth_mode_name(authMode),
+             rssi,
+             channel);
+  return StationAuthMode::kPersonal;
+}
+
+bool connect_station_once(const char *ssid,
+                          const char *password,
+                          const char *username,
+                          int *finalStatusOut,
+                          ProvisioningProgressCallback progressCb,
+                          uint8_t attempt,
+                          uint8_t totalAttempts,
+                          void *progressCtx) {
+  ensure_wifi_event_handler();
+  reset_last_disconnect_reason();
+
+  if (finalStatusOut) {
+    *finalStatusOut = WL_IDLE_STATUS;
+  }
+
+  reset_station_state(true);
+
+  const StationAuthMode authMode = resolve_station_auth_mode(ssid, username, progressCb, attempt, totalAttempts, progressCtx);
+  if (authMode == StationAuthMode::kEnterprise) {
+    DCTRL_LOGI("WIFI", "Configuring enterprise auth for blocking connect ssid=%s user=%s",
+               core::logging::safe_str(ssid),
+               core::logging::safe_str(username));
+    esp_wifi_sta_wpa2_ent_set_identity((uint8_t *)username, strlen(username));
+    esp_wifi_sta_wpa2_ent_set_username((uint8_t *)username, strlen(username));
+    if (password && strlen(password) > 0) {
+      esp_wifi_sta_wpa2_ent_set_password((uint8_t *)password, strlen(password));
+    }
+    esp_wifi_sta_wpa2_ent_enable();
+    WiFi.begin(ssid);
+  } else {
+    esp_wifi_sta_wpa2_ent_disable();
+    DCTRL_LOGI("WIFI", "Configuring personal auth for blocking connect ssid=%s", core::logging::safe_str(ssid));
+    WiFi.begin(ssid, password);
+  }
+  emit_provisioning_progress(progressCb, "wifi_connecting", WiFi.status(), attempt, totalAttempts, progressCtx);
+
+  int timeout = 15;
+  int lastReportedStatus = 999;
+  while (WiFi.status() != WL_CONNECTED && timeout--) {
+    const int currentStatus = WiFi.status();
+    if (currentStatus != lastReportedStatus) {
+      emit_provisioning_progress(progressCb, "wifi_connecting", currentStatus, attempt, totalAttempts, progressCtx);
+      lastReportedStatus = currentStatus;
+    }
+    DCTRL_LOGD("WIFI", "Blocking connect poll remaining=%d status=%s (%d)",
+               timeout,
+               core::logging::wifi_status_name(currentStatus),
+               currentStatus);
+    delay(500);
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    emit_provisioning_progress(progressCb, "wifi_connected", WL_CONNECTED, attempt, totalAttempts, progressCtx);
+    DCTRL_LOGI("WIFI", "Blocking connect success ssid=%s ip=%s gateway=%s rssi=%d",
+               WiFi.SSID().c_str(),
+               WiFi.localIP().toString().c_str(),
+               WiFi.gatewayIP().toString().c_str(),
+               WiFi.RSSI());
+    return true;
+  }
+
+  const int finalStatus = WiFi.status();
+  const int disconnectReason = gLastDisconnectReason;
+  if (finalStatusOut) {
+    *finalStatusOut = finalStatus;
+  }
+
+  DCTRL_LOGW("WIFI", "Blocking connect failed ssid=%s authMode=%s finalStatus=%s (%d) disconnectReason=%d (%s)",
+             core::logging::safe_str(ssid),
+             station_auth_mode_name(authMode),
+             core::logging::wifi_status_name(finalStatus),
+             finalStatus,
+             disconnectReason,
+             WiFi.disconnectReasonName(static_cast<wifi_err_reason_t>(disconnectReason)));
+  reset_station_state(true);
+  return false;
+}
+
+}  // namespace
+
 void save_credentials(const String &ssid, const String &password, const String &user) {
   prefs.begin("wifi", false);
   prefs.putString("ssid", ssid);
@@ -47,13 +349,13 @@ void begin_station(const char *ssid, const char *password, const char *username)
              core::logging::safe_str(ssid),
              static_cast<unsigned>(password ? strlen(password) : 0),
              core::logging::bool_str(username && strlen(username) > 0));
-  WiFi.mode(WIFI_STA);
-  WiFi.disconnect(false, false);
-  delay(100);
+  reset_station_state(false);
 
-  if (username && strlen(username) > 0) {
-    DCTRL_LOGI("WIFI", "Configuring WPA2-Enterprise for async connect user=%s", username);
-    esp_wifi_sta_wpa2_ent_disable();
+  const StationAuthMode authMode = resolve_station_auth_mode(ssid, username, nullptr, 0, 0, nullptr);
+  if (authMode == StationAuthMode::kEnterprise) {
+    DCTRL_LOGI("WIFI", "Configuring enterprise auth for async connect ssid=%s user=%s",
+               core::logging::safe_str(ssid),
+               core::logging::safe_str(username));
     esp_wifi_sta_wpa2_ent_set_identity((uint8_t *)username, strlen(username));
     esp_wifi_sta_wpa2_ent_set_username((uint8_t *)username, strlen(username));
     if (password && strlen(password) > 0) {
@@ -67,7 +369,7 @@ void begin_station(const char *ssid, const char *password, const char *username)
   }
   DCTRL_LOGI("WIFI", "Async WiFi.begin issued ssid=%s mode=%s",
              core::logging::safe_str(ssid),
-             username && strlen(username) > 0 ? "enterprise" : "personal");
+             station_auth_mode_name(authMode));
 }
 
 void clear_credentials() {
@@ -77,6 +379,16 @@ void clear_credentials() {
   prefs.remove("user");
   prefs.end();
   DCTRL_LOGI("WIFI", "Cleared saved WiFi credentials");
+}
+
+void reset_station_state(bool erasePersistentConfig) {
+  DCTRL_LOGI("WIFI", "Resetting station state erasePersistentConfig=%s",
+             core::logging::bool_str(erasePersistentConfig));
+  WiFi.setAutoReconnect(false);
+  WiFi.mode(WIFI_STA);
+  clear_enterprise_credentials();
+  WiFi.disconnect(true, erasePersistentConfig);
+  delay(200);
 }
 
 void build_ap_ssid(char *out, size_t outLen) {
@@ -108,58 +420,84 @@ bool connect_station(const char *ssid, const char *password, const char *usernam
              core::logging::safe_str(ssid),
              static_cast<unsigned>(password ? strlen(password) : 0),
              core::logging::bool_str(username && strlen(username) > 0));
-  WiFi.mode(WIFI_STA);
-  WiFi.disconnect(true, true);
-  delay(100);
+  return connect_station_once(ssid, password, username, nullptr, nullptr, 0, 0, nullptr);
+}
 
-  if (username && strlen(username) > 0) {
-    DCTRL_LOGI("WIFI", "Configuring WPA2-Enterprise for blocking connect user=%s", username);
-    esp_wifi_sta_wpa2_ent_disable();
-    esp_wifi_sta_wpa2_ent_set_identity((uint8_t *)username, strlen(username));
-    esp_wifi_sta_wpa2_ent_set_username((uint8_t *)username, strlen(username));
-    if (password && strlen(password) > 0) {
-      esp_wifi_sta_wpa2_ent_set_password((uint8_t *)password, strlen(password));
-    }
-    esp_wifi_sta_wpa2_ent_enable();
-    WiFi.begin(ssid);
-  } else {
-    esp_wifi_sta_wpa2_ent_disable();
-    WiFi.begin(ssid, password);
-  }
-
-  int timeout = 15;
-  while (WiFi.status() != WL_CONNECTED && timeout--) {
-    DCTRL_LOGD("WIFI", "Blocking connect poll remaining=%d status=%s (%d)",
-               timeout,
-               core::logging::wifi_status_name(WiFi.status()),
-               WiFi.status());
-    delay(500);
-  }
-
-  if (WiFi.status() == WL_CONNECTED) {
-    DCTRL_LOGI("WIFI", "Blocking connect success ssid=%s ip=%s gateway=%s rssi=%d",
-               WiFi.SSID().c_str(),
-               WiFi.localIP().toString().c_str(),
-               WiFi.gatewayIP().toString().c_str(),
-               WiFi.RSSI());
-    return true;
-  }
-
-  DCTRL_LOGW("WIFI", "Blocking connect failed ssid=%s finalStatus=%s (%d)",
+bool connect_station_for_provisioning(const char *ssid,
+                                      const char *password,
+                                      const char *username,
+                                      int *finalStatusOut,
+                                      ProvisioningProgressCallback progressCb,
+                                      void *progressCtx) {
+  DCTRL_LOGI("WIFI", "Provisioning connect ssid=%s passwordLen=%u enterprise=%s attempts=%u",
              core::logging::safe_str(ssid),
-             core::logging::wifi_status_name(WiFi.status()),
-             WiFi.status());
-  WiFi.disconnect(true, true);
-  delay(200);
+             static_cast<unsigned>(password ? strlen(password) : 0),
+             core::logging::bool_str(username && strlen(username) > 0),
+             static_cast<unsigned>(kProvisioningConnectAttempts));
+
+  int finalStatus = WL_IDLE_STATUS;
+  int bestStatus = WL_IDLE_STATUS;
+  int bestDisconnectReason = WIFI_REASON_UNSPECIFIED;
+  for (uint8_t attempt = 1; attempt <= kProvisioningConnectAttempts; ++attempt) {
+    DCTRL_LOGI("WIFI", "Provisioning connect attempt=%u/%u ssid=%s",
+               static_cast<unsigned>(attempt),
+               static_cast<unsigned>(kProvisioningConnectAttempts),
+               core::logging::safe_str(ssid));
+    if (connect_station_once(ssid,
+                             password,
+                             username,
+                             &finalStatus,
+                             progressCb,
+                             attempt,
+                             kProvisioningConnectAttempts,
+                             progressCtx)) {
+      if (finalStatusOut) {
+        *finalStatusOut = WL_CONNECTED;
+      }
+      return true;
+    }
+
+    const int disconnectReason = last_disconnect_reason();
+    if (failure_priority(finalStatus, disconnectReason) >= failure_priority(bestStatus, bestDisconnectReason)) {
+      bestStatus = finalStatus;
+      bestDisconnectReason = disconnectReason;
+    }
+
+    if (attempt < kProvisioningConnectAttempts) {
+      delay(kProvisioningRetryDelayMs);
+    }
+  }
+
+  if (finalStatusOut) {
+    *finalStatusOut = bestStatus != WL_IDLE_STATUS ? bestStatus : finalStatus;
+  }
+  DCTRL_LOGW("WIFI", "Provisioning connect exhausted retries ssid=%s bestStatus=%s (%d) bestDisconnectReason=%d (%s)",
+             core::logging::safe_str(ssid),
+             core::logging::wifi_status_name(bestStatus != WL_IDLE_STATUS ? bestStatus : finalStatus),
+             bestStatus != WL_IDLE_STATUS ? bestStatus : finalStatus,
+             bestDisconnectReason,
+             WiFi.disconnectReasonName(static_cast<wifi_err_reason_t>(bestDisconnectReason)));
   return false;
 }
 
-static int fresh_scan_networks() {
+namespace {
+
+int fresh_scan_networks() {
   DCTRL_LOGI("WIFI", "Starting fresh network scan");
   WiFi.scanDelete();
   int n = WiFi.scanNetworks(false, true);
   DCTRL_LOGI("WIFI", "Finished network scan count=%d", n);
   return n;
+}
+
+}  // namespace
+
+int last_disconnect_reason() {
+  return gLastDisconnectReason;
+}
+
+const char *disconnect_reason_name(int reason) {
+  return WiFi.disconnectReasonName(static_cast<wifi_err_reason_t>(reason));
 }
 
 bool handle_connect_request(WebServer &server, String &connectedSsid, String &connectedPassword, String &connectedUser) {
@@ -199,7 +537,7 @@ bool handle_connect_request(WebServer &server, String &connectedSsid, String &co
                WiFi.RSSI(i),
                core::logging::bool_str(WiFi.encryptionType(i) != WIFI_AUTH_OPEN),
                WiFi.channel(i));
-    if (!connect_station(homeSsid.c_str(), homePassword.c_str(), homeUser.c_str())) {
+    if (!connect_station_for_provisioning(homeSsid.c_str(), homePassword.c_str(), homeUser.c_str())) {
       DCTRL_LOGW("WIFI", "Target network connect failed ssid=%s", homeSsid.c_str());
       server.send(400, "application/json", "{\"error\":\"WiFi credentials wrong\"}");
       return false;

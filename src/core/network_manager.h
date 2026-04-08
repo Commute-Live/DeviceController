@@ -32,7 +32,7 @@ class NetworkManager final {
   void tick(uint32_t nowMs);
   void disconnect(bool clearCredentials, bool restartProvisioning);
   void request_reconnect();
-  void set_credentials(const char *ssid, const char *password, const char *username);
+  void set_credentials(const char *ssid, const char *password, const char *username, bool reconnectNow = true);
   void set_state_callback(StateCallback callback, void *ctx);
 
   NetworkState state() const;

@@ -24,7 +24,7 @@ void set_ready_status(void *statusChar, const char *deviceId) {
 
   auto *chr = reinterpret_cast<NimBLECharacteristic *>(statusChar);
   char readyJson[128];
-  snprintf(readyJson, sizeof(readyJson), "{\"status\":\"ready\",\"deviceId\":\"%s\"}", deviceId);
+  snprintf(readyJson, sizeof(readyJson), "{\"status\":\"ready\",\"phase\":\"ready\",\"deviceId\":\"%s\"}", deviceId);
   chr->setValue(reinterpret_cast<const uint8_t *>(readyJson), strlen(readyJson));
 }
 
