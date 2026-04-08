@@ -91,7 +91,26 @@ void copy_str(char *dst, size_t dstLen, const char *src) {
 bool strings_equal(const char *lhs, const char *rhs);
 void clear_row(TransitRowModel &row);
 
-const char *ble_provision_failure_reason(int wifiStatus) {
+const char *ble_provision_failure_reason(int wifiStatus, int disconnectReason) {
+  switch (disconnectReason) {
+    case WIFI_REASON_NO_AP_FOUND:
+      return "no_ssid";
+    case WIFI_REASON_AUTH_FAIL:
+    case WIFI_REASON_802_1X_AUTH_FAILED:
+    case WIFI_REASON_HANDSHAKE_TIMEOUT:
+    case WIFI_REASON_ASSOC_FAIL:
+    case WIFI_REASON_CONNECTION_FAIL:
+    case WIFI_REASON_AKMP_INVALID:
+    case WIFI_REASON_BAD_CIPHER_OR_AKM:
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+      return "auth_error";
+    case WIFI_REASON_BEACON_TIMEOUT:
+    case WIFI_REASON_TIMEOUT:
+      return "connection_lost";
+    default:
+      break;
+  }
+
   switch (wifiStatus) {
     case WL_NO_SSID_AVAIL:
       return "no_ssid";
@@ -121,7 +140,7 @@ bool is_stale_eta_animation_text(const char *eta) {
 }
 
 bool is_stale_eta_animation_render(const RenderModel &model, uint8_t rowMask) {
-  if (model.uiState != UiState::kStaleTransit || rowMask == 0) {
+  if (rowMask == 0) {
     return false;
   }
 
@@ -187,6 +206,10 @@ void copy_cached_row(CachedTransitRow &dst, const PersistedCachedTransitRow &src
   copy_str(dst.destination, sizeof(dst.destination), src.destination);
 }
 
+
+bool has_json_field(const String &json, const char *field) {
+  return extract_json_string_field(json, field).length() > 0;
+}
 
 void normalize_eta(const String &input, char *out, size_t outLen) {
   String eta = input;
@@ -666,6 +689,8 @@ bool DeviceController::begin() {
   setup_http_routes();
   // Always start BLE so the user can re-provision even if stale credentials exist.
   // Advertising stops shortly after an explicit BLE "connected" status notification.
+  // For provisioning sessions with a pairing token, that notification is sent only
+  // after the server-side /device/provision call succeeds.
   // Use deviceId as the BLE name so the app can get the ID directly from the scan
   // without needing to read the STATUS characteristic (which is unreliable on iOS).
   bleProvisioner_.begin(runtimeConfig_.deviceId, runtimeConfig_.deviceId);
@@ -719,11 +744,6 @@ void DeviceController::tick(uint32_t nowMs) {
 
   if (bleProvisioner_.credentials_pending()) {
     const ble::BleCredentials creds = bleProvisioner_.take_credentials();
-    // Store token + serverUrl so we can call /device/provision once WiFi connects.
-    strncpy(pendingProvisionToken_,     creds.token,     sizeof(pendingProvisionToken_)     - 1);
-    strncpy(pendingProvisionServerUrl_, creds.serverUrl, sizeof(pendingProvisionServerUrl_) - 1);
-    pendingProvisionToken_[sizeof(pendingProvisionToken_) - 1]         = '\0';
-    pendingProvisionServerUrl_[sizeof(pendingProvisionServerUrl_) - 1] = '\0';
     DCTRL_LOGI("BLE", "Applying provisioned credentials ssid=%s passwordLen=%u enterprise=%s token=%s",
                creds.ssid,
                static_cast<unsigned>(strlen(creds.password)),
@@ -732,9 +752,43 @@ void DeviceController::tick(uint32_t nowMs) {
     bleProvisioningInFlight_ = true;
     bleProvisioningStartedAtMs_ = millis();
     bleShutdownAtMs_ = 0;
-    notify_ble_provision_status("connecting");
+    notify_ble_provision_status_detail("connecting", "wifi_connecting");
     deps_.mqttClient->disconnect(true);
-    deps_.networkManager->set_credentials(creds.ssid, creds.password, creds.username);
+
+    int finalWifiStatus = WL_IDLE_STATUS;
+    if (!wifi_manager::connect_station_for_provisioning(creds.ssid,
+                                                        creds.password,
+                                                        creds.username,
+                                                        &finalWifiStatus,
+                                                        &DeviceController::on_ble_provision_progress,
+                                                        this)) {
+      const int disconnectReason = wifi_manager::last_disconnect_reason();
+      const char *reason = ble_provision_failure_reason(finalWifiStatus, disconnectReason);
+      DCTRL_LOGW("BLE", "Provisioning connect failed deviceId=%s reason=%s wifi=%s (%d) disconnectReason=%d (%s)",
+                 runtimeConfig_.deviceId,
+                 reason,
+                 core::logging::wifi_status_name(finalWifiStatus),
+                 finalWifiStatus,
+                 disconnectReason,
+                 wifi_manager::disconnect_reason_name(disconnectReason));
+      notify_ble_provision_status_detail("failed",
+                                         "wifi_connecting",
+                                         reason,
+                                         core::logging::wifi_status_name(finalWifiStatus));
+      bleProvisioningInFlight_ = false;
+      bleProvisioningStartedAtMs_ = 0;
+      bleShutdownAtMs_ = 0;
+      memset(pendingProvisionToken_, 0, sizeof(pendingProvisionToken_));
+      memset(pendingProvisionServerUrl_, 0, sizeof(pendingProvisionServerUrl_));
+    } else {
+      notify_ble_provision_status_detail("connecting", "wifi_connected");
+      // Store token + serverUrl so we can call /device/provision once WiFi connects.
+      strncpy(pendingProvisionToken_,     creds.token,     sizeof(pendingProvisionToken_)     - 1);
+      strncpy(pendingProvisionServerUrl_, creds.serverUrl, sizeof(pendingProvisionServerUrl_) - 1);
+      pendingProvisionToken_[sizeof(pendingProvisionToken_) - 1]         = '\0';
+      pendingProvisionServerUrl_[sizeof(pendingProvisionServerUrl_) - 1] = '\0';
+      deps_.networkManager->set_credentials(creds.ssid, creds.password, creds.username, false);
+    }
   }
   deps_.networkManager->tick(nowMs);
   deps_.mqttClient->tick(nowMs);
@@ -847,6 +901,29 @@ void DeviceController::on_mqtt_command(const char *topic, const uint8_t *payload
   static_cast<DeviceController *>(ctx)->handle_command(topic, payload, len);
 }
 
+void DeviceController::on_ble_provision_progress(const char *phase,
+                                                 int wifiStatus,
+                                                 uint8_t attempt,
+                                                 uint8_t totalAttempts,
+                                                 void *ctx) {
+  if (!ctx) {
+    return;
+  }
+  static_cast<DeviceController *>(ctx)->handle_ble_provision_progress(phase, wifiStatus, attempt, totalAttempts);
+}
+
+void DeviceController::handle_ble_provision_progress(const char *phase,
+                                                     int wifiStatus,
+                                                     uint8_t attempt,
+                                                     uint8_t totalAttempts) {
+  notify_ble_provision_status_detail("connecting",
+                                     phase,
+                                     nullptr,
+                                     core::logging::wifi_status_name(wifiStatus),
+                                     attempt,
+                                     totalAttempts);
+}
+
 void DeviceController::handle_network_state(NetworkState state) {
   DCTRL_LOGI("CORE", "Handling network callback state=%s wifi=%s mqtt=%s setupMode=%s",
              network_state_name(state),
@@ -871,39 +948,61 @@ void DeviceController::handle_network_state(NetworkState state) {
   }
 
   if (state == NetworkState::kConnected) {
-    if (bleProvisioningInFlight_) {
-      DCTRL_LOGI("BLE", "Notifying BLE status connected for deviceId=%s", runtimeConfig_.deviceId);
-      notify_ble_provision_status("connected");
-      bleProvisioningInFlight_ = false;
-      bleProvisioningStartedAtMs_ = 0;
-      bleShutdownAtMs_ = millis() + kBleSuccessNotifyDrainMs;
-    }
-    // If we have a pending provision token, call the server to register this device.
-    if (pendingProvisionToken_[0] != '\0') {
+    if (bleProvisioningInFlight_ && pendingProvisionToken_[0] != '\0') {
+      notify_ble_provision_status_detail("connecting", "provisioning");
       const bool ok = call_provision_api(pendingProvisionServerUrl_, runtimeConfig_.deviceId, pendingProvisionToken_);
       memset(pendingProvisionToken_,     0, sizeof(pendingProvisionToken_));
       memset(pendingProvisionServerUrl_, 0, sizeof(pendingProvisionServerUrl_));
       if (!ok) {
-        DCTRL_LOGW("PROVISION", "Provision API failed after WiFi connected; BLE status remains connected");
+        DCTRL_LOGW("PROVISION",
+                   "Provision API failed after WiFi connected; notifying BLE status failed for deviceId=%s",
+                   runtimeConfig_.deviceId);
+        notify_ble_provision_status_detail("failed", "provisioning", "provision_error");
+        bleProvisioningInFlight_ = false;
+        bleProvisioningStartedAtMs_ = 0;
+        bleShutdownAtMs_ = 0;
       } else {
         Serial.println("[PROVISION] Success");
+        DCTRL_LOGI("BLE", "Notifying BLE status connected for deviceId=%s after provision success",
+                   runtimeConfig_.deviceId);
+        notify_ble_provision_status_detail("connected", "provisioned");
+        bleProvisioningInFlight_ = false;
+        bleProvisioningStartedAtMs_ = 0;
+        bleShutdownAtMs_ = millis() + kBleSuccessNotifyDrainMs;
       }
+    } else if (bleProvisioningInFlight_) {
+      DCTRL_LOGI("BLE", "Notifying BLE status connected for deviceId=%s", runtimeConfig_.deviceId);
+      notify_ble_provision_status_detail("connected", "wifi_connected");
+      bleProvisioningInFlight_ = false;
+      bleProvisioningStartedAtMs_ = 0;
+      bleShutdownAtMs_ = millis() + kBleSuccessNotifyDrainMs;
     }
   } else if (state == NetworkState::kConnecting && bleProvisioningInFlight_) {
     DCTRL_LOGI("BLE", "BLE provisioning still in progress; notifying connecting for deviceId=%s",
                runtimeConfig_.deviceId);
-    notify_ble_provision_status("connecting");
+    notify_ble_provision_status_detail("connecting",
+                                       "wifi_connecting",
+                                       nullptr,
+                                       core::logging::wifi_status_name(WiFi.status()));
   } else if ((state == NetworkState::kDisconnected || state == NetworkState::kApMode) && bleProvisioningInFlight_) {
     if (deps_.networkManager->will_retry_connection()) {
       DCTRL_LOGI("BLE", "WiFi attempt ended but retries remain; keeping BLE status connecting for deviceId=%s",
                  runtimeConfig_.deviceId);
+      notify_ble_provision_status_detail("connecting",
+                                         "wifi_connecting",
+                                         nullptr,
+                                         core::logging::wifi_status_name(WiFi.status()));
     } else {
-      const char *reason = ble_provision_failure_reason(WiFi.status());
+      const int disconnectReason = wifi_manager::last_disconnect_reason();
+      const char *reason = ble_provision_failure_reason(WiFi.status(), disconnectReason);
       DCTRL_LOGW("BLE", "Notifying BLE status failed for deviceId=%s reason=%s state=%s",
                  runtimeConfig_.deviceId,
                  reason,
                  network_state_name(state));
-      notify_ble_provision_status("failed", reason);
+      notify_ble_provision_status_detail("failed",
+                                         "wifi_connecting",
+                                         reason,
+                                         core::logging::wifi_status_name(WiFi.status()));
       bleProvisioningInFlight_ = false;
       bleProvisioningStartedAtMs_ = 0;
       memset(pendingProvisionToken_, 0, sizeof(pendingProvisionToken_));
@@ -914,12 +1013,69 @@ void DeviceController::handle_network_state(NetworkState state) {
 }
 
 void DeviceController::notify_ble_provision_status(const char *status, const char *reason) {
+  notify_ble_provision_status_detail(status, nullptr, reason);
+}
+
+void DeviceController::notify_ble_provision_status_detail(const char *status,
+                                                          const char *phase,
+                                                          const char *reason,
+                                                          const char *wifiStatus,
+                                                          uint8_t attempt,
+                                                          uint8_t totalAttempts) {
   if (!status || status[0] == '\0') {
     return;
   }
 
-  char payload[192];
-  if (reason && reason[0] != '\0') {
+  char payload[256];
+  if (phase && phase[0] != '\0' && reason && reason[0] != '\0' && wifiStatus && wifiStatus[0] != '\0' &&
+      attempt > 0 && totalAttempts > 0) {
+    snprintf(payload, sizeof(payload),
+             "{\"status\":\"%s\",\"phase\":\"%s\",\"deviceId\":\"%s\",\"reason\":\"%s\",\"wifiStatus\":\"%s\",\"attempt\":%u,\"attempts\":%u}",
+             status,
+             phase,
+             runtimeConfig_.deviceId,
+             reason,
+             wifiStatus,
+             static_cast<unsigned>(attempt),
+             static_cast<unsigned>(totalAttempts));
+  } else if (phase && phase[0] != '\0' && reason && reason[0] != '\0' && wifiStatus && wifiStatus[0] != '\0') {
+    snprintf(payload, sizeof(payload),
+             "{\"status\":\"%s\",\"phase\":\"%s\",\"deviceId\":\"%s\",\"reason\":\"%s\",\"wifiStatus\":\"%s\"}",
+             status,
+             phase,
+             runtimeConfig_.deviceId,
+             reason,
+             wifiStatus);
+  } else if (phase && phase[0] != '\0' && reason && reason[0] != '\0') {
+    snprintf(payload, sizeof(payload),
+             "{\"status\":\"%s\",\"phase\":\"%s\",\"deviceId\":\"%s\",\"reason\":\"%s\"}",
+             status,
+             phase,
+             runtimeConfig_.deviceId,
+             reason);
+  } else if (phase && phase[0] != '\0' && wifiStatus && wifiStatus[0] != '\0' && attempt > 0 && totalAttempts > 0) {
+    snprintf(payload, sizeof(payload),
+             "{\"status\":\"%s\",\"phase\":\"%s\",\"deviceId\":\"%s\",\"wifiStatus\":\"%s\",\"attempt\":%u,\"attempts\":%u}",
+             status,
+             phase,
+             runtimeConfig_.deviceId,
+             wifiStatus,
+             static_cast<unsigned>(attempt),
+             static_cast<unsigned>(totalAttempts));
+  } else if (phase && phase[0] != '\0' && wifiStatus && wifiStatus[0] != '\0') {
+    snprintf(payload, sizeof(payload),
+             "{\"status\":\"%s\",\"phase\":\"%s\",\"deviceId\":\"%s\",\"wifiStatus\":\"%s\"}",
+             status,
+             phase,
+             runtimeConfig_.deviceId,
+             wifiStatus);
+  } else if (phase && phase[0] != '\0') {
+    snprintf(payload, sizeof(payload),
+             "{\"status\":\"%s\",\"phase\":\"%s\",\"deviceId\":\"%s\"}",
+             status,
+             phase,
+             runtimeConfig_.deviceId);
+  } else if (reason && reason[0] != '\0') {
     snprintf(payload, sizeof(payload),
              "{\"status\":\"%s\",\"deviceId\":\"%s\",\"reason\":\"%s\"}",
              status,
@@ -1017,7 +1173,7 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
     return;
   }
 
-  if (cmdType == "disconnect_wifi") {
+  if (cmdType == "disconnect_wifi" || cmdType == "unpair") {
     handle_disconnect_wifi_command(message);
     return;
   }
@@ -1210,9 +1366,20 @@ void DeviceController::handle_display_blank_command(const String &message,
 }
 
 void DeviceController::handle_disconnect_wifi_command(const String &message) {
+  const String cmdType = extract_json_string_field(message, "type");
   const String reason = extract_json_string_field(message, "reason");
-  const bool clearCredentials = extract_json_bool_field(message, "clearCredentials", false);
-  const bool restartProvisioning = extract_json_bool_field(message, "restartProvisioning", false);
+  bool clearCredentials = extract_json_bool_field(message, "clearCredentials", false);
+  bool restartProvisioning = extract_json_bool_field(message, "restartProvisioning", false);
+  const bool isUnpairRequest = cmdType == "unpair" || reason == "unpair" || reason == "unpaired";
+
+  if (isUnpairRequest) {
+    if (!has_json_field(message, "clearCredentials")) {
+      clearCredentials = true;
+    }
+    if (!has_json_field(message, "restartProvisioning")) {
+      restartProvisioning = true;
+    }
+  }
 
   Serial.printf("[CMD] Disconnect WiFi requested reason=%s clearCredentials=%s restartProvisioning=%s\n",
                 reason.length() ? reason.c_str() : "(none)",
@@ -1269,7 +1436,7 @@ void DeviceController::http_connect_handler() {
              ssid.c_str(),
              core::logging::bool_str(user.length() > 0));
   activeController_->deps_.mqttClient->disconnect(true);
-  activeController_->deps_.networkManager->set_credentials(ssid.c_str(), pass.c_str(), user.c_str());
+  activeController_->deps_.networkManager->set_credentials(ssid.c_str(), pass.c_str(), user.c_str(), false);
   activeController_->server_.send(200, "application/json", "{\"ok\":true}");
 }
 

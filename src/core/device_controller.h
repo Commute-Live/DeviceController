@@ -99,8 +99,17 @@ class DeviceController final {
 
   static void on_network_state_change(NetworkState state, void *ctx);
   static void on_mqtt_command(const char *topic, const uint8_t *payload, size_t len, void *ctx);
+  static void on_ble_provision_progress(const char *phase,
+                                        int wifiStatus,
+                                        uint8_t attempt,
+                                        uint8_t totalAttempts,
+                                        void *ctx);
 
   void handle_network_state(NetworkState state);
+  void handle_ble_provision_progress(const char *phase,
+                                     int wifiStatus,
+                                     uint8_t attempt,
+                                     uint8_t totalAttempts);
   void handle_command(const char *topic, const uint8_t *payload, size_t len);
   void handle_display_blank_command(const String &message, uint8_t brightnessPercent, uint8_t panelBrightness);
   void handle_disconnect_wifi_command(const String &message);
@@ -133,6 +142,12 @@ class DeviceController final {
   void persist_runtime_breadcrumbs(uint32_t nowMs, bool force = false);
   void publish_display_state();
   void notify_ble_provision_status(const char *status, const char *reason = nullptr);
+  void notify_ble_provision_status_detail(const char *status,
+                                          const char *phase,
+                                          const char *reason = nullptr,
+                                          const char *wifiStatus = nullptr,
+                                          uint8_t attempt = 0,
+                                          uint8_t totalAttempts = 0);
   void maybe_stop_ble_after_success(uint32_t nowMs);
   bool call_provision_api(const char *serverUrl, const char *deviceId, const char *token);
 };

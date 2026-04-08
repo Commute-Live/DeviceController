@@ -24,11 +24,14 @@ struct BleCredentials {
 // App writes JSON to PROVISION: {"ssid":"...","password":"...","username":"...","token":"...","server_url":"..."}
 // Or: {"action":"scan"} to request a WiFi network scan (results on WIFI_SCAN characteristic)
 // Device notifies STATUS when WiFi result is known:
-//   {"status":"ready","deviceId":"esp32-XXXX"}
-//   {"status":"connecting","deviceId":"esp32-XXXX"}
-//   {"status":"connected","deviceId":"esp32-XXXX"}
-//   {"status":"failed","deviceId":"esp32-XXXX"}
-//   {"status":"failed","deviceId":"esp32-XXXX","reason":"auth_error"}
+//   {"status":"ready","phase":"ready","deviceId":"esp32-XXXX"}
+//   {"status":"connecting","phase":"scanning","deviceId":"esp32-XXXX","attempt":1,"attempts":3}
+//   {"status":"connecting","phase":"wifi_connecting","deviceId":"esp32-XXXX","wifiStatus":"WL_IDLE_STATUS","attempt":1,"attempts":3}
+//   {"status":"connecting","phase":"wifi_connected","deviceId":"esp32-XXXX"}
+//   {"status":"connecting","phase":"provisioning","deviceId":"esp32-XXXX"}
+//   {"status":"connected","phase":"provisioned","deviceId":"esp32-XXXX"}
+//   {"status":"failed","phase":"wifi_connecting","deviceId":"esp32-XXXX","reason":"auth_error"}
+//   {"status":"failed","phase":"provisioning","deviceId":"esp32-XXXX","reason":"provision_error"}
 class ProvisionServerCallbacks;
 
 class BleProvisioner {
