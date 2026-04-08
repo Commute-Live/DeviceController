@@ -807,7 +807,17 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
                           transit_service_color(row, model.uiState));
       }
     } else {
-      draw_compact_line(row.destination[0] ? row.destination : "-", destinationY, destinationFont);
+      const int16_t labelTextH =
+          (destinationFont == kTextSizeTiny || destinationFont == kTextSizeTinyPlus)
+              ? 6
+              : static_cast<int16_t>(8 * destinationFont);
+      int16_t inlineLabelY = destinationY;
+      const int16_t maxInlineLabelY =
+          static_cast<int16_t>(rowGeometry.frame.yStart + rowGeometry.frame.height - 1);
+      if (inlineLabelY > maxInlineLabelY) {
+        inlineLabelY = maxInlineLabelY;
+      }
+      draw_compact_line(row.destination[0] ? row.destination : "-", inlineLabelY, destinationFont);
     }
   }
 
