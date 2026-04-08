@@ -61,11 +61,8 @@ display::BadgeRenderer gBadgeRenderer;
 Preferences gDevicePrefs;
 
 struct PersistedCachedTransitRow {
-  char providerId[kMaxProviderIdLen];
-  char routeId[kMaxRouteIdLen];
   uint8_t displayType;
   uint8_t scrollEnabled;
-  char direction[kMaxDestinationLen];
   char destination[kMaxDestinationLen];
 };
 
@@ -92,6 +89,7 @@ void copy_str(char *dst, size_t dstLen, const char *src) {
 }
 
 bool strings_equal(const char *lhs, const char *rhs);
+void clear_row(TransitRowModel &row);
 
 const char *ble_provision_failure_reason(int wifiStatus) {
   switch (wifiStatus) {
@@ -142,11 +140,8 @@ bool is_stale_eta_animation_render(const RenderModel &model, uint8_t rowMask) {
 }
 
 void clear_cached_row(CachedTransitRow &row) {
-  copy_str(row.providerId, sizeof(row.providerId), "");
-  copy_str(row.routeId, sizeof(row.routeId), "");
   row.displayType = kMinDisplayType;
   row.scrollEnabled = false;
-  copy_str(row.direction, sizeof(row.direction), "");
   copy_str(row.destination, sizeof(row.destination), "");
 }
 
@@ -164,67 +159,34 @@ void sanitize_cached_assignment(CachedTransitAssignment &assignment) {
   if (assignment.displayType < kMinDisplayType || assignment.displayType > kMaxDisplayType) {
     assignment.displayType = kMinDisplayType;
   }
-
-  for (uint8_t i = 0; i < kMaxVisibleTransitRows; ++i) {
-    if (assignment.rows[i].displayType < kMinDisplayType || assignment.rows[i].displayType > kMaxDisplayType) {
-      assignment.rows[i].displayType = assignment.displayType;
-    }
-  }
 }
 
 bool cached_rows_equal(const CachedTransitRow &lhs, const CachedTransitRow &rhs) {
-  return strings_equal(lhs.providerId, rhs.providerId) &&
-         strings_equal(lhs.routeId, rhs.routeId) &&
-         lhs.displayType == rhs.displayType &&
+  return lhs.displayType == rhs.displayType &&
          lhs.scrollEnabled == rhs.scrollEnabled &&
-         strings_equal(lhs.direction, rhs.direction) &&
          strings_equal(lhs.destination, rhs.destination);
 }
 
 bool cached_assignments_equal(const CachedTransitAssignment &lhs, const CachedTransitAssignment &rhs) {
-  if (lhs.activeRows != rhs.activeRows || lhs.displayType != rhs.displayType) {
-    return false;
-  }
-
+  if (lhs.activeRows != rhs.activeRows) return false;
   for (uint8_t i = 0; i < kMaxVisibleTransitRows; ++i) {
-    if (!cached_rows_equal(lhs.rows[i], rhs.rows[i])) {
-      return false;
-    }
+    if (!cached_rows_equal(lhs.rows[i], rhs.rows[i])) return false;
   }
   return true;
 }
 
 void copy_cached_row(PersistedCachedTransitRow &dst, const CachedTransitRow &src) {
-  copy_str(dst.providerId, sizeof(dst.providerId), src.providerId);
-  copy_str(dst.routeId, sizeof(dst.routeId), src.routeId);
   dst.displayType = src.displayType;
   dst.scrollEnabled = src.scrollEnabled ? 1U : 0U;
-  copy_str(dst.direction, sizeof(dst.direction), src.direction);
   copy_str(dst.destination, sizeof(dst.destination), src.destination);
 }
 
 void copy_cached_row(CachedTransitRow &dst, const PersistedCachedTransitRow &src) {
-  copy_str(dst.providerId, sizeof(dst.providerId), src.providerId);
-  copy_str(dst.routeId, sizeof(dst.routeId), src.routeId);
   dst.displayType = src.displayType;
   dst.scrollEnabled = src.scrollEnabled != 0;
-  copy_str(dst.direction, sizeof(dst.direction), src.direction);
   copy_str(dst.destination, sizeof(dst.destination), src.destination);
 }
 
-bool extract_json_bool_field(const String &json, const char *field, bool fallbackValue) {
-  String value = extract_json_string_field(json, field);
-  value.trim();
-  value.toLowerCase();
-
-  if (value == "true" || value == "1") {
-    return true;
-  }
-  if (value == "false" || value == "0") {
-    return false;
-  }
-  return fallbackValue;
-}
 
 void normalize_eta(const String &input, char *out, size_t outLen) {
   String eta = input;
@@ -301,26 +263,18 @@ void normalize_eta(const String &input, char *out, size_t outLen) {
 void set_default_rows(RenderModel &model) {
   model.displayType = kMinDisplayType;
   model.activeRows = 1;
-  copy_str(model.rows[0].providerId, sizeof(model.rows[0].providerId), "");
-  copy_str(model.rows[0].routeId, sizeof(model.rows[0].routeId), "--");
   model.rows[0].displayType = kMinDisplayType;
   model.rows[0].scrollEnabled = false;
   model.rows[0].delayed = false;
-  copy_str(model.rows[0].direction, sizeof(model.rows[0].direction), "");
   copy_str(model.rows[0].destination, sizeof(model.rows[0].destination), "Waiting data");
   copy_str(model.rows[0].eta, sizeof(model.rows[0].eta), "--");
   copy_str(model.rows[0].etaExtra, sizeof(model.rows[0].etaExtra), "");
+  model.rows[0].badgeShape = kBadgeShapePill;
+  model.rows[0].badgeColor = 0x8410;
+  model.rows[0].badgeText[0] = '\0';
 
   for (uint8_t i = 1; i < kMaxTransitRows; ++i) {
-    copy_str(model.rows[i].providerId, sizeof(model.rows[i].providerId), "");
-    copy_str(model.rows[i].routeId, sizeof(model.rows[i].routeId), "");
-    model.rows[i].displayType = kMinDisplayType;
-    model.rows[i].scrollEnabled = false;
-    model.rows[i].delayed = false;
-    copy_str(model.rows[i].direction, sizeof(model.rows[i].direction), "");
-    copy_str(model.rows[i].destination, sizeof(model.rows[i].destination), "");
-    copy_str(model.rows[i].eta, sizeof(model.rows[i].eta), "");
-    copy_str(model.rows[i].etaExtra, sizeof(model.rows[i].etaExtra), "");
+    clear_row(model.rows[i]);
   }
 }
 
@@ -351,231 +305,16 @@ uint8_t brightness_percent_to_panel(uint8_t percent) {
   return static_cast<uint8_t>(scaled);
 }
 
-int find_matching_bracket(const String &text, int openPos, char openCh, char closeCh) {
-  if (openPos < 0 || openPos >= static_cast<int>(text.length()) || text[openPos] != openCh) return -1;
-  int depth = 0;
-  bool inQuotes = false;
-  bool escapeNext = false;
-  for (int i = openPos; i < static_cast<int>(text.length()); ++i) {
-    const char c = text[i];
-    if (escapeNext) {
-      escapeNext = false;
-      continue;
-    }
-    if (c == '\\') {
-      escapeNext = true;
-      continue;
-    }
-    if (c == '"') {
-      inQuotes = !inQuotes;
-      continue;
-    }
-    if (inQuotes) continue;
-    if (c == openCh) depth++;
-    else if (c == closeCh) {
-      depth--;
-      if (depth == 0) return i;
-    }
-  }
-  return -1;
-}
-
-bool extract_lines_object_at(const String &message, uint8_t index, String &outObject) {
-  outObject = "";
-  const int linesKeyPos = message.indexOf("\"lines\"");
-  if (linesKeyPos < 0) return false;
-  const int arrayOpen = message.indexOf('[', linesKeyPos);
-  if (arrayOpen < 0) return false;
-  const int arrayClose = find_matching_bracket(message, arrayOpen, '[', ']');
-  if (arrayClose < 0) return false;
-
-  const String linesJson = message.substring(arrayOpen + 1, arrayClose);
-  int cursor = 0;
-  uint8_t seen = 0;
-  while (true) {
-    const int objStart = linesJson.indexOf('{', cursor);
-    if (objStart < 0) break;
-    const int objEnd = find_matching_bracket(linesJson, objStart, '{', '}');
-    if (objEnd < 0) break;
-
-    if (seen == index) {
-      outObject = linesJson.substring(objStart, objEnd + 1);
-      return true;
-    }
-    seen++;
-    cursor = objEnd + 1;
-  }
-  return false;
-}
-
-String direction_from_code(const String &directionCode) {
-  String code = directionCode;
-  code.trim();
-  code.toUpperCase();
-  if (code == "N") return "Uptown";
-  if (code == "S") return "Downtown";
-  if (code == "E") return "Eastbound";
-  if (code == "W") return "Westbound";
-  return "";
-}
-
-String extract_row_direction_label(const String &message, uint8_t rowIndex) {
-  String item;
-  if (extract_lines_object_at(message, rowIndex, item)) {
-    String dirLabel = extract_json_string_field(item, "directionLabel");
-    if (dirLabel.length() > 0) return dirLabel;
-    dirLabel = direction_from_code(extract_json_string_field(item, "direction"));
-    if (dirLabel.length() > 0) return dirLabel;
-  }
-
-  if (rowIndex == 0) {
-    String topLevel = extract_json_string_field(message, "directionLabel");
-    if (topLevel.length() > 0) return topLevel;
-    topLevel = direction_from_code(extract_json_string_field(message, "direction"));
-    if (topLevel.length() > 0) return topLevel;
-  }
-  return "";
-}
-
-uint8_t extract_row_display_type(const String &message, uint8_t rowIndex, uint8_t fallbackDisplayType) {
-  String item;
-  if (!extract_lines_object_at(message, rowIndex, item)) {
-    return fallbackDisplayType;
-  }
-  return clamp_display_type(extract_json_int_field(item, "displayType", fallbackDisplayType));
-}
-
-bool extract_row_scrolling(const String &message, uint8_t rowIndex, bool fallback) {
-  String item;
-  if (!extract_lines_object_at(message, rowIndex, item)) {
-    return fallback;
-  }
-  return extract_json_bool_field(item, "scrolling", fallback);
-}
-
-String extract_row_display_label(const String &message, uint8_t rowIndex) {
-  String item;
-  if (extract_lines_object_at(message, rowIndex, item)) {
-    String label = extract_json_string_field(item, "label");
-    if (label.length() > 0) return label;
-    label = extract_json_string_field(item, "topText");
-    if (label.length() > 0) return label;
-    label = extract_json_string_field(item, "destination");
-    if (label.length() > 0) return label;
-    label = extract_json_string_field(item, "directionLabel");
-    if (label.length() > 0) return label;
-    label = extract_json_string_field(item, "stop");
-    if (label.length() > 0) return label;
-  }
-  return "";
-}
-
-bool line_object_is_delayed(const String &lineObject) {
-  String status = extract_json_string_field(lineObject, "status");
-  status.trim();
-  status.toLowerCase();
-  return status == "delayed";
-}
-
-bool extract_row_delayed(const String &message, uint8_t rowIndex) {
-  String item;
-  if (extract_lines_object_at(message, rowIndex, item)) {
-    return line_object_is_delayed(item);
-  }
-
-  if (rowIndex == 0) {
-    String status = extract_json_string_field(message, "status");
-    status.trim();
-    status.toLowerCase();
-    return status == "delayed";
-  }
-  return false;
-}
-
-int extract_eta_values_from_line_object(const String &lineObject, String outEtas[], int maxCount) {
-  if (maxCount <= 0) return 0;
-  const int compactEtaCount = extract_json_string_array_field(lineObject, "etas", outEtas, maxCount);
-  if (compactEtaCount > 0) return compactEtaCount;
-  int count = 0;
-  int pos = 0;
-  while (count < maxCount) {
-    const int keyPos = lineObject.indexOf("\"eta\":\"", pos);
-    if (keyPos < 0) break;
-    const int valueStart = keyPos + static_cast<int>(strlen("\"eta\":\""));
-    const int valueEnd = lineObject.indexOf('"', valueStart);
-    if (valueEnd < 0) break;
-    outEtas[count++] = lineObject.substring(valueStart, valueEnd);
-    pos = valueEnd + 1;
-  }
-  return count;
-}
-
-String normalize_eta_token(String token) {
-  token.trim();
-  token.toUpperCase();
-  if (token == "NOW" || token == "DUE") return "0m";
-  if (token.length() == 0 || token == "--") return "";
-  return token;
-}
-
-void extract_row_eta_extra(const String &message, uint8_t rowIndex, char *out, size_t outLen) {
-  if (!out || outLen == 0) return;
-  out[0] = '\0';
-
-  String lineObj;
-  if (!extract_lines_object_at(message, rowIndex, lineObj)) return;
-
-  String etaValues[3];
-  const int etaCount = extract_eta_values_from_line_object(lineObj, etaValues, 3);
-  if (etaCount <= 1) return;
-
-  String merged = "";
-  for (int i = 1; i < etaCount; ++i) {
-    const String token = normalize_eta_token(etaValues[i]);
-    if (token.length() == 0) continue;
-    if (merged.length() > 0) merged += ",";
-    merged += token;
-  }
-  copy_str(out, outLen, merged.c_str());
-}
-
-int split_eta_tokens(const char *etaRaw, char out[kMaxTransitRows][kMaxEtaLen]) {
-  for (uint8_t i = 0; i < kMaxTransitRows; ++i) {
-    out[i][0] = '\0';
-  }
-
-  if (!etaRaw || etaRaw[0] == '\0') {
-    return 0;
-  }
-
-  String eta = etaRaw;
-  int count = 0;
-  int start = 0;
-  while (start <= eta.length() && count < static_cast<int>(kMaxTransitRows)) {
-    int sep = eta.indexOf('/', start);
-    String token = sep < 0 ? eta.substring(start) : eta.substring(start, sep);
-    token.trim();
-    if (token == "NOW" || token == "DUE") token = "0m";
-    if (token.length() > 0 && token != "--") {
-      copy_str(out[count], kMaxEtaLen, token.c_str());
-      count++;
-    }
-    if (sep < 0) break;
-    start = sep + 1;
-  }
-  return count;
-}
-
 void clear_row(TransitRowModel &row) {
-  copy_str(row.providerId, sizeof(row.providerId), "");
-  copy_str(row.routeId, sizeof(row.routeId), "");
   row.displayType = kMinDisplayType;
   row.scrollEnabled = false;
   row.delayed = false;
-  copy_str(row.direction, sizeof(row.direction), "");
   copy_str(row.destination, sizeof(row.destination), "");
   copy_str(row.eta, sizeof(row.eta), "");
   copy_str(row.etaExtra, sizeof(row.etaExtra), "");
+  row.badgeShape = kBadgeShapePill;
+  row.badgeColor = 0x8410;
+  row.badgeText[0] = '\0';
 }
 
 void trim_text_for_chars(const char *src, uint8_t charLimit, char *dst, size_t dstLen) {
@@ -600,23 +339,24 @@ bool strings_equal(const char *lhs, const char *rhs) {
 }
 
 bool rows_equal(const TransitRowModel &lhs, const TransitRowModel &rhs) {
-  return strings_equal(lhs.providerId, rhs.providerId) &&
-         strings_equal(lhs.routeId, rhs.routeId) &&
-         lhs.displayType == rhs.displayType &&
+  return lhs.displayType == rhs.displayType &&
          lhs.scrollEnabled == rhs.scrollEnabled &&
          lhs.delayed == rhs.delayed &&
-         strings_equal(lhs.direction, rhs.direction) &&
          strings_equal(lhs.destination, rhs.destination) &&
          strings_equal(lhs.eta, rhs.eta) &&
-         strings_equal(lhs.etaExtra, rhs.etaExtra);
+         strings_equal(lhs.etaExtra, rhs.etaExtra) &&
+         lhs.badgeShape == rhs.badgeShape &&
+         lhs.badgeColor == rhs.badgeColor &&
+         strings_equal(lhs.badgeText, rhs.badgeText);
 }
 
 bool row_layout_fields_equal(const TransitRowModel &lhs, const TransitRowModel &rhs) {
-  return strings_equal(lhs.providerId, rhs.providerId) &&
-         strings_equal(lhs.routeId, rhs.routeId) &&
-         lhs.displayType == rhs.displayType &&
-         strings_equal(lhs.direction, rhs.direction) &&
-         strings_equal(lhs.destination, rhs.destination);
+  return lhs.displayType == rhs.displayType &&
+         lhs.scrollEnabled == rhs.scrollEnabled &&
+         strings_equal(lhs.destination, rhs.destination) &&
+         lhs.badgeShape == rhs.badgeShape &&
+         lhs.badgeColor == rhs.badgeColor &&
+         strings_equal(lhs.badgeText, rhs.badgeText);
 }
 
 bool row_eta_fields_equal(const TransitRowModel &lhs, const TransitRowModel &rhs) {
@@ -1248,20 +988,14 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   memcpy(messageBuf, payload, len);
   messageBuf[len] = '\0';
   const String message(messageBuf);
-  const int arrivalsToDisplay = clamp_rows_to_display(extract_json_int_field(message, "arrivalsToDisplay", 1));
-  const uint8_t displayType = clamp_display_type(extract_json_int_field(message, "displayType", 1));
   const uint8_t brightnessPercent = parse_brightness_percent(message, kBrightnessFallbackPercent);
-  const bool scrolling = extract_json_bool_field(message, "scrolling", false);
   const uint8_t panelBrightness = brightness_percent_to_panel(brightnessPercent);
   DCTRL_LOGI("MQTT", "Incoming command topic=%s len=%u", core::logging::safe_str(topic), static_cast<unsigned>(len));
   DCTRL_LOGI("MQTT", "Incoming payload=%s", message.c_str());
 
   String cmdType = extract_json_string_field(message, "type");
-  DCTRL_LOGI("MQTT", "Parsed command type=%s provider=%s displayType=%u arrivalsToDisplay=%d brightness=%u%% panel=%u",
+  DCTRL_LOGI("MQTT", "Parsed command type=%s brightness=%u%% panel=%u",
              cmdType.length() ? cmdType.c_str() : "(data)",
-             extract_json_string_field(message, "provider").c_str(),
-             static_cast<unsigned>(displayType),
-             arrivalsToDisplay,
              static_cast<unsigned>(brightnessPercent),
              static_cast<unsigned>(panelBrightness));
   if (cmdType == "ota_update") {
@@ -1293,179 +1027,58 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
     return;
   }
 
-  String provider = extract_json_string_field(message, "provider");
-  if (provider.length() == 0 || !parsing::is_supported_provider_id(provider)) {
-    DCTRL_LOGW("MQTT", "Ignoring payload because provider is unsupported provider=%s", provider.c_str());
-    return;
-  }
-
   parsing::ProviderPayload parsed{};
-  if (!parsing::parse_provider_payload(provider, message, parsed) || !parsed.hasRow1) {
-    DCTRL_LOGW("MQTT", "Ignoring payload because parser returned no row data provider=%s", provider.c_str());
+  if (!parsing::parse_transit_payload(message, parsed) || !parsed.hasRow1) {
+    DCTRL_LOGW("MQTT", "Ignoring payload because parser returned no row data");
     return;
-  }
-
-  const String row1Direction = extract_row_direction_label(message, 0);
-  const String row2Direction = extract_row_direction_label(message, 1);
-  const String row1DisplayLabel = extract_row_display_label(message, 0);
-  const String row2DisplayLabel = extract_row_display_label(message, 1);
-  const bool row1Delayed = extract_row_delayed(message, 0);
-  const bool row2Delayed = extract_row_delayed(message, 1);
-  const uint8_t row1DisplayType = extract_row_display_type(message, 0, displayType);
-  const uint8_t row2DisplayType = extract_row_display_type(message, 1, displayType);
-  char row1EtaExtra[kMaxDestinationLen];
-  char row2EtaExtra[kMaxDestinationLen];
-  row1EtaExtra[0] = '\0';
-  row2EtaExtra[0] = '\0';
-  const bool row1CompactExtraEtaPreset = (row1DisplayType == 4 || row1DisplayType == 5);
-  const bool row2CompactExtraEtaPreset = (row2DisplayType == 4 || row2DisplayType == 5);
-  if (row1CompactExtraEtaPreset || row2CompactExtraEtaPreset) {
-    extract_row_eta_extra(message, 0, row1EtaExtra, sizeof(row1EtaExtra));
-    extract_row_eta_extra(message, 1, row2EtaExtra, sizeof(row2EtaExtra));
-  }
-
-  const String row1Provider = parsed.row1.provider.length() ? parsed.row1.provider : provider;
-  if (!parsing::is_supported_provider_id(row1Provider)) {
-    DCTRL_LOGW("MQTT", "Ignoring payload because row1 provider is unsupported provider=%s", row1Provider.c_str());
-    return;
-  }
-
-  if (parsed.hasRow2) {
-    const String row2Provider = parsed.row2.provider.length() ? parsed.row2.provider : provider;
-    if (!parsing::is_supported_provider_id(row2Provider)) {
-      DCTRL_LOGW("MQTT", "Ignoring payload because row2 provider is unsupported provider=%s", row2Provider.c_str());
-      return;
-    }
   }
 
   RenderModel nextModel = renderModel_;
   CachedTransitAssignment nextCachedAssignment{};
   clear_cached_assignment(nextCachedAssignment);
-  nextCachedAssignment.displayType = displayType;
-  copy_str(nextModel.rows[0].providerId, sizeof(nextModel.rows[0].providerId),
-           row1Provider.c_str());
-  copy_str(nextModel.rows[0].routeId, sizeof(nextModel.rows[0].routeId),
-           parsed.row1.line.length() ? parsed.row1.line.c_str() : "--");
-  nextModel.rows[0].displayType = row1DisplayType;
-  nextModel.rows[0].scrollEnabled = extract_row_scrolling(message, 0, scrolling);
-  nextModel.rows[0].delayed = row1Delayed;
-  copy_str(nextModel.rows[0].direction, sizeof(nextModel.rows[0].direction),
-           row1Direction.c_str());
+
+  // Row 0
   copy_str(nextModel.rows[0].destination, sizeof(nextModel.rows[0].destination),
-           row1DisplayLabel.length() ? row1DisplayLabel.c_str() :
-           (parsed.row1.label.length() ? parsed.row1.label.c_str() : nextModel.rows[0].routeId));
+           parsed.row1.label.length() ? parsed.row1.label.c_str() : "--");
   normalize_eta(parsed.row1.eta, nextModel.rows[0].eta, sizeof(nextModel.rows[0].eta));
   copy_str(nextModel.rows[0].etaExtra, sizeof(nextModel.rows[0].etaExtra),
-           row1CompactExtraEtaPreset ? row1EtaExtra : "");
-  copy_str(nextCachedAssignment.rows[0].providerId, sizeof(nextCachedAssignment.rows[0].providerId),
-           nextModel.rows[0].providerId);
-  copy_str(nextCachedAssignment.rows[0].routeId, sizeof(nextCachedAssignment.rows[0].routeId),
-           nextModel.rows[0].routeId);
-  nextCachedAssignment.rows[0].displayType = row1DisplayType;
-  nextCachedAssignment.rows[0].scrollEnabled = nextModel.rows[0].scrollEnabled;
-  copy_str(nextCachedAssignment.rows[0].direction, sizeof(nextCachedAssignment.rows[0].direction),
-           nextModel.rows[0].direction);
+           parsed.row1EtaExtra.length() ? parsed.row1EtaExtra.c_str() : "");
+  nextModel.rows[0].displayType = nextModel.rows[0].etaExtra[0] != '\0' ? 4 : 1;
+  nextModel.rows[0].scrollEnabled = parsed.row1.scrollEnabled;
+  nextModel.rows[0].delayed = parsed.row1.delayed;
+  nextModel.rows[0].badgeShape = parsed.row1.badgeShape;
+  nextModel.rows[0].badgeColor = parsed.row1.badgeColor;
+  memcpy(nextModel.rows[0].badgeText, parsed.row1.badgeText, sizeof(nextModel.rows[0].badgeText));
   copy_str(nextCachedAssignment.rows[0].destination, sizeof(nextCachedAssignment.rows[0].destination),
            nextModel.rows[0].destination);
+  nextCachedAssignment.rows[0].scrollEnabled = nextModel.rows[0].scrollEnabled;
 
   if (parsed.hasRow2) {
-    const String row2Provider = parsed.row2.provider.length() ? parsed.row2.provider : provider;
-    copy_str(nextModel.rows[1].providerId, sizeof(nextModel.rows[1].providerId),
-             row2Provider.c_str());
-    copy_str(nextModel.rows[1].routeId, sizeof(nextModel.rows[1].routeId),
-             parsed.row2.line.length() ? parsed.row2.line.c_str() : "--");
-    nextModel.rows[1].displayType = row2DisplayType;
-    nextModel.rows[1].scrollEnabled = extract_row_scrolling(message, 1, scrolling);
-    nextModel.rows[1].delayed = row2Delayed;
-    copy_str(nextModel.rows[1].direction, sizeof(nextModel.rows[1].direction),
-             row2Direction.c_str());
+    // Row 1
     copy_str(nextModel.rows[1].destination, sizeof(nextModel.rows[1].destination),
-             row2DisplayLabel.length() ? row2DisplayLabel.c_str() :
-             (parsed.row2.label.length() ? parsed.row2.label.c_str() : nextModel.rows[1].routeId));
+             parsed.row2.label.length() ? parsed.row2.label.c_str() : "--");
     normalize_eta(parsed.row2.eta, nextModel.rows[1].eta, sizeof(nextModel.rows[1].eta));
     copy_str(nextModel.rows[1].etaExtra, sizeof(nextModel.rows[1].etaExtra),
-             row2CompactExtraEtaPreset ? row2EtaExtra : "");
+             parsed.row2EtaExtra.length() ? parsed.row2EtaExtra.c_str() : "");
+    nextModel.rows[1].displayType = nextModel.rows[1].etaExtra[0] != '\0' ? 4 : 1;
+    nextModel.rows[1].scrollEnabled = parsed.row2.scrollEnabled;
+    nextModel.rows[1].delayed = parsed.row2.delayed;
+    nextModel.rows[1].badgeShape = parsed.row2.badgeShape;
+    nextModel.rows[1].badgeColor = parsed.row2.badgeColor;
+    memcpy(nextModel.rows[1].badgeText, parsed.row2.badgeText, sizeof(nextModel.rows[1].badgeText));
+    copy_str(nextCachedAssignment.rows[1].destination, sizeof(nextCachedAssignment.rows[1].destination),
+             nextModel.rows[1].destination);
+    nextCachedAssignment.rows[1].scrollEnabled = nextModel.rows[1].scrollEnabled;
 
     nextModel.activeRows = 2;
     nextCachedAssignment.activeRows = 2;
-    copy_str(nextCachedAssignment.rows[1].providerId, sizeof(nextCachedAssignment.rows[1].providerId),
-             nextModel.rows[1].providerId);
-    copy_str(nextCachedAssignment.rows[1].routeId, sizeof(nextCachedAssignment.rows[1].routeId),
-             nextModel.rows[1].routeId);
-    nextCachedAssignment.rows[1].displayType = row2DisplayType;
-    nextCachedAssignment.rows[1].scrollEnabled = nextModel.rows[1].scrollEnabled;
-    copy_str(nextCachedAssignment.rows[1].direction, sizeof(nextCachedAssignment.rows[1].direction),
-             nextModel.rows[1].direction);
-    copy_str(nextCachedAssignment.rows[1].destination, sizeof(nextCachedAssignment.rows[1].destination),
-             nextModel.rows[1].destination);
     for (uint8_t i = 2; i < kMaxTransitRows; ++i) {
       clear_row(nextModel.rows[i]);
     }
   } else {
-    String row1Item;
-    const bool hasExplicitRow1Eta =
-        extract_lines_object_at(message, 0, row1Item) && extract_json_string_field(row1Item, "eta").length() > 0;
-    char etaParts[kMaxTransitRows][kMaxEtaLen];
-    const int etaCount = hasExplicitRow1Eta ? 0 : split_eta_tokens(nextModel.rows[0].eta, etaParts);
-    int rowsToRender = arrivalsToDisplay;
-    if (etaCount > 0 && rowsToRender > etaCount) {
-      rowsToRender = etaCount;
-    }
-    if (row1CompactExtraEtaPreset) {
-      rowsToRender = 1;
-    } else {
-      // For single-line payloads, always show at least the next two ETAs when available.
-      if (etaCount >= 2 && rowsToRender < 2) {
-        rowsToRender = 2;
-      }
-    }
-    if (rowsToRender < 1) {
-      rowsToRender = 1;
-    }
-
-    if (etaCount > 0) {
-      copy_str(nextModel.rows[0].eta, sizeof(nextModel.rows[0].eta), etaParts[0]);
-    }
-    if (row1CompactExtraEtaPreset && row1EtaExtra[0] != '\0') {
-      copy_str(nextModel.rows[0].etaExtra, sizeof(nextModel.rows[0].etaExtra), row1EtaExtra);
-    } else if (row1CompactExtraEtaPreset && etaCount > 1) {
-      char extraBuf[kMaxDestinationLen];
-      extraBuf[0] = '\0';
-      for (int i = 1; i < etaCount; ++i) {
-        if (etaParts[i][0] == '\0') continue;
-        if (extraBuf[0] != '\0') {
-          strncat(extraBuf, ",", sizeof(extraBuf) - strlen(extraBuf) - 1);
-        }
-        strncat(extraBuf, etaParts[i], sizeof(extraBuf) - strlen(extraBuf) - 1);
-      }
-      copy_str(nextModel.rows[0].etaExtra, sizeof(nextModel.rows[0].etaExtra), extraBuf);
-    } else {
-      copy_str(nextModel.rows[0].etaExtra, sizeof(nextModel.rows[0].etaExtra), "");
-    }
-
-    for (int i = 1; i < rowsToRender; ++i) {
-      copy_str(nextModel.rows[i].providerId, sizeof(nextModel.rows[i].providerId),
-               nextModel.rows[0].providerId);
-      copy_str(nextModel.rows[i].routeId, sizeof(nextModel.rows[i].routeId),
-               nextModel.rows[0].routeId);
-      nextModel.rows[i].displayType = nextModel.rows[0].displayType;
-      nextModel.rows[i].scrollEnabled = nextModel.rows[0].scrollEnabled;
-      nextModel.rows[i].delayed = nextModel.rows[0].delayed;
-      copy_str(nextModel.rows[i].direction, sizeof(nextModel.rows[i].direction),
-               nextModel.rows[0].direction);
-      copy_str(nextModel.rows[i].destination, sizeof(nextModel.rows[i].destination),
-               nextModel.rows[0].destination);
-      copy_str(nextModel.rows[i].etaExtra, sizeof(nextModel.rows[i].etaExtra), "");
-      if (i < etaCount) {
-        copy_str(nextModel.rows[i].eta, sizeof(nextModel.rows[i].eta), etaParts[i]);
-      } else {
-        copy_str(nextModel.rows[i].eta, sizeof(nextModel.rows[i].eta), "--");
-      }
-    }
-
-    nextModel.activeRows = static_cast<uint8_t>(rowsToRender);
+    nextModel.activeRows = 1;
     nextCachedAssignment.activeRows = 1;
-    for (int i = rowsToRender; i < static_cast<int>(kMaxTransitRows); ++i) {
+    for (uint8_t i = 1; i < kMaxTransitRows; ++i) {
       clear_row(nextModel.rows[i]);
     }
   }
@@ -1476,7 +1089,7 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   }
 
   nextModel.hasData = true;
-  nextModel.displayType = displayType;
+  nextModel.displayType = 1;  // layout driven by per-row displayType; top-level unused
   nextModel.uiState = UiState::kTransit;
   nextModel.updatedAtMs = millis();
 
@@ -1489,8 +1102,7 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   bool scrollTurnedOff = false;
   for (uint8_t i = 0; i < kMaxTransitRows; ++i) {
     if (renderModel_.rows[i].scrollEnabled != nextModel.rows[i].scrollEnabled ||
-        strcmp(renderModel_.rows[i].destination, nextModel.rows[i].destination) != 0 ||
-        strcmp(renderModel_.rows[i].direction,   nextModel.rows[i].direction)   != 0) {
+        strcmp(renderModel_.rows[i].destination, nextModel.rows[i].destination) != 0) {
       reset_scroll_state(i);
       anyScrollReset = true;
       // Track if scroll is being turned off so we can force a full redraw to clear
@@ -1550,17 +1162,16 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
 
   if (core::logging::is_dev_build()) {
     DCTRL_LOGI("MQTT",
-               "Applied payload displayType=%u brightness=%u%% panel=%u activeRows=%u row1={provider:%s line:%s eta:%s extra:%s} row2={provider:%s line:%s eta:%s extra:%s}",
-               static_cast<unsigned>(renderModel_.displayType),
+               "Applied payload brightness=%u%% panel=%u activeRows=%u row1={badge:%s dest:%s eta:%s extra:%s} row2={badge:%s dest:%s eta:%s extra:%s}",
                static_cast<unsigned>(brightnessPercent),
                static_cast<unsigned>(panelBrightness),
                static_cast<unsigned>(renderModel_.activeRows),
-               renderModel_.rows[0].providerId,
-               renderModel_.rows[0].routeId,
+               renderModel_.rows[0].badgeText,
+               renderModel_.rows[0].destination,
                renderModel_.rows[0].eta,
                renderModel_.rows[0].etaExtra,
-               renderModel_.rows[1].providerId,
-               renderModel_.rows[1].routeId,
+               renderModel_.rows[1].badgeText,
+               renderModel_.rows[1].destination,
                renderModel_.rows[1].eta,
                renderModel_.rows[1].etaExtra);
   }
@@ -1751,9 +1362,7 @@ void DeviceController::tick_scroll(uint32_t nowMs) {
     if (s.textPixelWidth == 0) {
       TransitRowGeometry geom{};
       if (!deps_.layoutEngine->compute_transit_row_geometry(renderModel_, i, geom)) continue;
-      const char *text = renderModel_.rows[i].destination[0]
-          ? renderModel_.rows[i].destination
-          : renderModel_.rows[i].direction;
+      const char *text = renderModel_.rows[i].destination;
       // Measure width using the same spacing as the scroll renderer:
       // charW (6px) per non-space, spaceW (charW-2 = 4px) per space.
       const int16_t charW = static_cast<int16_t>(6 * geom.destinationFont);
@@ -1995,7 +1604,7 @@ bool DeviceController::load_cached_transit_assignment() {
   sanitize_cached_assignment(cachedTransitAssignment_);
 
   const CachedTransitRow &row0 = cachedTransitAssignment_.rows[0];
-  if (row0.providerId[0] == '\0' && row0.routeId[0] == '\0' && row0.destination[0] == '\0') {
+  if (row0.destination[0] == '\0') {
     clear_cached_assignment(cachedTransitAssignment_);
     return false;
   }
@@ -2021,14 +1630,15 @@ void DeviceController::apply_cached_transit_assignment() {
   for (uint8_t i = 0; i < cachedTransitAssignment_.activeRows && i < kMaxVisibleTransitRows; ++i) {
     const CachedTransitRow &src = cachedTransitAssignment_.rows[i];
     TransitRowModel &dst = renderModel_.rows[i];
-    copy_str(dst.providerId, sizeof(dst.providerId), src.providerId);
-    copy_str(dst.routeId, sizeof(dst.routeId), src.routeId);
     dst.displayType = src.displayType;
     dst.scrollEnabled = src.scrollEnabled;
-    copy_str(dst.direction, sizeof(dst.direction), src.direction);
     copy_str(dst.destination, sizeof(dst.destination), src.destination);
     copy_str(dst.eta, sizeof(dst.eta), "--");
     copy_str(dst.etaExtra, sizeof(dst.etaExtra), "");
+    // Badge fields not cached — will be gray until server pushes fresh data
+    dst.badgeShape = kBadgeShapePill;
+    dst.badgeColor = 0x8410;  // gray
+    dst.badgeText[0] = '\0';
   }
 
   hasFreshPayload_ = false;
@@ -2105,6 +1715,14 @@ void DeviceController::render_eta_updates() {
 
     const TransitRowModel &row = renderModel_.rows[i];
     deps_.displayEngine->fill_rect(geometry.etaClearX, geometry.etaClearY, geometry.etaClearW, geometry.etaClearH, kColorBlack);
+    if (geometry.hasEtaExtra) {
+      deps_.displayEngine->fill_rect(geometry.etaExtraClearX,
+                                     geometry.etaExtraClearY,
+                                     geometry.etaExtraClearW,
+                                     geometry.etaExtraClearH,
+                                     kColorBlack);
+    }
+
     trim_text_for_chars(row.eta[0] ? row.eta : "--", 3, etaText, sizeof(etaText));
     deps_.displayEngine->draw_text(geometry.etaTextX,
                                    geometry.etaTextY,
@@ -2114,11 +1732,6 @@ void DeviceController::render_eta_updates() {
                                    kColorBlack);
 
     if (geometry.hasEtaExtra) {
-      deps_.displayEngine->fill_rect(geometry.etaExtraClearX,
-                                     geometry.etaExtraClearY,
-                                     geometry.etaExtraClearW,
-                                     geometry.etaExtraClearH,
-                                     kColorBlack);
       if (row.etaExtra[0] != '\0' && geometry.etaExtraCharLimit > 0) {
         trim_text_for_chars(row.etaExtra, geometry.etaExtraCharLimit, etaExtraText, sizeof(etaExtraText));
         deps_.displayEngine->draw_text(geometry.etaExtraTextX,
@@ -2150,7 +1763,7 @@ void DeviceController::render_scroll_updates() {
     }
 
     const TransitRowModel &row = renderModel_.rows[i];
-    const char *text = row.destination[0] ? row.destination : row.direction;
+    const char *text = row.destination[0] ? row.destination : "-";
 
     // Draw characters one-by-one with black background, clipped to destination zone.
     // Each character slot is filled (char or black) in a single pass — no separate
@@ -2392,36 +2005,30 @@ void DeviceController::publish_display_state() {
     return;
   }
 
-  char r1Provider[80];
-  char r1Line[80];
+  char r1Badge[8];
   char r1Label[128];
   char r1Eta[32];
-  char r2Provider[80];
-  char r2Line[80];
+  char r2Badge[8];
   char r2Label[128];
   char r2Eta[32];
-  json_escape(renderModel_.rows[0].providerId, r1Provider, sizeof(r1Provider));
-  json_escape(renderModel_.rows[0].routeId, r1Line, sizeof(r1Line));
+  json_escape(renderModel_.rows[0].badgeText, r1Badge, sizeof(r1Badge));
   json_escape(renderModel_.rows[0].destination, r1Label, sizeof(r1Label));
   json_escape(renderModel_.rows[0].eta, r1Eta, sizeof(r1Eta));
-  json_escape(renderModel_.rows[1].providerId, r2Provider, sizeof(r2Provider));
-  json_escape(renderModel_.rows[1].routeId, r2Line, sizeof(r2Line));
+  json_escape(renderModel_.rows[1].badgeText, r2Badge, sizeof(r2Badge));
   json_escape(renderModel_.rows[1].destination, r2Label, sizeof(r2Label));
   json_escape(renderModel_.rows[1].eta, r2Eta, sizeof(r2Eta));
 
-  char payload[768];
+  char payload[512];
   const uint8_t reportedRows = renderModel_.activeRows > kMaxVisibleTransitRows ? kMaxVisibleTransitRows : renderModel_.activeRows;
   snprintf(payload,
            sizeof(payload),
-           "{\"deviceId\":\"%s\",\"activeRows\":%u,\"row1\":{\"provider\":\"%s\",\"line\":\"%s\",\"label\":\"%s\",\"eta\":\"%s\"},\"row2\":{\"provider\":\"%s\",\"line\":\"%s\",\"label\":\"%s\",\"eta\":\"%s\"}}",
+           "{\"deviceId\":\"%s\",\"activeRows\":%u,\"row1\":{\"badge\":\"%s\",\"label\":\"%s\",\"eta\":\"%s\"},\"row2\":{\"badge\":\"%s\",\"label\":\"%s\",\"eta\":\"%s\"}}",
            runtimeConfig_.deviceId,
            static_cast<unsigned>(reportedRows),
-           r1Provider,
-           r1Line,
+           r1Badge,
            r1Label,
            r1Eta,
-           r2Provider,
-           r2Line,
+           r2Badge,
            r2Label,
            r2Eta);
 

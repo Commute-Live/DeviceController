@@ -14,11 +14,8 @@
 namespace core {
 
 struct CachedTransitRow {
-  char providerId[kMaxProviderIdLen];
-  char routeId[kMaxRouteIdLen];
   uint8_t displayType;
   bool scrollEnabled;
-  char direction[kMaxDestinationLen];
   char destination[kMaxDestinationLen];
 };
 

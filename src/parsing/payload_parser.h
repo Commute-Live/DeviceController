@@ -4,6 +4,7 @@
 
 String extract_json_string_field(const String &json, const char *field);
 int extract_json_int_field(const String &json, const char *field, int fallbackValue);
+bool extract_json_bool_field(const String &json, const char *field, bool fallbackValue);
 int extract_json_string_array_field(const String &json,
                                     const char *field,
                                     String outValues[],

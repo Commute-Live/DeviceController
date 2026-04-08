@@ -10,8 +10,6 @@
 namespace core {
 
 constexpr size_t kMaxDeviceIdLen = 40;
-constexpr size_t kMaxProviderIdLen = 24;
-constexpr size_t kMaxRouteIdLen = 24;
 constexpr size_t kMaxDestinationLen = 64;
 constexpr size_t kMaxEtaLen = 12;
 constexpr size_t kMaxErrorLen = 96;
@@ -70,16 +68,20 @@ enum class UiState : uint8_t {
   kTransit,
 };
 
+// Badge shape constants
+constexpr uint8_t kBadgeShapeCircle = 0;
+constexpr uint8_t kBadgeShapePill   = 1;
+
 struct TransitRowModel {
-  char providerId[kMaxProviderIdLen];
-  char routeId[kMaxRouteIdLen];
-  uint8_t displayType;
+  uint8_t displayType;   // 1=normal, 4=stacked-eta (set by device_controller)
   bool scrollEnabled;
   bool delayed;
-  char direction[kMaxDestinationLen];
-  char destination[kMaxDestinationLen];
-  char eta[kMaxEtaLen];
-  char etaExtra[kMaxDestinationLen];
+  char destination[kMaxDestinationLen];  // pre-computed label from server
+  char eta[kMaxEtaLen];                  // primary ETA string
+  char etaExtra[kMaxDestinationLen];     // secondary ETAs comma-separated (triggers stacked layout)
+  uint8_t badgeShape;    // kBadgeShapeCircle or kBadgeShapePill
+  uint16_t badgeColor;   // RGB565
+  char badgeText[5];     // 1 char (circle) or 1-3 chars (pill) + null terminator
 };
 
 struct RenderModel {

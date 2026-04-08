@@ -37,6 +37,15 @@ String extract_json_string_field(const String &json, const char *field) {
   return json.substring(i, end);
 }
 
+bool extract_json_bool_field(const String &json, const char *field, bool fallbackValue) {
+  String value = extract_json_string_field(json, field);
+  value.trim();
+  value.toLowerCase();
+  if (value == "true" || value == "1") return true;
+  if (value == "false" || value == "0") return false;
+  return fallbackValue;
+}
+
 int extract_json_int_field(const String &json, const char *field, int fallbackValue) {
   String key = "\"";
   key += field;
