@@ -10,6 +10,12 @@ namespace parsing {
 
 namespace {
 
+template <size_t N>
+void copy_cstr(char (&dst)[N], const String &src) {
+  strncpy(dst, src.c_str(), N - 1);
+  dst[N - 1] = '\0';
+}
+
 // Parse "#RRGGBB" hex string to RGB565. Returns gray on failure.
 uint16_t hex_color_to_rgb565(const char *hex) {
   if (!hex || hex[0] == '\0') return 0x8410;
@@ -91,6 +97,7 @@ bool extract_line_at(const String &json, int index, String &out) {
 
 void parse_line_into_row(const String &lineJson, ProviderRow &row) {
   row.label = extract_json_string_field(lineJson, "label");
+  copy_cstr(row.providerId, extract_json_string_field(lineJson, "provider"));
 
   // badge
   const String badgeJson = extract_json_object_field(lineJson, "badge");

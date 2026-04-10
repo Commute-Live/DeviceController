@@ -11,6 +11,7 @@
 
 #include "core/layout_engine.h"
 #include "display/badge_renderer.h"
+#include "transit/mta_color_map.h"
 
 namespace {
 
@@ -27,16 +28,19 @@ struct PreviewOptions {
   int displayType = 1;
   int rows = 2;
   std::string bleName = "CommuteLive-AB12";
+  std::string provider1;
   std::string route1 = "A";
   std::string destination1 = "Inwood-207 St";
   std::string eta1 = "3";
   std::string etaExtra1;
   std::string direction1;
+  std::string provider2;
   std::string route2 = "1";
   std::string destination2 = "South Ferry";
   std::string eta2 = "8";
   std::string etaExtra2;
   std::string direction2;
+  std::string provider3;
   std::string route3 = "Q";
   std::string destination3 = "96 St";
   std::string eta3 = "12";
@@ -85,6 +89,7 @@ void print_usage(const char *program) {
           "  --display-type <1-5>     Layout preset (default: 1)\n"
           "  --rows <1-2>             Active rows for transit scenarios\n"
           "  --ble-name <value>       Setup mode Bluetooth name\n"
+          "  --provider<N> <value>    Provider id override, N=1..3\n"
           "  --route<N> <value>       Row route id, N=1..3\n"
           "  --destination<N> <value> Row destination, N=1..3\n"
           "  --eta<N> <value>         Row ETA, N=1..3\n"
@@ -152,6 +157,24 @@ bool parse_args(int argc, char **argv, PreviewOptions &options) {
       const char *value = require_value(arg);
       if (!value) return false;
       options.bleName = value;
+      continue;
+    }
+    if (strcmp(arg, "--provider1") == 0) {
+      const char *value = require_value(arg);
+      if (!value) return false;
+      options.provider1 = value;
+      continue;
+    }
+    if (strcmp(arg, "--provider2") == 0) {
+      const char *value = require_value(arg);
+      if (!value) return false;
+      options.provider2 = value;
+      continue;
+    }
+    if (strcmp(arg, "--provider3") == 0) {
+      const char *value = require_value(arg);
+      if (!value) return false;
+      options.provider3 = value;
       continue;
     }
     if (strcmp(arg, "--route1") == 0) {
@@ -632,19 +655,33 @@ class HostPreviewDisplayEngine final : public display::DisplayEngine {
   std::vector<uint16_t> pixels_;
 };
 
+bool is_cta_route(const std::string &route) {
+  return route == "RED" || route == "BLUE" || route == "BRN" || route == "G" ||
+         route == "ORG" || route == "P" || route == "PINK" || route == "PUR" ||
+         route == "Y" || route == "YLW";
+}
+
 void apply_row(core::TransitRowModel &row,
+               const std::string &provider,
                const std::string &route,
                const std::string &destination,
                const std::string &eta,
                const std::string &etaExtra,
                const std::string &direction) {
+  (void)direction;
   memset(&row, 0, sizeof(row));
-  copy_cstr(row.providerId, "mta-subway");
-  copy_cstr(row.routeId, route.empty() ? "--" : route);
+  row.displayType = 1;
+  row.scrollEnabled = false;
+  row.delayed = false;
   copy_cstr(row.destination, destination.empty() ? "--" : destination);
   copy_cstr(row.eta, eta.empty() ? "--" : eta);
   copy_cstr(row.etaExtra, etaExtra);
-  copy_cstr(row.direction, direction);
+  row.badgeShape = route.size() <= 1 ? core::kBadgeShapeCircle : core::kBadgeShapePill;
+  const char *resolvedProvider =
+      provider.empty() ? (is_cta_route(route) ? "cta-subway" : "mta-subway") : provider.c_str();
+  copy_cstr(row.providerId, resolvedProvider);
+  row.badgeColor = transit::MtaColorMap::color_for_provider_route(row.providerId, route.c_str());
+  copy_cstr(row.badgeText, route.empty() ? "--" : route);
 }
 
 core::RenderModel build_model(const PreviewOptions &options) {
@@ -679,6 +716,7 @@ core::RenderModel build_model(const PreviewOptions &options) {
   }
 
   apply_row(model.rows[0],
+            options.provider1,
             options.route1,
             options.destination1,
             options.eta1,
@@ -686,6 +724,7 @@ core::RenderModel build_model(const PreviewOptions &options) {
             options.direction1);
 
   apply_row(model.rows[1],
+            options.provider2,
             options.route2,
             options.destination2,
             options.eta2,
@@ -693,6 +732,7 @@ core::RenderModel build_model(const PreviewOptions &options) {
             options.direction2);
 
   apply_row(model.rows[2],
+            options.provider3,
             options.route3,
             options.destination3,
             options.eta3,

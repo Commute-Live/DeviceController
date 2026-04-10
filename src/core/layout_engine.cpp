@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "display/badge_renderer.h"
+#include "display/bitmap_assets.h"
 
 namespace core {
 
@@ -145,6 +146,21 @@ int16_t estimate_compact_line_width(const char *text, uint8_t normalizedDisplayT
     width = static_cast<int16_t>(width + (text[i] == ' ' ? spaceW : charW));
   }
   return width;
+}
+
+bool is_cta_provider(const TransitRowModel &row) {
+  return strcmp(row.providerId, "cta-subway") == 0 || strcmp(row.providerId, "cta-bus") == 0;
+}
+
+const uint8_t *cta_bitmap_for_row(const TransitRowModel &row, int16_t &width, int16_t &height) {
+  if (strcmp(row.providerId, "cta-bus") == 0) {
+    width = display::kHomeBusIconWidth;
+    height = display::kHomeBusIconHeight;
+    return display::kHomeBusIcon;
+  }
+  width = display::kHomeTrainIconWidth;
+  height = display::kHomeTrainIconHeight;
+  return display::kHomeTrainIcon;
 }
 
 const char *primary_destination_line(const TransitRowModel &row, uint8_t /*normalizedDisplayType*/) {
@@ -537,24 +553,36 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
       {
         const RowFrame frame = home.rows[1];
         const uint8_t chipFont = 1;
-        const int16_t chipH = 8;
+        const int16_t chipH = 10;
         const int16_t chipY = static_cast<int16_t>(frame.yStart + ((frame.height - chipH) / 2));
 
+        enum class HomeChipType : uint8_t {
+          kText,
+          kBitmap,
+        };
+
         struct Chip {
-          const char *text;
+          HomeChipType type;
+          const char *label;
+          const uint8_t *bitmap;
+          int16_t bitmapW;
+          int16_t bitmapH;
           uint16_t bg;
         };
         const Chip chips[] = {
-            {"MTA", 0x01B4},  // NYC subway blue
-            {"CTA", 0xF800},  // Chicago red accent
-            {"MBTA", 0xFD20},
-            {"SEPTA", 0x1A74},  // #1F4FA3
+            {HomeChipType::kText, "MTA", nullptr, 0, 0, 0x01B4},                                   // NYC subway blue
+            {HomeChipType::kBitmap, nullptr, display::kHomeTrainIcon, display::kHomeTrainIconWidth,
+             display::kHomeTrainIconHeight, kColorBlack},                                           // Chicago train mark
+            {HomeChipType::kText, "MBTA", nullptr, 0, 0, 0xFD20},
+            {HomeChipType::kText, "SEPTA", nullptr, 0, 0, 0x1A74},                                 // #1F4FA3
         };
 
         int16_t totalChipW = 0;
         for (size_t i = 0; i < sizeof(chips) / sizeof(chips[0]); ++i) {
-          const int16_t textW = static_cast<int16_t>(strnlen(chips[i].text, 16) * 6);
-          totalChipW = static_cast<int16_t>(totalChipW + textW + 4);  // 2px pad each side
+          const int16_t chipW = (chips[i].type == HomeChipType::kBitmap)
+                                    ? chips[i].bitmapW
+                                    : static_cast<int16_t>(strnlen(chips[i].label, 16) * 6 + 4);
+          totalChipW = static_cast<int16_t>(totalChipW + chipW);
           if (i + 1 < sizeof(chips) / sizeof(chips[0])) totalChipW = static_cast<int16_t>(totalChipW + 2);
         }
 
@@ -562,32 +590,48 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
         if (x < 2) x = 2;
 
         for (size_t i = 0; i < sizeof(chips) / sizeof(chips[0]); ++i) {
-          const int16_t textW = static_cast<int16_t>(strnlen(chips[i].text, 16) * 6);
-          const int16_t chipW = static_cast<int16_t>(textW + 4);
+          const int16_t chipW = (chips[i].type == HomeChipType::kBitmap)
+                                    ? chips[i].bitmapW
+                                    : static_cast<int16_t>(strnlen(chips[i].label, 16) * 6 + 4);
 
-          DrawCommand chipBg{};
-          chipBg.type = DrawCommandType::kFillRect;
-          chipBg.x = x;
-          chipBg.y = chipY;
-          chipBg.w = chipW;
-          chipBg.h = chipH;
-          chipBg.color = chips[i].bg;
-          chipBg.bg = kColorBlack;
-          chipBg.size = 1;
-          chipBg.text = nullptr;
-          chipBg.bitmap = nullptr;
-          out.push(chipBg);
+          if (chips[i].type == HomeChipType::kBitmap) {
+            DrawCommand chipBitmap{};
+            chipBitmap.type = DrawCommandType::kMonoBitmap;
+            chipBitmap.x = x;
+            chipBitmap.y = static_cast<int16_t>(chipY + ((chipH - chips[i].bitmapH) / 2));
+            chipBitmap.w = chips[i].bitmapW;
+            chipBitmap.h = chips[i].bitmapH;
+            chipBitmap.color = 0xF800;
+            chipBitmap.bg = kColorBlack;
+            chipBitmap.size = 1;
+            chipBitmap.text = nullptr;
+            chipBitmap.bitmap = chips[i].bitmap;
+            out.push(chipBitmap);
+          } else {
+            DrawCommand chipBg{};
+            chipBg.type = DrawCommandType::kFillRect;
+            chipBg.x = x;
+            chipBg.y = chipY;
+            chipBg.w = chipW;
+            chipBg.h = chipH;
+            chipBg.color = chips[i].bg;
+            chipBg.bg = kColorBlack;
+            chipBg.size = 1;
+            chipBg.text = nullptr;
+            chipBg.bitmap = nullptr;
+            out.push(chipBg);
 
-          DrawCommand chipText{};
-          chipText.type = DrawCommandType::kText;
-          chipText.x = static_cast<int16_t>(x + 2);
-          chipText.y = chipY;
-          chipText.color = kColorWhite;
-          chipText.bg = chips[i].bg;
-          chipText.size = chipFont;
-          chipText.text = out.copy_text(chips[i].text);
-          chipText.bitmap = nullptr;
-          out.push(chipText);
+            DrawCommand chipText{};
+            chipText.type = DrawCommandType::kText;
+            chipText.x = static_cast<int16_t>(x + 2);
+            chipText.y = static_cast<int16_t>(chipY + 1);
+            chipText.color = kColorWhite;
+            chipText.bg = chips[i].bg;
+            chipText.size = chipFont;
+            chipText.text = out.copy_text(chips[i].label);
+            chipText.bitmap = nullptr;
+            out.push(chipText);
+          }
 
           x = static_cast<int16_t>(x + chipW + 2);
         }
@@ -661,12 +705,42 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
 
     const uint8_t normalizedDisplayType = rowGeometry.normalizedDisplayType;
     const TransitBadgeStyle badgeStyle = badge_style_for_row(row);
+    const bool useBitmapBadge = is_cta_provider(row);
+    int16_t bitmapW = display::kHomeTrainIconWidth;
+    int16_t bitmapH = display::kHomeTrainIconHeight;
+    const uint8_t *bitmapData = cta_bitmap_for_row(row, bitmapW, bitmapH);
     char badgeLabel[8];
     const char *resolvedBadgeLabel = badge_text_for_row(row, badgeLabel, sizeof(badgeLabel));
 
     const int16_t rowYShift = (i > 0) ? 1 : 0;
 
-    if (badgeStyle == TransitBadgeStyle::kPill) {
+    if (useBitmapBadge && badgeStyle == TransitBadgeStyle::kPill) {
+      const int16_t badgeX = static_cast<int16_t>(rowGeometry.badgeX + 1);
+      const int16_t badgeY = static_cast<int16_t>(rowGeometry.layout.badgeY + 1 + rowYShift);
+      const int16_t badgeW =
+          rowGeometry.layout.badgeWidth > 1
+              ? static_cast<int16_t>(rowGeometry.layout.badgeWidth - 1)
+              : rowGeometry.layout.badgeWidth;
+      const int16_t badgeH =
+          rowGeometry.layout.badgeSize > 1
+              ? static_cast<int16_t>(rowGeometry.layout.badgeSize - 1)
+              : rowGeometry.layout.badgeSize;
+
+      DrawCommand badgeBitmap{};
+      badgeBitmap.type = DrawCommandType::kMonoBitmap;
+      badgeBitmap.w = bitmapW;
+      badgeBitmap.h = bitmapH;
+      const int16_t visualBadgeW = badgeW > kVisualPillW ? kVisualPillW : badgeW;
+      const int16_t visualBadgeH = badgeH > kVisualPillH ? kVisualPillH : badgeH;
+      badgeBitmap.x = static_cast<int16_t>(badgeX + ((visualBadgeW - badgeBitmap.w) / 2));
+      badgeBitmap.y = static_cast<int16_t>(badgeY + ((visualBadgeH - badgeBitmap.h) / 2));
+      badgeBitmap.color = row.badgeColor;
+      badgeBitmap.bg = kColorBlack;
+      badgeBitmap.size = 1;
+      badgeBitmap.text = nullptr;
+      badgeBitmap.bitmap = bitmapData;
+      out.push(badgeBitmap);
+    } else if (badgeStyle == TransitBadgeStyle::kPill) {
       const int16_t badgeX = static_cast<int16_t>(rowGeometry.badgeX + 1);
       const int16_t badgeY = static_cast<int16_t>(rowGeometry.layout.badgeY + 1 + rowYShift);
       const int16_t badgeW =
@@ -689,6 +763,19 @@ void LayoutEngine::build_transit_layout(const RenderModel &model, DrawList &out)
       badge.text = out.copy_text(resolvedBadgeLabel);
       badge.bitmap = nullptr;
       out.push(badge);
+    } else if (useBitmapBadge) {
+      DrawCommand badgeBitmap{};
+      badgeBitmap.type = DrawCommandType::kMonoBitmap;
+      badgeBitmap.w = bitmapW;
+      badgeBitmap.h = bitmapH;
+      badgeBitmap.x = static_cast<int16_t>(rowGeometry.badgeX + ((rowGeometry.layout.badgeSize - badgeBitmap.w) / 2));
+      badgeBitmap.y = static_cast<int16_t>(rowGeometry.layout.badgeY + ((rowGeometry.layout.badgeSize - badgeBitmap.h) / 2));
+      badgeBitmap.color = row.badgeColor;
+      badgeBitmap.bg = kColorBlack;
+      badgeBitmap.size = 1;
+      badgeBitmap.text = nullptr;
+      badgeBitmap.bitmap = bitmapData;
+      out.push(badgeBitmap);
     } else {
       DrawCommand badge{};
       badge.type = DrawCommandType::kBadge;

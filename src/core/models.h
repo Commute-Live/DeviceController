@@ -14,6 +14,7 @@ constexpr size_t kMaxDestinationLen = 64;
 constexpr size_t kMaxEtaLen = 12;
 constexpr size_t kMaxErrorLen = 96;
 constexpr size_t kMaxStatusLen = 32;
+constexpr size_t kMaxProviderIdLen = 24;
 constexpr uint8_t kMaxTransitRows = 3;
 constexpr uint8_t kMaxVisibleTransitRows = 2;
 
@@ -82,6 +83,7 @@ struct TransitRowModel {
   uint8_t badgeShape;    // kBadgeShapeCircle or kBadgeShapePill
   uint16_t badgeColor;   // RGB565
   char badgeText[5];     // 1 char (circle) or 1-3 chars (pill) + null terminator
+  char providerId[kMaxProviderIdLen];
 };
 
 struct RenderModel {

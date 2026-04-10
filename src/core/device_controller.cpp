@@ -295,6 +295,7 @@ void set_default_rows(RenderModel &model) {
   model.rows[0].badgeShape = kBadgeShapePill;
   model.rows[0].badgeColor = 0x8410;
   model.rows[0].badgeText[0] = '\0';
+  model.rows[0].providerId[0] = '\0';
 
   for (uint8_t i = 1; i < kMaxTransitRows; ++i) {
     clear_row(model.rows[i]);
@@ -338,6 +339,7 @@ void clear_row(TransitRowModel &row) {
   row.badgeShape = kBadgeShapePill;
   row.badgeColor = 0x8410;
   row.badgeText[0] = '\0';
+  row.providerId[0] = '\0';
 }
 
 void trim_text_for_chars(const char *src, uint8_t charLimit, char *dst, size_t dstLen) {
@@ -370,7 +372,8 @@ bool rows_equal(const TransitRowModel &lhs, const TransitRowModel &rhs) {
          strings_equal(lhs.etaExtra, rhs.etaExtra) &&
          lhs.badgeShape == rhs.badgeShape &&
          lhs.badgeColor == rhs.badgeColor &&
-         strings_equal(lhs.badgeText, rhs.badgeText);
+         strings_equal(lhs.badgeText, rhs.badgeText) &&
+         strings_equal(lhs.providerId, rhs.providerId);
 }
 
 bool row_layout_fields_equal(const TransitRowModel &lhs, const TransitRowModel &rhs) {
@@ -379,7 +382,8 @@ bool row_layout_fields_equal(const TransitRowModel &lhs, const TransitRowModel &
          strings_equal(lhs.destination, rhs.destination) &&
          lhs.badgeShape == rhs.badgeShape &&
          lhs.badgeColor == rhs.badgeColor &&
-         strings_equal(lhs.badgeText, rhs.badgeText);
+         strings_equal(lhs.badgeText, rhs.badgeText) &&
+         strings_equal(lhs.providerId, rhs.providerId);
 }
 
 bool row_eta_fields_equal(const TransitRowModel &lhs, const TransitRowModel &rhs) {
@@ -1205,6 +1209,7 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
   nextModel.rows[0].badgeShape = parsed.row1.badgeShape;
   nextModel.rows[0].badgeColor = parsed.row1.badgeColor;
   memcpy(nextModel.rows[0].badgeText, parsed.row1.badgeText, sizeof(nextModel.rows[0].badgeText));
+  copy_str(nextModel.rows[0].providerId, sizeof(nextModel.rows[0].providerId), parsed.row1.providerId);
   copy_str(nextCachedAssignment.rows[0].destination, sizeof(nextCachedAssignment.rows[0].destination),
            nextModel.rows[0].destination);
   nextCachedAssignment.rows[0].scrollEnabled = nextModel.rows[0].scrollEnabled;
@@ -1222,6 +1227,7 @@ void DeviceController::handle_command(const char *topic, const uint8_t *payload,
     nextModel.rows[1].badgeShape = parsed.row2.badgeShape;
     nextModel.rows[1].badgeColor = parsed.row2.badgeColor;
     memcpy(nextModel.rows[1].badgeText, parsed.row2.badgeText, sizeof(nextModel.rows[1].badgeText));
+    copy_str(nextModel.rows[1].providerId, sizeof(nextModel.rows[1].providerId), parsed.row2.providerId);
     copy_str(nextCachedAssignment.rows[1].destination, sizeof(nextCachedAssignment.rows[1].destination),
              nextModel.rows[1].destination);
     nextCachedAssignment.rows[1].scrollEnabled = nextModel.rows[1].scrollEnabled;
@@ -1806,6 +1812,7 @@ void DeviceController::apply_cached_transit_assignment() {
     dst.badgeShape = kBadgeShapePill;
     dst.badgeColor = 0x8410;  // gray
     dst.badgeText[0] = '\0';
+    dst.providerId[0] = '\0';
   }
 
   hasFreshPayload_ = false;

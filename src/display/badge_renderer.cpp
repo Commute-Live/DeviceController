@@ -165,12 +165,14 @@ void BadgeRenderer::draw_rect_badge(DisplayEngine &display,
                                     const char *label,
                                     uint16_t fill,
                                     RoundedBadgeStyle style) const {
-  if (w <= 0 || h <= 0 || !label || label[0] == '\0') return;
+  if (w <= 0 || h <= 0) return;
 
   (void)style;
   // Keep the shared 21x11 badge box, but only soften the corners slightly.
   int16_t radius = (w >= 10 && h >= 8) ? 1 : 0;
   fill_rounded_rect(display, x, y, w, h, radius, fill);
+
+  if (!label || label[0] == '\0') return;
 
   // Label is always 1-3 chars; truncate defensively.
   char truncated[4];

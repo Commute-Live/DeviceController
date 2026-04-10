@@ -3,6 +3,8 @@
 #include <Arduino.h>
 #include <stdint.h>
 
+#include "core/models.h"
+
 namespace parsing {
 
 struct ProviderRow {
@@ -11,6 +13,7 @@ struct ProviderRow {
   uint8_t badgeShape = 1;    // 0=circle, 1=pill
   uint16_t badgeColor = 0x8410;  // gray RGB565 fallback
   char badgeText[5] = {};
+  char providerId[core::kMaxProviderIdLen] = {};
   bool scrollEnabled = false;
   bool delayed = false;
 };
